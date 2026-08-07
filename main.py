@@ -1,6 +1,6 @@
-def main():
-    print("Masha Home is alive.")
+def greet(name):
+    return f"Привет, {name}!"
 
 
-if __name__ == "__main__":
-    main()
+message = greet("Миша")
+print(message)
