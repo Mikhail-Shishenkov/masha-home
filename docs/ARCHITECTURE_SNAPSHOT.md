@@ -4,6 +4,10 @@
 а не целевая схема. Он не означает, что незакоммиченные изменения уже образуют
 релиз или что любая описанная возможность подключена к живому диалогу.
 
+> **Superseded runtime note (ID-02, 2026-08-11):** the historical audit below
+> describes the pre-consolidation state. The section `CURRENT — ID-02 IDENTITY
+> RUNTIME CONSOLIDATION` is authoritative for the active identity runtime.
+
 ## Рабочее дерево
 
 Репозиторий **нечистый**: большая часть текущей реализации памяти, Identity
@@ -316,3 +320,21 @@ database. Existing SQLite audit events record `import_json` and every
 
 Conversation history and pending memory proposals remain separate local JSON
 layers and are not part of the SQLite long-term memory database.
+
+## CURRENT — ID-02 IDENTITY RUNTIME CONSOLIDATION
+
+The only production identity path is `CLI -> ConversationService ->
+IdentityKernel -> IdentityContext -> ConversationContextCompiler ->
+ModelRequest -> ModelRouter -> OllamaProvider`. The only canonical source is
+`identity/masha.identity.json`.
+
+Legacy `PersonaStore`, `MashaPersona`, `persona/masha.json`, and
+`ContextBuilder` were removed after repository search established that they
+had no production callers. The active CLI does not import them.
+
+At CLI assembly, `IdentityKernel.validate_memory_identity()` compares the
+approved manifest version with active SQLite memory. Mismatch is a controlled
+startup error and never mutates either source. The local-only
+`backend.identity.run_identity_regression` runs approved scenarios through the
+production-style compiler/router using fixture memory, stores raw output under
+`local-data/identity-regressions/`, and never rewrites responses.

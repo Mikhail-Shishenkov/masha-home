@@ -66,7 +66,8 @@ python -m pytest
 - Project и Fact синхронизированы с каноническим документом;
 - корневой memory document описан JSON Schema;
 - `importance` Episode ограничен диапазоном `0..1`;
-- основной `ContextBuilder` работает на Memory v0.4.
+- исторический `ContextBuilder` удалён; production-разговор использует
+  `ConversationContextCompiler` и активную SQLite memory.
 
 ## Генерация схемы и миграция памяти
 
@@ -95,6 +96,12 @@ python -c "from backend.memory.sqlite_repository import MemorySqliteRepository a
 Этот пример создаёт новую БД и **не** переключает текущий JSON-прототип. Backup также создаётся отдельно, а `restore_to` отказывается перезаписывать существующий файл. Перед переключением рабочего приложения на SQLite для реальных данных потребуется отдельное подтверждение пользователя и проверенная резервная копия.
 
 ## Identity Kernel
+
+> **Current runtime status (2026-08-11):** SQLite at
+> `local-data/memory/masha.sqlite3` is production long-term memory; JSON is
+> import/export/backup only. The CLI uses `IdentityKernel` and validates its
+> identity version against active SQLite before startup. Legacy PersonaStore
+> and ContextBuilder are not runtime components.
 
 Утверждённый manifest находится в `identity/masha.identity.json`, регрессионные сценарии образа — в `identity/masha.regression.json`, а канонические визуальные assets — в `identity/visual_assets/`. Их назначение и правила изменения описаны в `docs/IDENTITY_GUIDE.md`.
 

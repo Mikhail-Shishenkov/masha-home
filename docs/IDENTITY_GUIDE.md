@@ -1,5 +1,10 @@
 # Identity Kernel: как утверждать Машу
 
+> **Current runtime status (2026-08-11):** production identity is loaded only by
+> `IdentityKernel` from the approved manifest. At CLI startup its
+> `identity_version` is validated against the active SQLite memory document;
+> a mismatch stops startup without changing either source.
+
 `identity/masha.identity.json` — единственный защищённый источник личности Маши. Он читается Identity Kernel и не должен изменяться LLM, памятью или внешним провайдером.
 
 Manifest версии `masha-0.1` утверждён пользователем. В нём зафиксированы неизменные черты, принципы речи, области естественного развития и два канонических визуальных референса с SHA-256-хэшами. Выражения близости допустимы как язык текстового или визуального образа, но приложение не выдаёт их за реальные физические действия.

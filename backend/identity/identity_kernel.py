@@ -6,6 +6,10 @@ from .identity_models import (
 from .identity_store import IdentityStore
 
 
+class IdentityMemoryVersionMismatchError(RuntimeError):
+    """Raised when the approved identity and active memory document disagree."""
+
+
 class IdentityKernel:
     """Builds the same identity context independently of the selected LLM."""
 
@@ -30,6 +34,17 @@ class IdentityKernel:
             visual_status=manifest.visual_identity.status,
             canonical_asset_ids=manifest.visual_identity.canonical_asset_ids,
         )
+
+    def validate_memory_identity(self, memory_repository) -> None:
+        """Validate the one runtime boundary between approved identity and memory."""
+        document = memory_repository.read_document()
+        if document is None:
+            raise IdentityMemoryVersionMismatchError("active memory has no identity version")
+        identity_version = self.load_manifest().identity_version
+        if document.identity_version != identity_version:
+            raise IdentityMemoryVersionMismatchError(
+                "active memory identity version does not match the approved manifest"
+            )
 
     def load_regression_suite(self, file_path: str) -> IdentityRegressionSuite:
         suite = self._store.load_regression_suite(file_path)

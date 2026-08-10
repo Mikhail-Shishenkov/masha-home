@@ -18,14 +18,6 @@ def memory_path(tmp_path: Path) -> str:
 
 
 @pytest.fixture
-def persona_path(tmp_path: Path) -> str:
-    """Return an isolated copy of the persona fixture."""
-    target = tmp_path / "test_persona.json"
-    shutil.copy2(FIXTURES_DIR / "test_persona.json", target)
-    return str(target)
-
-
-@pytest.fixture
 def canonical_memory() -> dict:
     with open(
         PROJECT_ROOT / "memory" / "test_memory.json",

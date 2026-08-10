@@ -6,7 +6,10 @@ import argparse
 from collections.abc import Callable
 from pathlib import Path
 
-from backend.identity.identity_kernel import IdentityKernel
+from backend.identity.identity_kernel import (
+    IdentityKernel,
+    IdentityMemoryVersionMismatchError,
+)
 from backend.identity.identity_store import IdentityStore
 from backend.llm.model_router import ModelRouter
 from backend.llm.ollama_provider import OllamaProvider
@@ -26,12 +29,14 @@ EXIT_COMMANDS = {":exit", ":quit"}
 
 
 def build_service(*, project_root: Path = PROJECT_ROOT) -> ConversationService:
-    """Assemble only the local JSON memory, identity, router, and Ollama provider."""
+    """Assemble the local SQLite memory, identity, router, and Ollama provider."""
     memory_store = MemorySqliteRepository(project_root / "local-data" / "memory" / "masha.sqlite3")
+    identity_kernel = IdentityKernel(
+        IdentityStore(project_root / "identity" / "masha.identity.json")
+    )
+    identity_kernel.validate_memory_identity(memory_store)
     return ConversationService(
-        identity_kernel=IdentityKernel(
-            IdentityStore(project_root / "identity" / "masha.identity.json")
-        ),
+        identity_kernel=identity_kernel,
         memory_retriever=MemoryRetriever(memory_store),
         working_memory=WorkingMemory(max_items=6),
         router=ModelRouter([OllamaProvider()]),
@@ -92,11 +97,12 @@ def main() -> None:
     parser.add_argument("--conversation-id", help="Continue this local conversation id.")
     parser.add_argument("--project-id", default=DEFAULT_PROJECT_ID)
     arguments = parser.parse_args()
-    run_cli(
-        build_service(),
-        project_id=arguments.project_id,
-        conversation_id=arguments.conversation_id,
-    )
+    try:
+        service = build_service()
+    except IdentityMemoryVersionMismatchError as error:
+        print(f"Masha cannot start: {error}.")
+        return
+    run_cli(service, project_id=arguments.project_id, conversation_id=arguments.conversation_id)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,11 @@
 Статус документа: рабочая версия 0.1  
 Дата фиксации: 2026-08-10
 
+> **Current decision (ID-02, 2026-08-11):** `IdentityKernel` plus the approved
+> identity manifest is the sole production identity runtime. Legacy PersonaStore,
+> MashaPersona, and ContextBuilder are retired; an identity-to-SQLite version
+> mismatch stops CLI startup without automatic migration or mutation.
+
 ## 1. Правила журнала
 
 Статусы:

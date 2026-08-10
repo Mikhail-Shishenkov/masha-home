@@ -1,4 +1,5 @@
 from pathlib import Path
+import ast
 
 from backend.conversation.cli import build_service, run_cli
 from backend.conversation.conversation_service import ConversationUnavailableError
@@ -57,3 +58,15 @@ def test_cli_assembles_only_the_local_primary_provider():
     assert provider.model_id == "qwen3.5:9b"
     assert provider.endpoint == "http://127.0.0.1:11434"
     assert isinstance(service.memory_retriever.memory_store, MemorySqliteRepository)
+
+
+def test_cli_runtime_does_not_import_legacy_persona_or_context_builder():
+    cli_path = Path(__file__).resolve().parents[1] / "backend" / "conversation" / "cli.py"
+    imports = {
+        node.module
+        for node in ast.walk(ast.parse(cli_path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.ImportFrom) and node.module is not None
+    }
+
+    assert "backend.persona.persona_store" not in imports
+    assert "backend.context" not in imports

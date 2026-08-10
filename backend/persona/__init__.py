@@ -1,2 +1,0 @@
-"""Persona domain prototype."""
-

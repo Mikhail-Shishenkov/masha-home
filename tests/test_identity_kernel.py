@@ -7,8 +7,10 @@ import pytest
 from pydantic import ValidationError
 
 from backend.identity.identity_kernel import IdentityKernel
+from backend.identity.identity_kernel import IdentityMemoryVersionMismatchError
 from backend.identity.identity_models import IdentityManifest
 from backend.identity.identity_store import IdentityStore
+from backend.memory.sqlite_repository import MemorySqliteRepository
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -75,3 +77,19 @@ def test_regression_suite_matches_approved_identity_version():
 
     assert len(suite.scenarios) == 3
     assert suite.scenarios[0].id == "disagree_without_rejection"
+
+
+def test_identity_memory_version_mismatch_is_detected_without_mutation(tmp_path, canonical_memory):
+    database = MemorySqliteRepository(tmp_path / "memory.sqlite3")
+    changed = dict(canonical_memory)
+    changed["identity_version"] = "masha-old"
+    database.replace_document(changed)
+    before = database.read_document().model_dump(mode="json")
+    manifest_before = MANIFEST_PATH.read_bytes()
+    kernel = IdentityKernel(IdentityStore(MANIFEST_PATH))
+
+    with pytest.raises(IdentityMemoryVersionMismatchError, match="does not match"):
+        kernel.validate_memory_identity(database)
+
+    assert database.read_document().model_dump(mode="json") == before
+    assert MANIFEST_PATH.read_bytes() == manifest_before

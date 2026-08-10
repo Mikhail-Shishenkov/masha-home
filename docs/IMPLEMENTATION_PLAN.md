@@ -3,6 +3,11 @@
 Статус документа: рабочая версия 0.1  
 Дата фиксации: 2026-08-10
 
+> **Runtime update (ID-02, 2026-08-11):** Stage 5 is implemented for the
+> single production identity path: `IdentityKernel` reads the approved manifest,
+> and CLI startup validates its `identity_version` against active SQLite memory.
+> Legacy PersonaStore/ContextBuilder work is no longer a planned runtime path.
+
 ## 1. Порядок работы
 
 Этапы выполняются последовательно. Каждый этап должен оставлять проект в рабочем и проверяемом состоянии.
