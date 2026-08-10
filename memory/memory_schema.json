@@ -1,0 +1,538 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Masha Home Memory v0.3",
+  "type": "object",
+
+  "definitions": {
+    "IdentityCode": {
+      "type": "string",
+      "enum": [
+        "misha",
+        "masha",
+        "system"
+      ]
+    },
+
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+
+    "Importance": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+
+    "Confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+
+    "WorkingMemory": {
+      "type": "object",
+      "properties": {
+        "current_blockers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "open_questions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "architecture_notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "next_actions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "current_blockers",
+        "open_questions",
+        "architecture_notes",
+        "next_actions"
+      ],
+      "additionalProperties": false
+    },
+
+    "Project": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "paused",
+            "completed",
+            "archived"
+          ]
+        },
+        "working_memory": {
+          "$ref": "#/definitions/WorkingMemory"
+        },
+        "created_at": {
+          "$ref": "#/definitions/Timestamp"
+        },
+        "updated_at": {
+          "$ref": "#/definitions/Timestamp"
+        },
+        "archived_at": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "status",
+        "working_memory",
+        "created_at",
+        "updated_at"
+      ],
+      "additionalProperties": false
+    },
+
+    "Fact": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "value": {},
+        "status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "superseded",
+            "archived"
+          ]
+        },
+        "importance": {
+          "$ref": "#/definitions/Importance"
+        },
+        "confidence": {
+          "$ref": "#/definitions/Confidence"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "explicit_user_input",
+            "conversation",
+            "system",
+            "inference"
+          ]
+        },
+        "owner": {
+          "$ref": "#/definitions/IdentityCode"
+        },
+        "known_by": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/IdentityCode"
+          },
+          "uniqueItems": true
+        },
+        "superseded_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "$ref": "#/definitions/Timestamp"
+        },
+        "updated_at": {
+          "$ref": "#/definitions/Timestamp"
+        }
+      },
+      "required": [
+        "id",
+        "subject",
+        "key",
+        "value",
+        "status",
+        "importance",
+        "confidence",
+        "source",
+        "owner",
+        "known_by",
+        "created_at",
+        "updated_at"
+      ],
+      "additionalProperties": false
+    },
+        "Decision": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "decision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "superseded",
+            "cancelled"
+          ]
+        },
+        "project_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "source_episode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "superseded_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "$ref": "#/definitions/Timestamp"
+        },
+        "updated_at": {
+          "$ref": "#/definitions/Timestamp"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "decision",
+        "reason",
+        "status",
+        "created_at",
+        "updated_at"
+      ],
+      "additionalProperties": false
+    },
+
+    "Commitment": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "owner": {
+          "$ref": "#/definitions/IdentityCode"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "open",
+            "completed",
+            "cancelled",
+            "expired"
+          ]
+        },
+        "project_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "due_at": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "importance": {
+          "$ref": "#/definitions/Importance"
+        },
+        "source_episode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "$ref": "#/definitions/Timestamp"
+        },
+        "updated_at": {
+          "$ref": "#/definitions/Timestamp"
+        }
+      },
+      "required": [
+        "id",
+        "text",
+        "owner",
+        "status",
+        "created_at",
+        "updated_at"
+      ],
+      "additionalProperties": false
+    },
+
+    "Episode": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "occurred_at": {
+          "$ref": "#/definitions/Timestamp"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "explicit_user_input",
+            "conversation",
+            "system",
+            "inference"
+          ]
+        },
+        "importance": {
+          "$ref": "#/definitions/Importance"
+        },
+        "context": {
+          "type": "object",
+          "properties": {
+            "projects": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            },
+            "participants": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/IdentityCode"
+              },
+              "uniqueItems": true
+            },
+            "topics": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "participants",
+            "topics"
+          ],
+          "additionalProperties": false
+        },
+        "produced": {
+          "type": "object",
+          "properties": {
+            "facts": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            },
+            "decisions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            },
+            "commitments": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            },
+            "project_changes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "facts",
+            "decisions",
+            "commitments",
+            "project_changes"
+          ],
+          "additionalProperties": false
+        },
+        "updated": {
+          "type": "object",
+          "properties": {
+            "facts": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            },
+            "projects": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            },
+            "commitments": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "facts",
+            "projects",
+            "commitments"
+          ],
+          "additionalProperties": false
+        },
+        "superseded": {
+          "type": "object",
+          "properties": {
+            "facts": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            },
+            "decisions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            },
+            "commitments": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "facts",
+            "decisions",
+            "commitments"
+          ],
+          "additionalProperties": false
+        },
+        "created_at": {
+          "$ref": "#/definitions/Timestamp"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "summary",
+        "occurred_at",
+        "source",
+        "importance",
+        "context",
+        "produced",
+        "updated",
+        "superseded",
+        "created_at"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

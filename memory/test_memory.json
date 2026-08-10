@@ -1,0 +1,138 @@
+{
+  "project": {
+    "id": "project_masha_home",
+    "name": "Masha Home",
+    "description": "Наш домашний AI-проект",
+    "status": "active",
+    "working_memory": {
+      "current_blockers": [],
+      "open_questions": [
+        "Как реализовать хранение и поиск памяти?"
+      ],
+      "architecture_notes": [
+        "Memory v0.3 разделяет Facts, Decisions, Commitments и Episodes",
+        "Supersession разрешается на уровне приложения"
+      ],
+      "next_actions": [
+        "Проверить memory_schema.json",
+        "Создать первые Python-модели памяти"
+      ]
+    },
+    "created_at": "2026-08-10T10:00:00+03:00",
+    "updated_at": "2026-08-10T10:00:00+03:00",
+    "archived_at": null
+  },
+
+  "facts": [
+    {
+      "id": "fact_001",
+      "subject": "project",
+      "key": "repository",
+      "value": "https://github.com/Mikhail-Shishenkov/masha-home",
+      "status": "active",
+      "importance": 0.9,
+      "confidence": 1.0,
+      "source": "explicit_user_input",
+      "owner": "misha",
+      "known_by": [
+        "misha",
+        "masha"
+      ],
+      "superseded_by": null,
+      "created_at": "2026-08-10T10:00:00+03:00",
+      "updated_at": "2026-08-10T10:00:00+03:00"
+    }
+  ],
+
+  "decisions": [
+    {
+      "id": "decision_001",
+      "title": "Memory architecture",
+      "decision": "Разделить память на Facts, Decisions, Commitments и Episodes",
+      "reason": "Чтобы различать знания, решения, обязательства и историю событий",
+      "status": "active",
+      "project_ids": [
+        "project_masha_home"
+      ],
+      "source_episode": "episode_001",
+      "superseded_by": null,
+      "created_at": "2026-08-10T10:00:00+03:00",
+      "updated_at": "2026-08-10T10:00:00+03:00"
+    }
+  ],
+
+  "commitments": [
+    {
+      "id": "commitment_001",
+      "text": "Продолжить разработку Masha Home",
+      "owner": "misha",
+      "status": "open",
+      "project_ids": [
+        "project_masha_home"
+      ],
+      "due_at": null,
+      "completed_at": null,
+      "importance": 0.9,
+      "source_episode": "episode_001",
+      "created_at": "2026-08-10T10:00:00+03:00",
+      "updated_at": "2026-08-10T10:00:00+03:00"
+    }
+  ],
+
+  "episodes": [
+    {
+      "id": "episode_001",
+      "title": "Спроектировали Memory v0.3",
+      "summary": "Мы определили основные сущности памяти, правила Working Memory и принцип supersession.",
+      "occurred_at": "2026-08-10T10:00:00+03:00",
+      "source": "conversation",
+      "importance": 2.0,
+
+      "context": {
+        "projects": [
+          "project_masha_home"
+        ],
+        "participants": [
+          "misha",
+          "masha"
+        ],
+        "topics": [
+          "memory",
+          "architecture",
+          "masha-home"
+        ]
+      },
+
+      "produced": {
+        "facts": [
+          "fact_001"
+        ],
+        "decisions": [
+          "decision_001"
+        ],
+        "commitments": [
+          "commitment_001"
+        ],
+        "project_changes": [
+          "project_masha_home"
+        ]
+      },
+
+      "updated": {
+        "facts": [],
+        "projects": [
+          "project_masha_home"
+        ],
+        "commitments": []
+      },
+
+      "superseded": {
+        "facts": [],
+        "decisions": [],
+        "commitments": []
+      },
+
+      "created_at": "2026-08-10T10:00:00+03:00"
+    }
+  ]
+}
