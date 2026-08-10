@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=65"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "masha-home"
+version = "0.1.0.dev0"
+description = "Local-first personal AI companion and shared digital space"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "jsonschema>=4.26,<5",
+    "pydantic>=2.12,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["backend*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"

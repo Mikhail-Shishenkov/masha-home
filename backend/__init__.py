@@ -1,0 +1,2 @@
+"""Masha Home backend package."""
+

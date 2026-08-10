@@ -1,0 +1,78 @@
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from uuid import uuid4
+
+from .conversation_models import Conversation, ConversationMessage, ConversationRole
+
+
+class ConversationStore:
+    """Portable JSON history. It is separate from long-term memory."""
+
+    def __init__(self, file_path: str | Path):
+        self.file_path = Path(file_path)
+        self.file_path.parent.mkdir(parents=True, exist_ok=True)
+        self._data = self._load()
+
+    def create(self) -> Conversation:
+        conversation = Conversation(id=str(uuid4()), created_at=self._now())
+        self._data["conversations"].append(conversation.model_dump(mode="json"))
+        self._save()
+        return conversation
+
+    def get(self, conversation_id: str) -> Conversation:
+        for raw in self._data["conversations"]:
+            if raw["id"] == conversation_id:
+                return Conversation.model_validate(raw)
+        raise KeyError(f"unknown conversation: {conversation_id}")
+
+    def latest(self) -> Conversation | None:
+        """Return the most recently created conversation, if this history has one."""
+        if not self._data["conversations"]:
+            return None
+        return Conversation.model_validate(self._data["conversations"][-1])
+
+    def append(self, conversation_id: str, role: ConversationRole, content: str) -> ConversationMessage:
+        self.get(conversation_id)
+        message = ConversationMessage(
+            id=str(uuid4()),
+            role=role,
+            content=content,
+            created_at=self._now(),
+            conversation_id=conversation_id,
+        )
+        self._data["messages"].append(message.model_dump(mode="json"))
+        self._save()
+        return message
+
+    def messages(self, conversation_id: str, *, limit: int = 16) -> tuple[ConversationMessage, ...]:
+        self.get(conversation_id)
+        messages = [
+            ConversationMessage.model_validate(raw)
+            for raw in self._data["messages"]
+            if raw["conversation_id"] == conversation_id
+        ]
+        return tuple(messages[-limit:])
+
+    def _load(self) -> dict[str, list[dict]]:
+        if not self.file_path.exists():
+            return {"conversations": [], "messages": []}
+        with self.file_path.open("r", encoding="utf-8") as file:
+            raw = json.load(file)
+        if set(raw) != {"conversations", "messages"}:
+            raise ValueError("invalid conversation history document")
+        return raw
+
+    def _save(self) -> None:
+        temporary = self.file_path.with_suffix(".tmp")
+        temporary.write_text(
+            json.dumps(self._data, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(self.file_path)
+
+    @staticmethod
+    def _now() -> datetime:
+        return datetime.now(timezone.utc)
