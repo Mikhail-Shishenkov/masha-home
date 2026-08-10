@@ -1,16 +1,16 @@
 from backend.memory.decision_store import DecisionStore
 
 
-store = DecisionStore("tests/fixtures/test_memory.json")
+def test_get_decision(memory_path: str):
+    decision = DecisionStore(memory_path).get_decision("decision_001")
 
-decision = store.get_decision("decision_001")
+    assert decision is not None
+    assert decision.title == "Memory architecture"
 
-print("DECISION:")
-print(decision)
 
-print("\nDECISIONS BY PROJECT:")
+def test_get_decisions_by_project(memory_path: str):
+    decisions = DecisionStore(memory_path).get_decisions_by_project(
+        "project_masha_home"
+    )
 
-decisions = store.get_decisions_by_project("project_masha_home")
-
-for item in decisions:
-    print("-", item.title)
+    assert [item.id for item in decisions] == ["decision_001"]

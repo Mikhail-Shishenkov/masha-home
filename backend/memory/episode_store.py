@@ -15,7 +15,7 @@ class EpisodeStore(BaseStore):
         result = []
 
         for episode_data in self.data.get("episodes", []):
-            projects = episode_data.get("context", {}).get("projects", [])
+            projects = episode_data.get("project_ids", [])
 
             if project_id in projects:
                 result.append(Episode(**episode_data))

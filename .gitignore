@@ -3,6 +3,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.egg-info/
 
 # Virtual environment
 .venv/
@@ -31,3 +32,9 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+local-data/model-benchmarks/
+local-data/conversations/
+local-data/behavioral-regressions/
+local-data/memory-proposals.json
+local-data/memory-backups/
+local-data/memory-exports/

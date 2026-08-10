@@ -1,59 +1,48 @@
-from backend.memory.memory_store import MemoryStore
 from backend.memory.memory_models import Fact
+from backend.memory.memory_store import MemoryStore
 
 
-store = MemoryStore("tests/fixtures/test_memory.json")
+def _new_fact() -> Fact:
+    return Fact(
+        id="fact_003",
+        subject="misha",
+        key="learning_python",
+        value="Изучает Python внутри проекта Masha Home",
+        status="active",
+        visibility="visible",
+        importance=0.8,
+        confidence=1.0,
+        source="conversation",
+        owner="misha",
+        known_by=["misha", "masha"],
+        project_ids=["project_masha_home"],
+        source_episode_ids=[],
+        superseded_by=None,
+        created_at="2026-08-10T10:00:00+03:00",
+        updated_at="2026-08-10T10:00:00+03:00",
+    )
 
-fact = store.get_fact("fact_001")
 
-print(fact)
-print(fact.key)
-print(fact.value)
-print(fact.owner)
+def test_get_project_and_fact(memory_path: str):
+    store = MemoryStore(memory_path)
 
-new_fact = Fact(
-    id="",
-    subject="misha",
-    key="learning_python",
-    value="Изучает Python внутри проекта Masha Home",
-    status="active",
-    importance=0.8,
-    confidence=1.0,
-    source="conversation",
-    owner="misha",
-    known_by=["misha", "masha"],
-    project_ids=["project_masha_home"],
-    created_at="2026-08-10T10:00:00+03:00",
-    updated_at="2026-08-10T10:00:00+03:00"
-)
+    assert store.get_project("project_masha_home").name == "Masha Home"
+    assert store.get_project("unknown") is None
+    assert store.get_fact("fact_001").key == "repository"
+    assert store.get_fact("unknown") is None
 
-store.add_fact(new_fact)
-duplicate_result = store.add_fact(new_fact)
 
-print("First add:", True)
-print("Duplicate add:", duplicate_result)
-store.save()
-first_result = store.add_fact(new_fact)
-duplicate_result = store.add_fact(new_fact)
+def test_add_update_and_save_fact_in_isolated_file(memory_path: str):
+    store = MemoryStore(memory_path)
+    fact = _new_fact()
 
-print("First add:", first_result)
-print("Duplicate add:", duplicate_result)
+    assert store.add_fact(fact) is True
+    assert store.add_fact(fact) is False
 
-new_fact.value = "Изучает Python и строит Masha Home"
+    fact.value = "Изучает Python и строит Masha Home"
+    assert store.update_fact(fact) is True
+    store.save()
 
-update_result = store.update_fact(new_fact)
-
-print("Update:", update_result)
-
-store.save()
-
-print(store.get_fact("fact_002"))
-print("\nPROJECT:")
-
-project = store.get_project("project_masha_home")
-print(project)
-
-print("\nFACTS BY PROJECT:")
-
-facts = store.get_facts_by_project("project_masha_home")
-print(facts)
+    reloaded_fact = MemoryStore(memory_path).get_fact("fact_003")
+    assert reloaded_fact is not None
+    assert reloaded_fact.value == "Изучает Python и строит Masha Home"

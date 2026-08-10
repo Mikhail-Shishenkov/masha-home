@@ -1,29 +1,9 @@
-import json
-
-from backend.memory.memory_models import Project, Fact
+from backend.memory.memory_models import MemoryDocument
 
 
-with open("memory/test_memory.json", "r", encoding="utf-8") as file:
-    data = json.load(file)
+def test_canonical_memory_matches_python_model(canonical_memory: dict):
+    document = MemoryDocument.model_validate(canonical_memory)
 
-
-project_data = data["project"]
-fact_data = data["facts"][0]
-
-
-project = Project(**{
-    "id": project_data["id"],
-    "name": project_data["name"],
-    "description": project_data["description"],
-    "status": project_data["status"],
-})
-
-
-fact = Fact(**fact_data)
-
-
-print("PROJECT:")
-print(project)
-
-print("\nFACT:")
-print(fact)
+    assert document.schema_version == "0.4"
+    assert document.projects[0].name == "Masha Home"
+    assert document.facts[0].project_ids == ["project_masha_home"]

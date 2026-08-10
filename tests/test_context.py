@@ -1,44 +1,23 @@
 from backend.context import ContextBuilder
 
 
-builder = ContextBuilder(
-    "tests/fixtures/test_memory.json",
-    "persona/masha.json"
-)
+def test_context_builder_collects_project_context(
+    memory_path: str,
+    persona_path: str,
+):
+    context = ContextBuilder(
+        memory_path=memory_path,
+        persona_path=persona_path,
+    ).build(
+        persona_id="masha",
+        project_id="project_masha_home",
+    )
 
-context = builder.build(
-    persona_id="masha",
-    project_id="project_masha_home"
-)
-
-
-print("PERSONA:")
-print(context.persona.name)
-
-print("\nPROJECT:")
-print(context.project.name)
-
-print("\nFACTS:")
-
-for fact in context.facts:
-    print("-", fact.key, "=", fact.value)
-
-print("\nDECISIONS:")
-
-for decision in context.decisions:
-    print("-", decision.title)
-    print(" ", decision.decision)
-    print(" ", decision.reason)
-
-print("\nCOMMITMENTS:")
-
-for commitment in context.commitments:
-    print("-", commitment.text)
-    print("  owner:", commitment.owner)
-    print("  status:", commitment.status)
-
-print("\nEPISODES:")
-
-for episode in context.episodes:
-    print("-", episode.title)
-    print(" ", episode.summary)
+    assert context.persona.name == "Маша"
+    assert context.project.name == "Masha Home"
+    assert {fact.id for fact in context.facts} == {"fact_001", "fact_002"}
+    assert [item.id for item in context.decisions] == ["decision_001"]
+    assert [item.id for item in context.commitments] == ["commitment_001"]
+    assert [item.id for item in context.episodes] == ["episode_001"]
+    assert context.working_memory
+    assert context.current_time

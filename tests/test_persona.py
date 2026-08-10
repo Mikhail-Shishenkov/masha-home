@@ -1,15 +1,11 @@
 from backend.persona.masha_persona import MashaPersona
 
 
-print("NAME:")
-print(MashaPersona.name)
-
-print("\nPERSONALITY:")
-for item in MashaPersona.personality:
-    print("-", item)
-
-print("\nVISUAL IDENTITY:")
-print(MashaPersona.visual_identity.description)
-
-print("\nREFERENCE:")
-print(MashaPersona.visual_identity.reference_image)
+def test_builtin_masha_persona_has_visual_identity():
+    assert MashaPersona.id == "masha"
+    assert MashaPersona.name == "Маша"
+    assert MashaPersona.visual_identity is not None
+    assert (
+        MashaPersona.visual_identity.reference_image
+        == "persona/visual_identity/canonical_reference.jpg"
+    )

@@ -24,33 +24,26 @@ class MemoryRetriever:
         if project_id is None:
             return True
 
-        # Facts / Decisions / Commitments
         project_ids = item.get("project_ids", [])
 
         if project_id in project_ids:
             return True
 
-        # Episodes хранят проекты внутри context
-        context = item.get("context", {})
-        context_projects = context.get("projects", [])
-
-        if project_id in context_projects:
-            return True
-
-        # Сам Project
         if item.get("id") == project_id:
             return True
 
         return False
 
     def _matches_status(self, item: dict[str, Any]) -> bool:
+        if item.get("visibility", "visible") != "visible":
+            return False
+
         status = item.get("status")
 
-        # Episodes не имеют status
         if status is None:
             return True
 
-        return status in ("active", "open")
+        return status in ("active", "open", "current")
 
     def _importance(self, item: dict[str, Any]) -> float:
         return float(item.get("importance", 0.0))

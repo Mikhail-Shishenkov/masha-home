@@ -1,13 +1,9 @@
 from backend.memory.base_store import BaseStore
 
 
-store = BaseStore("tests/fixtures/test_memory.json")
+def test_base_store_loads_memory_collections(memory_path: str):
+    store = BaseStore(memory_path)
 
-print("PROJECT:")
-print(store.data["project"]["name"])
-
-print("\nFACT COUNT:")
-print(len(store.data["facts"]))
-
-print("\nDECISION COUNT:")
-print(len(store.data["decisions"]))
+    assert store.data["projects"][0]["name"] == "Masha Home"
+    assert len(store.data["facts"]) == 2
+    assert len(store.data["decisions"]) == 1

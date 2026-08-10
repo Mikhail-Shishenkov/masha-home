@@ -1,28 +1,31 @@
-import json
-from pathlib import Path
-
-from .memory_models import Fact, Project
+from .base_store import BaseStore
+from .memory_models import Fact, MemoryDocument, Project
 
 
-class MemoryStore:
-    def __init__(self, file_path: str):
-        self.file_path = Path(file_path)
-        self.data = self._load()
+class MemoryStore(BaseStore):
 
-    def _load(self):
-        with open(self.file_path, "r", encoding="utf-8") as file:
-            return json.load(file)
+    def read_document(self) -> MemoryDocument:
+        """Expose the active JSON document through the shared storage boundary."""
+        return MemoryDocument.model_validate(self.data)
+
+    def replace_document(
+        self,
+        document: MemoryDocument,
+        *,
+        action: str = "replace_document",
+        audit_payload: dict | None = None,
+    ) -> None:
+        """Persist only a fully validated document to the active JSON store."""
+        validated = MemoryDocument.model_validate(document)
+        self.data = validated.model_dump(mode="json")
+        self.save()
 
     def get_project(self, project_id: str):
-        project_data = self.data.get("project")
+        for project_data in self.data.get("projects", []):
+            if project_data["id"] == project_id:
+                return Project(**project_data)
 
-        if project_data is None:
-            return None
-
-        if project_data["id"] != project_id:
-            return None
-
-        return Project(**project_data)
+        return None
 
     def get_fact(self, fact_id: str):
         for fact_data in self.data["facts"]:
@@ -43,22 +46,7 @@ class MemoryStore:
         return result
 
     def _fact_to_dict(self, fact: Fact):
-        return {
-            "id": fact.id,
-            "subject": fact.subject,
-            "key": fact.key,
-            "value": fact.value,
-            "status": fact.status,
-            "importance": fact.importance,
-            "confidence": fact.confidence,
-            "source": fact.source,
-            "owner": fact.owner,
-            "known_by": fact.known_by,
-            "project_ids": fact.project_ids,
-            "superseded_by": fact.superseded_by,
-            "created_at": fact.created_at,
-            "updated_at": fact.updated_at
-        }
+        return fact.model_dump(mode="json")
 
     def add_fact(self, fact: Fact):
         if self.get_fact(fact.id) is not None:
@@ -78,11 +66,64 @@ class MemoryStore:
 
         return False
 
-    def save(self):
-        with open(self.file_path, "w", encoding="utf-8") as file:
-            json.dump(
-                self.data,
-                file,
-                ensure_ascii=False,
-                indent=2
-            )
+    def forget_fact(self, fact_id: str) -> bool:
+        return self.forget("fact", fact_id)
+
+    def restore_fact(self, fact_id: str) -> bool:
+        return self.restore("fact", fact_id)
+
+    def _find_collection(self, memory_type: str):
+        collections = {
+            "fact": "facts",
+            "decision": "decisions",
+            "commitment": "commitments",
+            "episode": "episodes",
+        }
+
+        return collections.get(memory_type)
+
+    def _set_memory_visibility(
+            self,
+            memory_type: str,
+            memory_id: str,
+            visibility: str,
+    ) -> bool:
+
+        collection_name = self._find_collection(memory_type)
+
+        if collection_name is None:
+            return False
+
+        for item in self.data.get(collection_name, []):
+            if item.get("id") == memory_id:
+                if item.get("visibility") == visibility:
+                    return False
+
+                item["visibility"] = visibility
+                return True
+
+        return False
+
+    def forget(
+            self,
+            memory_type: str,
+            memory_id: str,
+    ) -> bool:
+
+        return self._set_memory_visibility(
+            memory_type,
+            memory_id,
+            "hidden",
+        )
+
+    def restore(
+            self,
+            memory_type: str,
+            memory_id: str,
+    ) -> bool:
+
+        return self._set_memory_visibility(
+            memory_type,
+            memory_id,
+            "visible",
+        )

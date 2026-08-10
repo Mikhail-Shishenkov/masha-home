@@ -1,262 +1,486 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Masha Home Memory v0.3",
-  "type": "object",
-
-  "definitions": {
-    "IdentityCode": {
-      "type": "string",
-      "enum": [
-        "misha",
-        "masha",
-        "system"
-      ]
-    },
-
-    "Timestamp": {
-      "type": "string",
-      "format": "date-time"
-    },
-
-    "Importance": {
-      "type": "number",
-      "minimum": 0,
-      "maximum": 1
-    },
-
-    "Confidence": {
-      "type": "number",
-      "minimum": 0,
-      "maximum": 1
-    },
-
-    "WorkingMemory": {
-      "type": "object",
-      "properties": {
-        "current_blockers": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "open_questions": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "architecture_notes": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "next_actions": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        }
-      },
-      "required": [
-        "current_blockers",
-        "open_questions",
-        "architecture_notes",
-        "next_actions"
-      ],
-      "additionalProperties": false
-    },
-
-    "Project": {
-      "type": "object",
+  "$defs": {
+    "AffectiveRecord": {
+      "additionalProperties": false,
       "properties": {
         "id": {
+          "minLength": 1,
+          "title": "Id",
           "type": "string"
         },
-        "name": {
-          "type": "string",
-          "minLength": 1
+        "emotion": {
+          "minLength": 1,
+          "title": "Emotion",
+          "type": "string"
         },
         "description": {
+          "minLength": 1,
+          "title": "Description",
           "type": "string"
+        },
+        "intensity": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Intensity",
+          "type": "number"
+        },
+        "significance": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Significance",
+          "type": "number"
         },
         "status": {
-          "type": "string",
-          "enum": [
-            "active",
-            "paused",
-            "completed",
-            "archived"
-          ]
-        },
-        "working_memory": {
-          "$ref": "#/definitions/WorkingMemory"
-        },
-        "created_at": {
-          "$ref": "#/definitions/Timestamp"
-        },
-        "updated_at": {
-          "$ref": "#/definitions/Timestamp"
-        },
-        "archived_at": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/Timestamp"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "required": [
-        "id",
-        "name",
-        "status",
-        "working_memory",
-        "created_at",
-        "updated_at"
-      ],
-      "additionalProperties": false
-    },
-
-    "Fact": {
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "string"
-        },
-        "subject": {
-          "type": "string"
-        },
-        "key": {
-          "type": "string"
-        },
-        "value": {},
-        "status": {
-          "type": "string",
-          "enum": [
-            "active",
-            "superseded",
-            "archived"
-          ]
-        },
-        "importance": {
-          "$ref": "#/definitions/Importance"
-        },
-        "confidence": {
-          "$ref": "#/definitions/Confidence"
+          "$ref": "#/$defs/AffectiveStatus"
         },
         "source": {
-          "type": "string",
-          "enum": [
-            "explicit_user_input",
-            "conversation",
-            "system",
-            "inference"
-          ]
+          "$ref": "#/$defs/SourceType"
         },
-        "owner": {
-          "$ref": "#/definitions/IdentityCode"
+        "visibility": {
+          "$ref": "#/$defs/Visibility"
         },
-        "known_by": {
-          "type": "array",
+        "project_ids": {
           "items": {
-            "$ref": "#/definitions/IdentityCode"
+            "minLength": 1,
+            "type": "string"
           },
-          "uniqueItems": true
+          "title": "Project Ids",
+          "type": "array"
         },
-        "superseded_by": {
+        "cause_episode_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Cause Episode Ids",
+          "type": "array"
+        },
+        "related_memory_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Related Memory Ids",
+          "type": "array"
+        },
+        "reflection_id": {
           "anyOf": [
             {
+              "minLength": 1,
               "type": "string"
             },
             {
               "type": "null"
             }
-          ]
+          ],
+          "title": "Reflection Id"
         },
-        "created_at": {
-          "$ref": "#/definitions/Timestamp"
+        "started_at": {
+          "format": "date-time",
+          "title": "Started At",
+          "type": "string"
         },
         "updated_at": {
-          "$ref": "#/definitions/Timestamp"
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "resolved_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Resolved At"
         }
       },
       "required": [
         "id",
-        "subject",
-        "key",
-        "value",
+        "emotion",
+        "description",
+        "intensity",
+        "significance",
         "status",
-        "importance",
-        "confidence",
         "source",
+        "visibility",
+        "project_ids",
+        "cause_episode_ids",
+        "related_memory_ids",
+        "reflection_id",
+        "started_at",
+        "updated_at",
+        "resolved_at"
+      ],
+      "title": "AffectiveRecord",
+      "type": "object"
+    },
+    "AffectiveStatus": {
+      "enum": [
+        "active",
+        "resolved"
+      ],
+      "title": "AffectiveStatus",
+      "type": "string"
+    },
+    "CandidateStatus": {
+      "enum": [
+        "pending",
+        "approved",
+        "rejected",
+        "expired"
+      ],
+      "title": "CandidateStatus",
+      "type": "string"
+    },
+    "CandidateType": {
+      "enum": [
+        "fact",
+        "decision",
+        "commitment",
+        "reflection",
+        "relationship_memory",
+        "affective_record"
+      ],
+      "title": "CandidateType",
+      "type": "string"
+    },
+    "Commitment": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "text": {
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "owner": {
+          "$ref": "#/$defs/IdentityCode"
+        },
+        "status": {
+          "$ref": "#/$defs/CommitmentStatus"
+        },
+        "visibility": {
+          "$ref": "#/$defs/Visibility"
+        },
+        "project_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Project Ids",
+          "type": "array"
+        },
+        "due_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Due At"
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Completed At"
+        },
+        "importance": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Importance",
+          "type": "number"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceType"
+        },
+        "source_episode_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Source Episode Ids",
+          "type": "array"
+        },
+        "replaces_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Replaces Id"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "text",
         "owner",
-        "known_by",
+        "status",
+        "visibility",
+        "project_ids",
+        "due_at",
+        "completed_at",
+        "importance",
+        "source",
+        "source_episode_ids",
+        "replaces_id",
         "created_at",
         "updated_at"
       ],
-      "additionalProperties": false
+      "title": "Commitment",
+      "type": "object"
     },
-        "Decision": {
-      "type": "object",
+    "CommitmentStatus": {
+      "enum": [
+        "open",
+        "completed",
+        "cancelled",
+        "expired"
+      ],
+      "title": "CommitmentStatus",
+      "type": "string"
+    },
+    "ContinuityFollowUp": {
+      "additionalProperties": false,
       "properties": {
         "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "topic": {
+          "minLength": 1,
+          "title": "Topic",
+          "type": "string"
+        },
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "reason_to_return": {
+          "minLength": 1,
+          "title": "Reason To Return",
+          "type": "string"
+        },
+        "priority": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Priority",
+          "type": "number"
+        },
+        "status": {
+          "$ref": "#/$defs/FollowUpStatus"
+        },
+        "source_memory_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Source Memory Ids",
+          "type": "array"
+        },
+        "revisit_after": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Revisit After"
+        }
+      },
+      "required": [
+        "id",
+        "topic",
+        "summary",
+        "reason_to_return",
+        "priority",
+        "status",
+        "source_memory_ids",
+        "revisit_after"
+      ],
+      "title": "ContinuityFollowUp",
+      "type": "object"
+    },
+    "ContinuityState": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "relationship_key": {
+          "minLength": 1,
+          "title": "Relationship Key",
+          "type": "string"
+        },
+        "last_interaction_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Last Interaction At"
+        },
+        "affective_record_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Affective Record Ids",
+          "type": "array"
+        },
+        "current_focus": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Current Focus",
+          "type": "array"
+        },
+        "intended_follow_ups": {
+          "items": {
+            "$ref": "#/$defs/ContinuityFollowUp"
+          },
+          "title": "Intended Follow Ups",
+          "type": "array"
+        },
+        "based_on_episode_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Based On Episode Ids",
+          "type": "array"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "relationship_key",
+        "last_interaction_at",
+        "affective_record_ids",
+        "current_focus",
+        "intended_follow_ups",
+        "based_on_episode_ids",
+        "updated_at"
+      ],
+      "title": "ContinuityState",
+      "type": "object"
+    },
+    "Decision": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
           "type": "string"
         },
         "title": {
-          "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
         },
         "decision": {
-          "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "title": "Decision",
+          "type": "string"
         },
         "reason": {
-          "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
         },
         "status": {
-          "type": "string",
-          "enum": [
-            "active",
-            "superseded",
-            "cancelled"
-          ]
+          "$ref": "#/$defs/DecisionStatus"
+        },
+        "visibility": {
+          "$ref": "#/$defs/Visibility"
         },
         "project_ids": {
-          "type": "array",
           "items": {
+            "minLength": 1,
             "type": "string"
           },
-          "uniqueItems": true
+          "title": "Project Ids",
+          "type": "array"
         },
-        "source_episode": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
+        "source": {
+          "$ref": "#/$defs/SourceType"
+        },
+        "source_episode_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Source Episode Ids",
+          "type": "array"
         },
         "superseded_by": {
           "anyOf": [
             {
+              "minLength": 1,
               "type": "string"
             },
             {
               "type": "null"
             }
-          ]
+          ],
+          "title": "Superseded By"
         },
         "created_at": {
-          "$ref": "#/definitions/Timestamp"
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
         },
         "updated_at": {
-          "$ref": "#/definitions/Timestamp"
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
         }
       },
       "required": [
@@ -265,258 +489,105 @@
         "decision",
         "reason",
         "status",
+        "visibility",
+        "project_ids",
+        "source",
+        "source_episode_ids",
+        "superseded_by",
         "created_at",
         "updated_at"
       ],
-      "additionalProperties": false
+      "title": "Decision",
+      "type": "object"
     },
-
-    "Commitment": {
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "string"
-        },
-        "text": {
-          "type": "string",
-          "minLength": 1
-        },
-        "owner": {
-          "$ref": "#/definitions/IdentityCode"
-        },
-        "status": {
-          "type": "string",
-          "enum": [
-            "open",
-            "completed",
-            "cancelled",
-            "expired"
-          ]
-        },
-        "project_ids": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "uniqueItems": true
-        },
-        "due_at": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/Timestamp"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "completed_at": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/Timestamp"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "importance": {
-          "$ref": "#/definitions/Importance"
-        },
-        "source_episode": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "created_at": {
-          "$ref": "#/definitions/Timestamp"
-        },
-        "updated_at": {
-          "$ref": "#/definitions/Timestamp"
-        }
-      },
-      "required": [
-        "id",
-        "text",
-        "owner",
-        "status",
-        "created_at",
-        "updated_at"
+    "DecisionStatus": {
+      "enum": [
+        "active",
+        "superseded",
+        "cancelled"
       ],
-      "additionalProperties": false
+      "title": "DecisionStatus",
+      "type": "string"
     },
-
     "Episode": {
-      "type": "object",
+      "additionalProperties": false,
       "properties": {
         "id": {
+          "minLength": 1,
+          "title": "Id",
           "type": "string"
         },
         "title": {
-          "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
         },
         "summary": {
-          "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
         },
         "occurred_at": {
-          "$ref": "#/definitions/Timestamp"
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
         },
         "source": {
-          "type": "string",
-          "enum": [
-            "explicit_user_input",
-            "conversation",
-            "system",
-            "inference"
-          ]
+          "$ref": "#/$defs/SourceType"
         },
         "importance": {
-          "$ref": "#/definitions/Importance"
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Importance",
+          "type": "number"
         },
-        "context": {
-          "type": "object",
-          "properties": {
-            "projects": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "uniqueItems": true
-            },
-            "participants": {
-              "type": "array",
-              "items": {
-                "$ref": "#/definitions/IdentityCode"
-              },
-              "uniqueItems": true
-            },
-            "topics": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "uniqueItems": true
-            }
+        "visibility": {
+          "$ref": "#/$defs/Visibility"
+        },
+        "project_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
           },
-          "required": [
-            "participants",
-            "topics"
-          ],
-          "additionalProperties": false
+          "title": "Project Ids",
+          "type": "array"
+        },
+        "participants": {
+          "items": {
+            "$ref": "#/$defs/IdentityCode"
+          },
+          "title": "Participants",
+          "type": "array"
+        },
+        "topics": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Topics",
+          "type": "array"
         },
         "produced": {
-          "type": "object",
-          "properties": {
-            "facts": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "uniqueItems": true
-            },
-            "decisions": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "uniqueItems": true
-            },
-            "commitments": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "uniqueItems": true
-            },
-            "project_changes": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "uniqueItems": true
-            }
-          },
-          "required": [
-            "facts",
-            "decisions",
-            "commitments",
-            "project_changes"
-          ],
-          "additionalProperties": false
+          "$ref": "#/$defs/EpisodeProduced"
         },
         "updated": {
-          "type": "object",
-          "properties": {
-            "facts": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "uniqueItems": true
-            },
-            "projects": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "uniqueItems": true
-            },
-            "commitments": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "uniqueItems": true
-            }
-          },
-          "required": [
-            "facts",
-            "projects",
-            "commitments"
-          ],
-          "additionalProperties": false
+          "$ref": "#/$defs/EpisodeUpdated"
         },
         "superseded": {
-          "type": "object",
-          "properties": {
-            "facts": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "uniqueItems": true
-            },
-            "decisions": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "uniqueItems": true
-            },
-            "commitments": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "uniqueItems": true
-            }
+          "$ref": "#/$defs/EpisodeSuperseded"
+        },
+        "related_memory_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
           },
-          "required": [
-            "facts",
-            "decisions",
-            "commitments"
-          ],
-          "additionalProperties": false
+          "title": "Related Memory Ids",
+          "type": "array"
         },
         "created_at": {
-          "$ref": "#/definitions/Timestamp"
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
         }
       },
       "required": [
@@ -526,13 +597,822 @@
         "occurred_at",
         "source",
         "importance",
-        "context",
+        "visibility",
+        "project_ids",
+        "participants",
+        "topics",
         "produced",
         "updated",
         "superseded",
+        "related_memory_ids",
         "created_at"
       ],
-      "additionalProperties": false
+      "title": "Episode",
+      "type": "object"
+    },
+    "EpisodeProduced": {
+      "additionalProperties": false,
+      "properties": {
+        "facts": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Facts",
+          "type": "array"
+        },
+        "decisions": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Decisions",
+          "type": "array"
+        },
+        "commitments": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Commitments",
+          "type": "array"
+        },
+        "reflections": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Reflections",
+          "type": "array"
+        },
+        "relationship_memories": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Relationship Memories",
+          "type": "array"
+        },
+        "affective_records": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Affective Records",
+          "type": "array"
+        },
+        "project_changes": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Project Changes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "facts",
+        "decisions",
+        "commitments",
+        "reflections",
+        "relationship_memories",
+        "affective_records",
+        "project_changes"
+      ],
+      "title": "EpisodeProduced",
+      "type": "object"
+    },
+    "EpisodeSuperseded": {
+      "additionalProperties": false,
+      "properties": {
+        "facts": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Facts",
+          "type": "array"
+        },
+        "decisions": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Decisions",
+          "type": "array"
+        },
+        "commitments": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Commitments",
+          "type": "array"
+        }
+      },
+      "required": [
+        "facts",
+        "decisions",
+        "commitments"
+      ],
+      "title": "EpisodeSuperseded",
+      "type": "object"
+    },
+    "EpisodeUpdated": {
+      "additionalProperties": false,
+      "properties": {
+        "facts": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Facts",
+          "type": "array"
+        },
+        "decisions": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Decisions",
+          "type": "array"
+        },
+        "commitments": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Commitments",
+          "type": "array"
+        },
+        "continuity_states": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Continuity States",
+          "type": "array"
+        },
+        "projects": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Projects",
+          "type": "array"
+        }
+      },
+      "required": [
+        "facts",
+        "decisions",
+        "commitments",
+        "continuity_states",
+        "projects"
+      ],
+      "title": "EpisodeUpdated",
+      "type": "object"
+    },
+    "Fact": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "subject": {
+          "minLength": 1,
+          "title": "Subject",
+          "type": "string"
+        },
+        "key": {
+          "minLength": 1,
+          "title": "Key",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "status": {
+          "$ref": "#/$defs/FactStatus"
+        },
+        "visibility": {
+          "$ref": "#/$defs/Visibility"
+        },
+        "importance": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Importance",
+          "type": "number"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceType"
+        },
+        "owner": {
+          "$ref": "#/$defs/IdentityCode"
+        },
+        "known_by": {
+          "items": {
+            "$ref": "#/$defs/IdentityCode"
+          },
+          "title": "Known By",
+          "type": "array"
+        },
+        "project_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Project Ids",
+          "type": "array"
+        },
+        "source_episode_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Source Episode Ids",
+          "type": "array"
+        },
+        "superseded_by": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Superseded By"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "subject",
+        "key",
+        "value",
+        "status",
+        "visibility",
+        "importance",
+        "confidence",
+        "source",
+        "owner",
+        "known_by",
+        "project_ids",
+        "source_episode_ids",
+        "superseded_by",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "Fact",
+      "type": "object"
+    },
+    "FactStatus": {
+      "enum": [
+        "active",
+        "superseded"
+      ],
+      "title": "FactStatus",
+      "type": "string"
+    },
+    "FollowUpStatus": {
+      "enum": [
+        "open",
+        "snoozed",
+        "resolved"
+      ],
+      "title": "FollowUpStatus",
+      "type": "string"
+    },
+    "IdentityCode": {
+      "enum": [
+        "misha",
+        "masha",
+        "system"
+      ],
+      "title": "IdentityCode",
+      "type": "string"
+    },
+    "JsonValue": {},
+    "MashaReflection": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "text": {
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "meaning": {
+          "minLength": 1,
+          "title": "Meaning",
+          "type": "string"
+        },
+        "importance": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Importance",
+          "type": "number"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceType"
+        },
+        "visibility": {
+          "$ref": "#/$defs/Visibility"
+        },
+        "project_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Project Ids",
+          "type": "array"
+        },
+        "source_episode_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Source Episode Ids",
+          "type": "array"
+        },
+        "related_memory_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Related Memory Ids",
+          "type": "array"
+        },
+        "reconsiders_reflection_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reconsiders Reflection Id"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "text",
+        "meaning",
+        "importance",
+        "confidence",
+        "source",
+        "visibility",
+        "project_ids",
+        "source_episode_ids",
+        "related_memory_ids",
+        "reconsiders_reflection_id",
+        "created_at"
+      ],
+      "title": "MashaReflection",
+      "type": "object"
+    },
+    "MemoryCandidate": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "candidate_type": {
+          "$ref": "#/$defs/CandidateType"
+        },
+        "proposed_payload": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Proposed Payload",
+          "type": "object"
+        },
+        "status": {
+          "$ref": "#/$defs/CandidateStatus"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceType"
+        },
+        "project_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Project Ids",
+          "type": "array"
+        },
+        "evidence_episode_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Evidence Episode Ids",
+          "type": "array"
+        },
+        "created_by": {
+          "$ref": "#/$defs/IdentityCode"
+        },
+        "reviewed_by": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IdentityCode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "reviewed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reviewed At"
+        },
+        "result_memory_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Result Memory Id"
+        }
+      },
+      "required": [
+        "id",
+        "candidate_type",
+        "proposed_payload",
+        "status",
+        "confidence",
+        "source",
+        "project_ids",
+        "evidence_episode_ids",
+        "created_by",
+        "reviewed_by",
+        "created_at",
+        "reviewed_at",
+        "result_memory_id"
+      ],
+      "title": "MemoryCandidate",
+      "type": "object"
+    },
+    "Project": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Description"
+        },
+        "status": {
+          "$ref": "#/$defs/ProjectStatus"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Completed At"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "description",
+        "status",
+        "created_at",
+        "updated_at",
+        "completed_at"
+      ],
+      "title": "Project",
+      "type": "object"
+    },
+    "ProjectStatus": {
+      "enum": [
+        "active",
+        "dormant",
+        "completed"
+      ],
+      "title": "ProjectStatus",
+      "type": "string"
+    },
+    "RelationshipKind": {
+      "enum": [
+        "shared_milestone",
+        "interaction_preference",
+        "helpful_pattern",
+        "shared_symbol",
+        "boundary",
+        "relationship_note"
+      ],
+      "title": "RelationshipKind",
+      "type": "string"
+    },
+    "RelationshipMemory": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/RelationshipKind"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "content": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "status": {
+          "$ref": "#/$defs/RelationshipStatus"
+        },
+        "visibility": {
+          "$ref": "#/$defs/Visibility"
+        },
+        "importance": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Importance",
+          "type": "number"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceType"
+        },
+        "project_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Project Ids",
+          "type": "array"
+        },
+        "source_episode_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Source Episode Ids",
+          "type": "array"
+        },
+        "revises_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Revises Id"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "title",
+        "content",
+        "status",
+        "visibility",
+        "importance",
+        "confidence",
+        "source",
+        "project_ids",
+        "source_episode_ids",
+        "revises_id",
+        "created_at"
+      ],
+      "title": "RelationshipMemory",
+      "type": "object"
+    },
+    "RelationshipStatus": {
+      "enum": [
+        "current",
+        "revised"
+      ],
+      "title": "RelationshipStatus",
+      "type": "string"
+    },
+    "SourceType": {
+      "enum": [
+        "explicit_user_input",
+        "conversation",
+        "system",
+        "inference"
+      ],
+      "title": "SourceType",
+      "type": "string"
+    },
+    "Visibility": {
+      "enum": [
+        "visible",
+        "hidden"
+      ],
+      "title": "Visibility",
+      "type": "string"
     }
-  }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "0.4",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "identity_version": {
+      "minLength": 1,
+      "title": "Identity Version",
+      "type": "string"
+    },
+    "projects": {
+      "items": {
+        "$ref": "#/$defs/Project"
+      },
+      "title": "Projects",
+      "type": "array"
+    },
+    "facts": {
+      "items": {
+        "$ref": "#/$defs/Fact"
+      },
+      "title": "Facts",
+      "type": "array"
+    },
+    "decisions": {
+      "items": {
+        "$ref": "#/$defs/Decision"
+      },
+      "title": "Decisions",
+      "type": "array"
+    },
+    "commitments": {
+      "items": {
+        "$ref": "#/$defs/Commitment"
+      },
+      "title": "Commitments",
+      "type": "array"
+    },
+    "episodes": {
+      "items": {
+        "$ref": "#/$defs/Episode"
+      },
+      "title": "Episodes",
+      "type": "array"
+    },
+    "memory_candidates": {
+      "items": {
+        "$ref": "#/$defs/MemoryCandidate"
+      },
+      "title": "Memory Candidates",
+      "type": "array"
+    },
+    "reflections": {
+      "items": {
+        "$ref": "#/$defs/MashaReflection"
+      },
+      "title": "Reflections",
+      "type": "array"
+    },
+    "relationship_memories": {
+      "items": {
+        "$ref": "#/$defs/RelationshipMemory"
+      },
+      "title": "Relationship Memories",
+      "type": "array"
+    },
+    "affective_records": {
+      "items": {
+        "$ref": "#/$defs/AffectiveRecord"
+      },
+      "title": "Affective Records",
+      "type": "array"
+    },
+    "continuity_states": {
+      "items": {
+        "$ref": "#/$defs/ContinuityState"
+      },
+      "title": "Continuity States",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "identity_version",
+    "projects",
+    "facts",
+    "decisions",
+    "commitments",
+    "episodes",
+    "memory_candidates",
+    "reflections",
+    "relationship_memories",
+    "affective_records",
+    "continuity_states"
+  ],
+  "title": "MemoryDocument",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
 }

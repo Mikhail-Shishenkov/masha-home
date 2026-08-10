@@ -1,27 +1,17 @@
 {
-  "project": {
-    "id": "project_masha_home",
-    "name": "Masha Home",
-    "description": "Наш домашний AI-проект",
-    "status": "active",
-    "working_memory": {
-      "current_blockers": [],
-      "open_questions": [
-        "Как реализовать хранение и поиск памяти?"
-      ],
-      "architecture_notes": [
-        "Memory v0.3 разделяет Facts, Decisions, Commitments и Episodes",
-        "Supersession разрешается на уровне приложения"
-      ],
-      "next_actions": [
-        "Проверить memory_schema.json",
-        "Создать первые Python-модели памяти"
-      ]
-    },
-    "created_at": "2026-08-10T10:00:00+03:00",
-    "updated_at": "2026-08-10T10:00:00+03:00",
-    "archived_at": null
-  },
+  "schema_version": "0.4",
+  "identity_version": "masha-0.1",
+  "projects": [
+    {
+      "id": "project_masha_home",
+      "name": "Masha Home",
+      "description": "Наш домашний AI-проект",
+      "status": "active",
+      "created_at": "2026-08-10T10:00:00+03:00",
+      "updated_at": "2026-08-10T10:00:00+03:00",
+      "completed_at": null
+    }
+  ],
   "facts": [
     {
       "id": "fact_001",
@@ -29,6 +19,7 @@
       "key": "repository",
       "value": "https://github.com/Mikhail-Shishenkov/masha-home",
       "status": "active",
+      "visibility": "visible",
       "importance": 0.9,
       "confidence": 1.0,
       "source": "explicit_user_input",
@@ -36,6 +27,12 @@
       "known_by": [
         "misha",
         "masha"
+      ],
+      "project_ids": [
+        "project_masha_home"
+      ],
+      "source_episode_ids": [
+        "episode_001"
       ],
       "superseded_by": null,
       "created_at": "2026-08-10T10:00:00+03:00",
@@ -47,6 +44,7 @@
       "key": "learning_python",
       "value": "Изучает Python внутри проекта Masha Home",
       "status": "active",
+      "visibility": "visible",
       "importance": 0.8,
       "confidence": 1.0,
       "source": "conversation",
@@ -55,9 +53,36 @@
         "misha",
         "masha"
       ],
+      "project_ids": [
+        "project_masha_home"
+      ],
+      "source_episode_ids": [],
       "superseded_by": null,
       "created_at": "2026-08-10T10:00:00+03:00",
       "updated_at": "2026-08-10T10:00:00+03:00"
+    },
+    {
+      "id": "fact_6572e5ab-f659-4a3e-9717-99f884ccdbfb",
+      "subject": "misha",
+      "key": "preference",
+      "value": "локальные модели",
+      "status": "active",
+      "visibility": "visible",
+      "importance": 0.7,
+      "confidence": 1.0,
+      "source": "explicit_user_input",
+      "owner": "misha",
+      "known_by": [
+        "misha",
+        "masha"
+      ],
+      "project_ids": [
+        "project_masha_home"
+      ],
+      "source_episode_ids": [],
+      "superseded_by": null,
+      "created_at": "2026-08-10T21:50:03.692407Z",
+      "updated_at": "2026-08-10T21:50:03.692407Z"
     }
   ],
   "decisions": [
@@ -67,10 +92,14 @@
       "decision": "Разделить память на Facts, Decisions, Commitments и Episodes",
       "reason": "Чтобы различать знания, решения, обязательства и историю событий",
       "status": "active",
+      "visibility": "visible",
       "project_ids": [
         "project_masha_home"
       ],
-      "source_episode": "episode_001",
+      "source": "conversation",
+      "source_episode_ids": [
+        "episode_001"
+      ],
       "superseded_by": null,
       "created_at": "2026-08-10T10:00:00+03:00",
       "updated_at": "2026-08-10T10:00:00+03:00"
@@ -82,13 +111,18 @@
       "text": "Продолжить разработку Masha Home",
       "owner": "misha",
       "status": "open",
+      "visibility": "visible",
       "project_ids": [
         "project_masha_home"
       ],
       "due_at": null,
       "completed_at": null,
       "importance": 0.9,
-      "source_episode": "episode_001",
+      "source": "conversation",
+      "source_episode_ids": [
+        "episode_001"
+      ],
+      "replaces_id": null,
       "created_at": "2026-08-10T10:00:00+03:00",
       "updated_at": "2026-08-10T10:00:00+03:00"
     }
@@ -100,21 +134,20 @@
       "summary": "Мы определили основные сущности памяти, правила Working Memory и принцип supersession.",
       "occurred_at": "2026-08-10T10:00:00+03:00",
       "source": "conversation",
-      "importance": 2.0,
-      "context": {
-        "projects": [
-          "project_masha_home"
-        ],
-        "participants": [
-          "misha",
-          "masha"
-        ],
-        "topics": [
-          "memory",
-          "architecture",
-          "masha-home"
-        ]
-      },
+      "importance": 1.0,
+      "visibility": "visible",
+      "project_ids": [
+        "project_masha_home"
+      ],
+      "participants": [
+        "misha",
+        "masha"
+      ],
+      "topics": [
+        "memory",
+        "architecture",
+        "masha-home"
+      ],
       "produced": {
         "facts": [
           "fact_001"
@@ -125,17 +158,24 @@
         "commitments": [
           "commitment_001"
         ],
+        "reflections": [],
+        "relationship_memories": [],
+        "affective_records": [],
         "project_changes": [
           "project_masha_home"
         ]
       },
       "updated": {
         "facts": [],
-        "projects": [
-          "project_masha_home"
-        ],
+        "decisions": [],
         "commitments": [
           "commitment_001"
+        ],
+        "continuity_states": [
+          "continuity_masha_misha"
+        ],
+        "projects": [
+          "project_masha_home"
         ]
       },
       "superseded": {
@@ -143,7 +183,60 @@
         "decisions": [],
         "commitments": []
       },
+      "related_memory_ids": [],
       "created_at": "2026-08-10T10:00:00+03:00"
+    }
+  ],
+  "memory_candidates": [],
+  "reflections": [],
+  "relationship_memories": [],
+  "affective_records": [],
+  "continuity_states": [
+    {
+      "id": "continuity_masha_misha",
+      "relationship_key": "masha:misha",
+      "last_interaction_at": "2026-08-10T10:00:00+03:00",
+      "affective_record_ids": [],
+      "current_focus": [
+        "Memory v0.3 разделяет Facts, Decisions, Commitments и Episodes",
+        "Supersession разрешается на уровне приложения"
+      ],
+      "intended_follow_ups": [
+        {
+          "id": "followup_migrated_next_action_001",
+          "topic": "next_action",
+          "summary": "Проверить memory_schema.json",
+          "reason_to_return": "Продолжить намеченное действие",
+          "priority": 0.8,
+          "status": "open",
+          "source_memory_ids": [],
+          "revisit_after": null
+        },
+        {
+          "id": "followup_migrated_next_action_002",
+          "topic": "next_action",
+          "summary": "Создать первые Python-модели памяти",
+          "reason_to_return": "Продолжить намеченное действие",
+          "priority": 0.8,
+          "status": "open",
+          "source_memory_ids": [],
+          "revisit_after": null
+        },
+        {
+          "id": "followup_migrated_open_question_001",
+          "topic": "open_question",
+          "summary": "Как реализовать хранение и поиск памяти?",
+          "reason_to_return": "Найти ответ на открытый вопрос",
+          "priority": 0.7,
+          "status": "open",
+          "source_memory_ids": [],
+          "revisit_after": null
+        }
+      ],
+      "based_on_episode_ids": [
+        "episode_001"
+      ],
+      "updated_at": "2026-08-10T10:00:00+03:00"
     }
   ]
 }
