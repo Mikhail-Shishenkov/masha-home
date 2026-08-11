@@ -75,4 +75,18 @@ MIGRATIONS = (
             "CREATE INDEX idx_audit_events_occurred_at ON audit_events(occurred_at)",
         ),
     ),
+    SqliteMigration(
+        version=2,
+        name="temporal_events",
+        statements=(
+            """CREATE TABLE temporal_events (
+                id TEXT PRIMARY KEY, event_type TEXT NOT NULL, source_type TEXT NOT NULL,
+                source_id TEXT NOT NULL, due_at TEXT NOT NULL, created_at TEXT NOT NULL,
+                status TEXT NOT NULL, occurred_at TEXT, recovery_at TEXT,
+                identity_version TEXT NOT NULL, UNIQUE(event_type, source_type, source_id, due_at),
+                FOREIGN KEY(source_id) REFERENCES memory_records(id)
+            )""",
+            "CREATE INDEX idx_temporal_events_status_due ON temporal_events(status, due_at)",
+        ),
+    ),
 )
