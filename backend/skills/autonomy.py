@@ -327,6 +327,16 @@ class ActionAutonomyService:
             raise ActionPolicyError("permission grant not found")
         return self._save(policy.model_copy(update={"grants": remaining}))
 
+    def revoke_skill(self, skill_id: str) -> tuple[ActionAutonomyPolicy, int]:
+        """Revoke every standing grant for one upgraded skill, without widening policy."""
+
+        policy = self.policy()
+        remaining = tuple(item for item in policy.grants if item.skill_id != skill_id)
+        revoked = len(policy.grants) - len(remaining)
+        if revoked == 0:
+            return policy, 0
+        return self._save(policy.model_copy(update={"grants": remaining})), revoked
+
     def _save(self, policy: ActionAutonomyPolicy) -> ActionAutonomyPolicy:
         return self.store.save(
             policy.model_copy(update={"updated_at": self._aware_now()})

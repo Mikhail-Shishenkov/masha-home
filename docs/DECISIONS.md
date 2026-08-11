@@ -551,6 +551,36 @@ SHA-256 evidence. Только после этого результат пере
 короткоживущий in-process канал. Содержимое файлов не сохраняется в AgentRunStore,
 Memory или conversation history; receipt хранит только итог и verification code.
 
+### DEC-071. Skill installation is a persistent preview and explicit confirmation
+
+Статус: **Принято и реализовано (Stage 16.5)**
+
+CLI и будущий UI используют один `SkillInstallerService`. Выбранная локальная
+папка или ZIP сначала копируется в inert staging, валидируется и превращается в
+человекочитаемый proposal. До отдельного подтверждения package destination и
+Registry pin не меняются. Confirmation привязано к точному SHA-256 staged snapshot.
+Подтверждённый package хранится в ignored `local-data/skills/`; bundled
+`skills/` остаётся неизменяемым fallback и не загрязняется UI-установками.
+
+### DEC-072. Upgrade never inherits standing permission
+
+Статус: **Принято и реализовано (Stage 16.5)**
+
+Upgrade требует более новую semantic version и совпадение текущего verified
+package с preview. Перед активацией новой версии все grants этого skill
+отзываются. Master switch и global autonomy level сохраняются, но новая версия
+не получает прежнее или новое разрешение автоматически.
+
+### DEC-073. Installing a package does not make arbitrary code executable
+
+Статус: **Принято и реализовано (Stage 16.5)**
+
+Installer не использует сеть и никогда не импортирует manifest entrypoint.
+Package без заранее подключённого application-owned safe Tool Adapter можно
+проверить и показать человеку, но нельзя подтвердить к установке. Поддержка
+новых исполняемых skill-типов требует отдельного sandbox/declarative-runtime
+решения, а не ослабления Registry.
+
 ### DEC-047. Local model profiles are operating configuration
 
 Статус: **Принято и реализовано (LLM-03)**

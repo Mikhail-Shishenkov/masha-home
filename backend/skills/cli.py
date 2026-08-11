@@ -17,6 +17,13 @@ from .autonomy import (
     ActionRequest,
 )
 from .models import SkillCapability, SkillDescriptor, SkillIntegrity, SkillRisk
+from .installer import (
+    SkillInstallError,
+    SkillInstallProposal,
+    SkillInstallProposalStore,
+    SkillInstallStatus,
+    SkillInstallerService,
+)
 from .registry import SkillRegistry, SkillRegistryError
 
 
@@ -31,7 +38,8 @@ STATUS_LABELS = {
 
 def build_registry(project_root: Path = PROJECT_ROOT) -> SkillRegistry:
     return SkillRegistry(
-        skills_root=project_root / "skills",
+        skills_root=project_root / "local-data" / "skills",
+        bundled_skills_root=project_root / "skills",
         state_path=project_root / "local-data" / "config" / "skills.json",
     )
 
@@ -48,17 +56,76 @@ def build_autonomy_service(
     )
 
 
+def build_installer_service(
+    registry: SkillRegistry,
+    autonomy: ActionAutonomyService,
+    project_root: Path = PROJECT_ROOT,
+) -> SkillInstallerService:
+    return SkillInstallerService(
+        registry=registry,
+        autonomy=autonomy,
+        proposal_store=SkillInstallProposalStore(
+            project_root / "local-data" / "config" / "skill-installs.json"
+        ),
+        runtime_root=project_root / "local-data" / "skill-install",
+    )
+
+
 def run_command(
     command: str,
     *,
     skill_id: str | None = None,
     registry: SkillRegistry,
     autonomy: ActionAutonomyService | None = None,
+    installer: SkillInstallerService | None = None,
     arguments: tuple[str, ...] = (),
     raw: bool = False,
     output=print,
 ) -> int:
     try:
+        if command == "install":
+            installer = _require_installer(installer)
+            action = arguments[0] if arguments else "pending"
+            if action == "pending":
+                proposal = installer.proposal_store.latest_open()
+                if proposal is None:
+                    output("Ожидающих подтверждения установок нет.")
+                    return 0
+            elif action == "confirm":
+                proposal = _latest_install(installer)
+                proposal = installer.confirm(proposal.proposal_id)
+            elif action == "reject":
+                proposal = _latest_install(installer)
+                proposal = installer.reject(proposal.proposal_id)
+            elif len(arguments) == 1:
+                proposal = installer.propose(Path(arguments[0]))
+            else:
+                output("Использование: skills install <папка|zip>|pending|confirm|reject.")
+                return 2
+            if raw:
+                output(json.dumps(proposal.model_dump(mode="json"), ensure_ascii=False))
+            else:
+                output(_install_details(proposal))
+            return 0
+
+        if command == "installs":
+            installer = _require_installer(installer)
+            rows = installer.proposals()
+            if raw:
+                output(json.dumps([item.model_dump(mode="json") for item in rows], ensure_ascii=False))
+            elif not rows:
+                output("История установки навыков пока пуста.")
+            else:
+                output(
+                    "Установка навыков:\n\n"
+                    + "\n\n".join(
+                        f"{index}. {item.name}: {_install_status(item.status)}\n"
+                        f"   Версия: {item.proposed_version} · действие: {_install_action(item)}"
+                        for index, item in enumerate(rows, 1)
+                    )
+                )
+            return 0
+
         if command == "list":
             rows = registry.list()
             if raw:
@@ -210,7 +277,7 @@ def run_command(
                     "Это ещё не разрешение на выполнение действий."
                 )
             return 0
-    except (SkillRegistryError, ActionPolicyError, ValueError) as error:
+    except (SkillRegistryError, ActionPolicyError, SkillInstallError, ValueError) as error:
         output(f"Не удалось обработать навык: {error}")
         return 1
     raise ValueError(f"unknown skills command: {command}")
@@ -246,6 +313,63 @@ def _require_autonomy(value: ActionAutonomyService | None) -> ActionAutonomyServ
     if value is None:
         raise ActionPolicyError("action autonomy service is unavailable")
     return value
+
+
+def _require_installer(value: SkillInstallerService | None) -> SkillInstallerService:
+    if value is None:
+        raise SkillInstallError("skill installer service is unavailable")
+    return value
+
+
+def _latest_install(installer: SkillInstallerService) -> SkillInstallProposal:
+    proposal = installer.proposal_store.latest_open()
+    if proposal is None:
+        raise SkillInstallError("there is no installation awaiting confirmation")
+    return proposal
+
+
+def _install_status(status: SkillInstallStatus) -> str:
+    return {
+        SkillInstallStatus.PENDING: "ожидает подтверждения",
+        SkillInstallStatus.APPLYING: "применяется или требует восстановления",
+        SkillInstallStatus.CONFIRMED: "установлен и проверен",
+        SkillInstallStatus.REJECTED: "отклонён",
+    }[status]
+
+
+def _install_action(proposal: SkillInstallProposal) -> str:
+    return "новая установка" if proposal.action.value == "install" else "обновление"
+
+
+def _install_details(proposal: SkillInstallProposal) -> str:
+    capabilities = ", ".join(item.value for item in proposal.capabilities) or "нет"
+    scopes = ", ".join(proposal.requested_scopes) or "нет"
+    version = proposal.proposed_version
+    if proposal.current_version is not None:
+        version = f"{proposal.current_version} → {proposal.proposed_version}"
+    lines = [
+        f"Навык: {proposal.name}",
+        f"Статус: {_install_status(proposal.status)}",
+        f"Действие: {_install_action(proposal)}",
+        f"Версия: {version}",
+        f"Возможности: {capabilities}",
+        f"Области: {scopes}",
+        f"Риск: {proposal.risk_level.value}",
+        f"Файлы: +{len(proposal.files_added)} / ~{len(proposal.files_changed)} / -{len(proposal.files_removed)}",
+    ]
+    if proposal.permissions_to_revoke:
+        lines.append(
+            f"При обновлении будут отозваны разрешения: {proposal.permissions_to_revoke}."
+        )
+    if not proposal.runtime_supported:
+        lines.append("Установка заблокирована: безопасный runtime-adapter ещё не реализован.")
+    elif proposal.status is SkillInstallStatus.PENDING:
+        lines.append("Пакет только проверен и ещё не установлен. Для применения: skills install confirm.")
+    elif proposal.status is SkillInstallStatus.CONFIRMED:
+        lines.append("Пакет установлен, integrity pin обновлён. Новые разрешения не выдавались.")
+    elif proposal.status is SkillInstallStatus.REJECTED:
+        lines.append("Пакет не устанавливался; временная копия удалена.")
+    return "\n".join(lines)
 
 
 def _policy_details(policy) -> str:
@@ -284,7 +408,7 @@ def main() -> None:
         default="list",
         choices=(
             "list", "show", "verify", "register", "policy", "permissions",
-            "grant", "revoke", "check",
+            "grant", "revoke", "check", "install", "installs",
         ),
     )
     parser.add_argument("arguments", nargs="*")
@@ -292,13 +416,15 @@ def main() -> None:
     parser.add_argument("--project-root", type=Path, default=PROJECT_ROOT)
     args = parser.parse_args()
     registry = build_registry(args.project_root)
+    autonomy = build_autonomy_service(registry, args.project_root)
     raise SystemExit(
         run_command(
             args.command,
             skill_id=args.arguments[0] if args.arguments else None,
             arguments=tuple(args.arguments),
             registry=registry,
-            autonomy=build_autonomy_service(registry, args.project_root),
+            autonomy=autonomy,
+            installer=build_installer_service(registry, autonomy, args.project_root),
             raw=args.raw,
         )
     )

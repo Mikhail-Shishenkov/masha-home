@@ -566,3 +566,25 @@ Identity, Memory, Commitment, Temporal, Model Profiles, Router and SQLite schema
 are unchanged.
 
 Current regression after Stage 16.4: `249 passed`.
+
+## CURRENT — STAGE 16.5 SAFE SKILL INSTALLATION / UPGRADE
+
+`SkillInstallerService` is the single backend boundary for current CLI and a
+future UI. It accepts only a local folder or ZIP, creates a bounded inert staged
+snapshot and persists a `SkillInstallProposal` separately from Identity,
+Memory, conversation history, proactive policy and SQLite.
+
+Confirmation revalidates exact staged bytes, performs a guarded local package
+swap under ignored `local-data/skills/` and uses the existing Registry to replace
+the integrity pin. Bundled packages under repository `skills/` are read-only
+fallbacks and are not overwritten by UI/CLI installation. Upgrade
+requires a newer semantic version and revokes all standing grants for the skill;
+permissions never carry over. Reject is non-mutating for the installed package
+and removes staging. Completed confirmation is restart-safe and idempotent.
+
+Archive traversal, links, duplicate paths, compiled artifacts, oversized files
+and unsupported runtime adapters are blocked. No network or entrypoint import
+exists. The UI itself remains planned; its picker/preview/buttons will call this
+same service rather than write project code directly.
+
+Current regression after Stage 16.5: `270 passed`.

@@ -537,8 +537,19 @@ ephemeral and raw project content is not stored in agent receipts.
 
 ### STAGE-16.5. Skill Installation / Upgrade
 
+Статус: **DONE**
+
+Local directory/ZIP selection now creates an inert, bounded, persistent and
+UI-ready preview. Only explicit confirmation installs or upgrades the package,
+updates the Registry integrity pin and revokes every old standing grant for an
+upgrade. Confirmed user packages live in ignored `local-data/skills/`; bundled
+repository packages are never overwritten. Arbitrary entrypoints are never imported and unsupported runtime skill
+types cannot be confirmed.
+
+### STAGE-16.6. Permissions UX & Emergency Stop
+
 Статус: **NEXT — NOT IMPLEMENTED**
 
-Design explicit local installation and upgrade for declarative skill packages.
-Package changes must require deliberate re-verification and must not silently
-inherit an earlier integrity pin or permission grant.
+Unify the human control surface for installed skills, effective permissions,
+pending confirmations and currently running work. Add a deterministic local
+emergency stop without silently widening background autonomy.

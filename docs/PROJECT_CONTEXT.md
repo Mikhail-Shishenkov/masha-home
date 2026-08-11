@@ -184,3 +184,10 @@ explicit package registration and an exact user grant. It cannot write, run a
 process, access the network, mutate domain state or turn observed file content
 into Memory. This is the reference safety shape for later skills, not general
 computer access.
+
+Stage 16.5 adds the safe ingestion boundary intended for both CLI and a future
+local UI. Misha selects a local folder or ZIP, sees a proposal and confirms or
+rejects it. Package bytes are never downloaded or executed during installation;
+confirmed packages are stored under ignored `local-data/skills/`, not written
+into repository source. Upgrades revoke old grants. UI convenience therefore does not become an
+alternate permission path.

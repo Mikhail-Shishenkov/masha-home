@@ -6,7 +6,7 @@
 - `16.2 Action Autonomy Policy`: **IMPLEMENTED**
 - `16.3 Bounded Agent Loop`: **IMPLEMENTED**
 - `16.4 First Local Skill`: **IMPLEMENTED**
-- `16.5 Skill Installation / Upgrade`: **PLANNED**
+- `16.5 Skill Installation / Upgrade`: **IMPLEMENTED**
 - `16.6 Permissions UX & Emergency Stop`: **PLANNED**
 
 Stage 16.1 создаёт только безопасный фундамент добавляемых навыков. Он не даёт
@@ -94,7 +94,7 @@ configuration, отдельная от:
 - `invalid` — manifest или package boundary некорректны.
 
 Изменённый пакет не считается обновлённым автоматически. Explicit upgrade flow
-будет отдельной частью 16.5.
+реализован в Stage 16.5 через отдельный preview и confirmation.
 
 ## Human-readable UX
 
@@ -112,7 +112,8 @@ configuration, отдельная от:
 ## Security properties
 
 - discovery/list не создаёт registry state;
-- registry принимает пакеты только внутри configured `skills/` root;
+- registry принимает пакеты только внутри configured bundled `skills/` или
+  ignored local `local-data/skills/` roots;
 - unsafe relative paths и symlinks отклоняются;
 - entrypoint остаётся строкой и никогда не импортируется;
 - registration идемпотентна для неизменившегося пакета;
@@ -204,9 +205,9 @@ Human CLI:
 
 ## Next safe step
 
-`Stage 16.5 — Skill Installation / Upgrade`: design an explicit local package
-installation and upgrade flow. A changed package must not inherit its earlier
-registration or permissions silently.
+`Stage 16.6 — Permissions UX & Emergency Stop`: provide one clear human control
+surface for installed skills, effective permissions, active/running work and a
+local emergency stop. Do not add background autonomy implicitly.
 
 ## Verification
 
@@ -360,5 +361,93 @@ standing `local_read` grant. There is no LLM planning or automatic permission.
 - isolated Windows launcher/CLI smoke covered registration, restart-persistent policy/grant,
   tree, text read, metadata/hash inspection and receipt privacy;
 - smoke state was removed and no production skill policy was created;
+- production SQLite SHA-256 remained
+  `55F0C17A3190C97C1FFC60EDF228AEBCE77793E3D08064455F87810181A7548E`.
+
+## Stage 16.5 — Safe Local Installation and Upgrade
+
+The installer is an application service shared by the current CLI and a future
+UI. A UI file/folder picker will pass a local directory or ZIP path into the
+same contract; the user never needs to copy package code into the repository.
+
+```text
+local folder or ZIP selected by Misha
+  → bounded inert staging snapshot
+  → strict path/size/count/symlink validation
+  → SkillManifest + whole-package SHA-256 validation
+  → semantic-version and current-integrity check
+  → human/UI-ready SkillInstallProposal
+  → explicit confirmation
+  → revoke old grants on upgrade
+  → guarded package swap
+  → new Registry integrity pin
+  → verified installed package
+```
+
+`SkillInstallProposal` exposes the human-relevant preview: skill/name, current
+and proposed versions, requested capabilities/scopes, risk, autonomy ceiling,
+added/changed/removed files, number of permissions that will be revoked and
+whether an application-wired runtime adapter exists. IDs, digests and staging
+paths remain technical `--raw` data.
+
+Before confirmation the destination `local-data/skills/` package and Registry
+pin are not changed. Bundled repository packages under `skills/` are never
+overwritten by UI/CLI installation. The source is copied once into ignored inert staging, so changing or
+removing the selected original afterward cannot change the confirmed bytes.
+Confirmation revalidates the staged digest. Reject removes the staged snapshot.
+
+Directory and ZIP ingestion enforce:
+
+- local sources only; no URL, marketplace or network client;
+- maximum 200 files, 2 MiB per file and 10 MiB total;
+- maximum path depth/length and case-insensitive duplicate detection;
+- no absolute/traversal/ADS paths, symlinks, encrypted ZIP entries or compiled
+  Python artifacts;
+- bounded extraction based on actual bytes, not trusted ZIP metadata alone;
+- UTF-8 and Windows UTF-8 BOM support for `skill.json`.
+
+Upgrade requires a strictly newer semantic version and a currently verified
+package matching the preview. All existing standing grants for that skill are
+revoked before activation. Global action-autonomy settings remain unchanged,
+but the new package receives no permissions automatically. Installation state
+survives restart and repeated confirmation of a completed proposal is
+idempotent.
+
+The package manifest remains inert. No entrypoint is imported during preview,
+confirmation, registration or later registry checks. A package without a known
+application-wired safe adapter can be previewed but confirmation is blocked.
+Therefore Stage 16.5 installs safe package declarations; it does not turn
+arbitrary downloaded Python into executable authority.
+
+Registry resolves an installed local package first and falls back to the
+bundled repository package only when no local override exists. This lets the UI
+upgrade a bundled skill without dirtying git or rewriting project code. Removing
+an override later would expose the bundled bytes with a mismatched integrity pin,
+so execution remains blocked until an explicit future uninstall/recovery flow.
+
+Human CLI:
+
+```powershell
+.\masha.ps1 skills install <local-folder-or-zip>
+.\masha.ps1 skills install pending
+.\masha.ps1 skills install confirm
+.\masha.ps1 skills install reject
+.\masha.ps1 skills installs
+```
+
+This is intentionally ready for a later UI with: local file/folder picker →
+preview card → explicit Install/Update or Cancel button. Stage 16.5 does not
+implement the visual UI itself.
+
+### Stage 16.5 verification
+
+- Skill Installer deterministic tests: `21 passed`;
+- Installer + Registry + Action Policy + ProjectObserver targeted regression: `66 passed`;
+- full project regression: `270 passed`;
+- isolated Windows launcher smoke covered bundled v1 registration, explicit
+  grant, v1.1 local override preview/confirmation, restart verification,
+  unchanged bundled bytes and grant revocation;
+- Windows UTF-8 BOM manifest handling is covered;
+- smoke state was removed and no production install/registry/policy state was created;
 - production SQLite SHA-256 remained
   `55F0C17A3190C97C1FFC60EDF228AEBCE77793E3D08064455F87810181A7548E`.

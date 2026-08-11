@@ -21,6 +21,13 @@ from .agent_loop import AgentPlan, AgentRunStore, AgentStep, BoundedAgentLoop
 from .tools import FakeTool, ToolAdapter, ToolExecutionResult, ToolVerification
 from .project_observer import ProjectObserverTool
 from .project_observer_service import ProjectObservation, ProjectObserverService
+from .installer import (
+    SkillInstallAction,
+    SkillInstallProposal,
+    SkillInstallProposalStore,
+    SkillInstallStatus,
+    SkillInstallerService,
+)
 
 __all__ = [
     "RegisteredSkill",
@@ -47,4 +54,9 @@ __all__ = [
     "ProjectObserverTool",
     "ProjectObservation",
     "ProjectObserverService",
+    "SkillInstallAction",
+    "SkillInstallProposal",
+    "SkillInstallProposalStore",
+    "SkillInstallStatus",
+    "SkillInstallerService",
 ]

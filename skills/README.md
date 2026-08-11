@@ -88,3 +88,20 @@ adapter and the same registry/policy/agent-loop checks apply.
 
 The observer is bounded to the explicit workspace, excludes private and local
 runtime paths, never writes, never starts a process and never uses the network.
+
+Stage 16.5 allows installation and upgrade without manually copying files into
+the repository:
+
+```powershell
+.\masha.ps1 skills install <local-folder-or-zip>
+.\masha.ps1 skills install pending
+.\masha.ps1 skills install confirm
+.\masha.ps1 skills install reject
+.\masha.ps1 skills installs
+```
+
+The preview is persistent and suitable for a future UI. Confirmation pins the
+exact staged digest and stores the local package under ignored
+`local-data/skills/`, leaving bundled repository packages untouched. An upgrade revokes previous grants, and no manifest
+entrypoint is imported. Packages without an application-wired safe adapter are
+not executable and cannot be confirmed.

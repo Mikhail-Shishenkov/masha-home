@@ -43,10 +43,14 @@ class SkillRegistry:
         self,
         *,
         skills_root: Path,
+        bundled_skills_root: Path | None = None,
         state_path: Path,
         clock: Callable[[], datetime] = utc_now,
     ):
         self.skills_root = Path(skills_root)
+        self.bundled_skills_root = (
+            None if bundled_skills_root is None else Path(bundled_skills_root)
+        )
         self.state_path = Path(state_path)
         self._clock = clock
 
@@ -146,32 +150,111 @@ class SkillRegistry:
         )
         return registered
 
-    def _discovered_ids(self) -> tuple[str, ...]:
-        if not self.skills_root.exists():
-            return ()
-        return tuple(
-            child.name
-            for child in self.skills_root.iterdir()
-            if child.is_dir()
-            and not child.name.startswith((".", "_"))
-            and (child / "skill.json").is_file()
+    def registration(self, skill_id: str) -> RegisteredSkill | None:
+        """Return the current integrity pin without inspecting or executing a package."""
+
+        self._validate_skill_id(skill_id)
+        return next(
+            (item for item in self._load_state().skills if item.skill_id == skill_id),
+            None,
         )
 
+    def pin_installed_package(
+        self,
+        skill_id: str,
+        *,
+        expected_previous_sha256: str | None,
+        expected_package_sha256: str,
+    ) -> RegisteredSkill:
+        """Pin a package installed by an explicit, separately confirmed workflow."""
+
+        self._validate_skill_id(skill_id)
+        state = self._load_state()
+        existing = next((item for item in state.skills if item.skill_id == skill_id), None)
+        current_previous = None if existing is None else existing.package_sha256
+        if current_previous != expected_previous_sha256:
+            raise SkillRegistrationConflictError(
+                "skill registration changed after the installation preview"
+            )
+        descriptor = self.inspect(skill_id, registration=existing)
+        if descriptor.manifest is None or descriptor.current_package_sha256 is None:
+            raise SkillIntegrityError("installed skill package is not valid")
+        if descriptor.current_package_sha256 != expected_package_sha256:
+            raise SkillIntegrityError("installed package digest does not match the confirmed preview")
+        registered = RegisteredSkill(
+            skill_id=skill_id,
+            version=descriptor.manifest.version,
+            manifest_path=f"{skill_id}/skill.json",
+            package_sha256=expected_package_sha256,
+            registered_at=self._aware_now(),
+        )
+        rows = list(state.skills)
+        if existing is None:
+            rows.append(registered)
+        else:
+            index = next(index for index, item in enumerate(rows) if item.skill_id == skill_id)
+            rows[index] = registered
+        self._write_state(state.model_copy(update={"skills": tuple(rows)}))
+        return registered
+
+    @classmethod
+    def inspect_package_path(cls, directory: Path) -> tuple[SkillManifest, str]:
+        """Validate an inert package snapshot without requiring registry membership."""
+
+        root = Path(directory)
+        if not root.is_dir() or root.is_symlink():
+            raise SkillIntegrityError("skill package must be an existing real directory")
+        manifest = cls._load_manifest(root)
+        return manifest, cls._package_digest(root)
+
+    def _discovered_ids(self) -> tuple[str, ...]:
+        discovered = set()
+        for root in self._package_roots():
+            if not root.exists():
+                continue
+            discovered.update(
+                child.name
+                for child in root.iterdir()
+                if child.is_dir()
+                and not child.name.startswith((".", "_"))
+                and (child / "skill.json").is_file()
+            )
+        return tuple(sorted(discovered))
+
     def _skill_directory(self, skill_id: str) -> Path:
-        root = self.skills_root.resolve()
-        candidate = root / skill_id
-        if candidate.is_symlink():
-            raise SkillIntegrityError("skill package directory cannot be a symlink")
-        directory = candidate.resolve()
-        if directory.parent != root:
-            raise SkillIntegrityError("skill path escapes the configured skills root")
-        return directory
+        return self.package_directory(skill_id)
+
+    def package_directory(self, skill_id: str) -> Path:
+        """Resolve the active package: local UI install first, bundled fallback second."""
+
+        self._validate_skill_id(skill_id)
+        first_candidate = None
+        for configured_root in self._package_roots():
+            root = configured_root.resolve()
+            candidate = root / skill_id
+            if first_candidate is None:
+                first_candidate = candidate.resolve(strict=False)
+            if candidate.is_symlink():
+                raise SkillIntegrityError("skill package directory cannot be a symlink")
+            directory = candidate.resolve(strict=False)
+            if directory.parent != root:
+                raise SkillIntegrityError("skill path escapes the configured skills root")
+            if directory.is_dir():
+                return directory
+        assert first_candidate is not None
+        return first_candidate
+
+    def _package_roots(self) -> tuple[Path, ...]:
+        roots = [self.skills_root]
+        if self.bundled_skills_root is not None:
+            roots.append(self.bundled_skills_root)
+        return tuple(roots)
 
     @staticmethod
     def _load_manifest(directory: Path) -> SkillManifest:
         manifest_path = directory / "skill.json"
         manifest = SkillManifest.model_validate(
-            json.loads(manifest_path.read_text(encoding="utf-8"))
+            json.loads(manifest_path.read_text(encoding="utf-8-sig"))
         )
         declared_instructions = directory / manifest.instructions_file
         if declared_instructions.is_symlink():

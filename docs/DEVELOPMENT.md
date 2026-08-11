@@ -256,8 +256,9 @@ injects them into general context.
 
 ## Stage 16.1 Skill Registry
 
-Place a local package under `skills/<skill_id>/` with `skill.json` and the
-declared instructions file, then use:
+Developers may place a bundled package under `skills/<skill_id>/` with
+`skill.json` and the declared instructions file. User/UI installations go to
+ignored `local-data/skills/`. Then use:
 
 ```powershell
 .\masha.ps1 skills list
@@ -347,6 +348,44 @@ Targeted verification:
 
 ```powershell
 python -m pytest tests/test_project_observer.py tests/test_agent_loop.py tests/test_action_autonomy.py tests/test_skill_registry.py -q
+```
+
+## Stage 16.5 Local Skill Installation / Upgrade
+
+Select a package directory or ZIP. The first command creates only a preview:
+
+```powershell
+.\masha.ps1 skills install C:\path\to\skill-package
+.\masha.ps1 skills install pending
+.\masha.ps1 skills install confirm
+.\masha.ps1 skills install reject
+.\masha.ps1 skills installs
+```
+
+Normal output shows versions, capabilities, scopes, risk, file-change counts
+and permission revocation. It hides proposal IDs, SHA-256 and staging paths;
+`--raw` exposes the UI/debug contract.
+
+The future UI should use a local folder/ZIP picker and call
+`SkillInstallerService.propose()`, render `SkillInstallProposal`, then call
+`confirm()` or `reject()` with the proposal ID. UI code must not copy files or
+edit Registry state itself.
+
+Staging and proposal state live in ignored local operating storage:
+
+- `local-data/skills/` — confirmed local packages and overrides;
+- `local-data/config/skill-installs.json`;
+- `local-data/skill-install/staging/`;
+- temporary recovery backups under `local-data/skill-install/backups/`.
+
+No remote URL is accepted. A package with no application-wired safe adapter is
+visible in preview but cannot be confirmed. Installing declarative files is not
+arbitrary plugin-code execution.
+
+Targeted verification:
+
+```powershell
+python -m pytest tests/test_skill_installer.py tests/test_skill_registry.py tests/test_action_autonomy.py -q
 ```
 
 ## Конфигурация
