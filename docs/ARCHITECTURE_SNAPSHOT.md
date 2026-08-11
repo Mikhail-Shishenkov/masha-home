@@ -459,4 +459,15 @@ history. `RuntimeHealthService` performs read-only Identity, SQLite, history,
 model, policy, backup and daemon checks. `masha.ps1` is the Windows-local human
 entry point; it does not install autostart or an external channel.
 
-Current regression: `160 passed`.
+Current regression: `169 passed`.
+
+## CURRENT — STAGE 14 SHARED CONTINUITY
+
+`RelationshipMemory` now represents explicitly confirmed shared meaning with
+provenance. `ContinuityState` exposes bounded open threads that survive restart
+and can be resolved only through an explicit proposal/confirmation mutation.
+Both use the existing SQLite document repository and audit log. Existing
+`MemoryRetriever` and `ConversationContextCompiler` preserve their distinct
+semantics in provider-neutral context; they do not become Facts, Episodes or
+Commitments. Human CLI output hides internal IDs. Obvious legacy mojibake is
+quarantined from normal retrieval without rewriting production data.

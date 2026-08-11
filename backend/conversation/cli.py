@@ -24,6 +24,7 @@ from backend.memory.working_memory import WorkingMemory
 from backend.memory.confirmed_memory_service import ConfirmedMemoryService
 from backend.memory.memory_management import MemoryManagementService, MemoryMutationOperation
 from backend.memory.memory_presentation import detail, history, list_views, preview, summary
+from backend.memory.shared_continuity import SharedContinuityService
 from backend.temporal.temporal_engine import MOSCOW, TemporalEngine
 from backend.temporal.temporal_runtime import TemporalRuntime
 from backend.temporal.proactive import ProactiveDecisionEngine, ProactivePolicy, ProactivePolicyStore
@@ -50,6 +51,7 @@ def build_service(*, project_root: Path = PROJECT_ROOT) -> ConversationService:
     )
     identity_kernel.validate_memory_identity(memory_store)
     memory_management = MemoryManagementService(memory_store)
+    shared_continuity = SharedContinuityService(memory_store)
     profiles = ModelProfileStore(project_root / "local-data" / "config" / "models.json")
     return ConversationService(
         identity_kernel=identity_kernel,
@@ -61,9 +63,11 @@ def build_service(*, project_root: Path = PROJECT_ROOT) -> ConversationService:
             proposal_store=MemoryProposalStore(project_root / "local-data" / "memory-proposals.json"),
             confirmed_memory=ConfirmedMemoryService(memory_store),
             memory_management=memory_management,
+            shared_continuity=shared_continuity,
         ),
         model_profiles=profiles,
         proactive_interactions=ProactiveInteractionStore(memory_store),
+        shared_continuity=shared_continuity,
     )
 
 
@@ -112,6 +116,14 @@ def run_cli(
         if user_message.startswith("proactive"):
             _run_proactive_command(user_message[9:].strip(), service=service, output_fn=output_fn)
             continue
+        if user_message.startswith("continuity"):
+            _run_continuity_command(
+                user_message[10:].strip(),
+                service=service,
+                conversation_id=active_id or "continuity-cli",
+                output_fn=output_fn,
+            )
+            continue
         if user_message.startswith("memory ") and memory_management is not None and proposal_store is not None:
             _run_memory_command(
                 user_message[7:], memory_management=memory_management,
@@ -129,6 +141,83 @@ def run_cli(
             continue
         output_fn(f"Conversation id: {active_id}")
         output_fn(f"Masha> {response}")
+
+
+def _run_continuity_command(
+    command: str,
+    *,
+    service: ConversationService,
+    conversation_id: str,
+    output_fn: Callable[[str], None],
+) -> None:
+    """Human-readable access to confirmed shared moments and unfinished threads."""
+    continuity = service.shared_continuity
+    handler = service.memory_intent_handler
+    if continuity is None or handler is None:
+        output_fn("Общая история сейчас недоступна.")
+        return
+    raw = "--raw" in command
+    clean = command.replace("--raw", "").strip()
+    parts = clean.split(maxsplit=1)
+    action = parts[0] if parts and parts[0] else "status"
+    argument = parts[1] if len(parts) > 1 else ""
+    if action in {"status", "show", "list"}:
+        output_fn(continuity.raw() if raw else continuity.render())
+        return
+    if action == "open" and argument:
+        proposal = continuity.propose_open_thread(
+            handler.proposal_store,
+            text=argument,
+            conversation_id=conversation_id,
+        )
+        output_fn(
+            f"Оставить открытую нить:\n«{argument}»?\n"
+            + (f"Proposal: {proposal.id}" if raw else "Подтверди командой: continuity confirm")
+        )
+        return
+    if action == "resolve" and argument:
+        try:
+            proposal = continuity.propose_resolve_thread(
+                handler.proposal_store,
+                query=argument,
+                conversation_id=conversation_id,
+            )
+        except LookupError:
+            output_fn("Не нашла такую открытую нить.")
+            return
+        except ValueError:
+            output_fn("Нашла несколько похожих нитей. Уточни формулировку.")
+            return
+        output_fn(
+            f"Закрыть открытую нить:\n«{argument}»?\n"
+            + (f"Proposal: {proposal.id}" if raw else "Подтверди командой: continuity confirm")
+        )
+        return
+    if action in {"confirm", "reject"}:
+        pending = [
+            item
+            for item in handler.proposal_store.pending_for_conversation(conversation_id)
+            if item.operation in {"continuity_create", "continuity_update"}
+        ]
+        proposal = handler.proposal_store.get(argument) if argument else pending[0] if len(pending) == 1 else None
+        if proposal is None or proposal.conversation_id != conversation_id:
+            output_fn("Не нашла одно подходящее предложение общей нити.")
+            return
+        if action == "reject":
+            handler.proposal_store.set_status(proposal.id, ProposalStatus.CANCELLED)
+            output_fn("Хорошо, общую нить не меняю.")
+            return
+        try:
+            continuity.confirm_proposal(proposal, handler.proposal_store)
+        except Exception as error:
+            output_fn(f"Не смогла обновить общую нить: {error}")
+            return
+        output_fn("Готово. Наша общая нить обновлена.")
+        return
+    output_fn(
+        "Команды: continuity, continuity open <тема>, continuity resolve <тема>, "
+        "continuity confirm, continuity reject. Добавь --raw для диагностики."
+    )
 
 
 def _run_memory_command(command: str, *, memory_management: MemoryManagementService,

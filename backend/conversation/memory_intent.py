@@ -29,6 +29,9 @@ from backend.memory.memory_models import (
     Fact,
     FactStatus,
     IdentityCode,
+    RelationshipKind,
+    RelationshipMemory,
+    RelationshipStatus,
     SourceType,
     Visibility,
 )
@@ -36,7 +39,30 @@ from backend.temporal.temporal_engine import TemporalEngine
 from backend.memory.memory_management import MemoryMutationOperation
 
 
-MemoryRecordType = Literal["fact", "decision", "commitment", "episode"]
+MemoryRecordType = Literal[
+    "fact",
+    "decision",
+    "commitment",
+    "episode",
+    "relationship_memory",
+    "continuity_state",
+]
+_SHARED_MEMORY = re.compile(
+    r"^\s*(?:маша\s*,?\s*)?(?:запомни|сохрани)\s+как\s+"
+    r"(?P<kind>наш\s+момент|часть\s+нашей\s+истории|наш\s+символ)\s*[:,]?\s*"
+    r"(?:что\s+)?(?P<body>.+?)\s*$",
+    re.IGNORECASE,
+)
+_OPEN_THREAD = re.compile(
+    r"^\s*(?:маша\s*,?\s*)?(?:оставь|сохрани)\s+(?:это\s+)?(?:как\s+)?"
+    r"открыт(?:ой|ую)\s+нит(?:ью|ь)\s*[:,]?\s*(?P<body>.+?)\s*$",
+    re.IGNORECASE,
+)
+_RESOLVE_THREAD = re.compile(
+    r"^\s*(?:маша\s*,?\s*)?(?:закрой|заверши)\s+(?:открытую\s+)?нить\s*[:,]?\s*"
+    r"(?P<body>.+?)\s*$",
+    re.IGNORECASE,
+)
 _EXPLICIT_INTENT = re.compile(
     r"^\s*(?:маша\s*,?\s*)?запомни(?:\s+как\s+(?P<kind>факт|решение(?:\s+проекта)?|обязательство|эпизод))?\s*,?\s*(?:что\s+)?(?P<body>.+?)\s*$",
     re.IGNORECASE,
@@ -140,11 +166,13 @@ class MemoryIntentHandler:
         confirmed_memory: ConfirmedMemoryService,
         temporal_engine: TemporalEngine | None = None,
         memory_management=None,
+        shared_continuity=None,
     ):
         self.proposal_store = proposal_store
         self.confirmed_memory = confirmed_memory
         self.temporal_engine = temporal_engine or TemporalEngine()
         self.memory_management = memory_management
+        self.shared_continuity = shared_continuity
 
     def handle(
         self,
@@ -153,6 +181,16 @@ class MemoryIntentHandler:
         conversation_id: str,
         project_id: str,
     ) -> MemoryIntentResult:
+        if shared := _SHARED_MEMORY.match(message):
+            return self._propose_shared_memory(
+                shared,
+                conversation_id=conversation_id,
+                project_id=project_id,
+            )
+        if thread := _OPEN_THREAD.match(message):
+            return self._propose_open_thread(thread.group("body"), conversation_id)
+        if thread := _RESOLVE_THREAD.match(message):
+            return self._propose_resolve_thread(thread.group("body"), conversation_id)
         if complete := _COMPLETE.match(message):
             return self._propose_completion(complete.group("body"), conversation_id)
         match = _EXPLICIT_INTENT.match(message)
@@ -168,6 +206,94 @@ class MemoryIntentHandler:
                 response="Что именно сохранить и как: факт, решение, обязательство или эпизод?",
             )
         return MemoryIntentResult(handled=False)
+
+    def _propose_shared_memory(
+        self,
+        match: re.Match[str],
+        *,
+        conversation_id: str,
+        project_id: str,
+    ) -> MemoryIntentResult:
+        body = match.group("body").strip().rstrip(".")
+        kind = {
+            "наш момент": RelationshipKind.SHARED_MILESTONE,
+            "часть нашей истории": RelationshipKind.RELATIONSHIP_NOTE,
+            "наш символ": RelationshipKind.SHARED_SYMBOL,
+        }[" ".join(match.group("kind").casefold().split())]
+        now = self._now()
+        record = RelationshipMemory(
+            id=f"relationship_{uuid4()}",
+            kind=kind,
+            title=body[:80],
+            content={
+                "text": body,
+                "declared_by": "misha",
+                "confirmation": "explicit_user_confirmation",
+            },
+            status=RelationshipStatus.CURRENT,
+            visibility=Visibility.VISIBLE,
+            importance=0.8,
+            confidence=1.0,
+            source=SourceType.EXPLICIT_USER_INPUT,
+            project_ids=[project_id],
+            source_episode_ids=[],
+            revises_id=None,
+            created_at=now,
+        )
+        proposal = self.proposal_store.create(
+            MemoryProposal(
+                id=str(uuid4()),
+                conversation_id=conversation_id,
+                record_type="relationship_memory",
+                record_payload=record.model_dump(mode="json"),
+                created_at=now,
+                status=ProposalStatus.PENDING,
+            )
+        )
+        return MemoryIntentResult(
+            handled=True,
+            response=(
+                "Предлагаю сохранить это не как факт о тебе, а как часть нашей "
+                f"подтверждённой истории:\n«{body}»\nСохраняем? Напиши: да"
+            ),
+        )
+
+    def _propose_open_thread(self, body: str, conversation_id: str) -> MemoryIntentResult:
+        if self.shared_continuity is None:
+            return MemoryIntentResult(handled=True, response="Общие нити сейчас недоступны.")
+        proposal = self.shared_continuity.propose_open_thread(
+            self.proposal_store,
+            text=body,
+            conversation_id=conversation_id,
+        )
+        return MemoryIntentResult(
+            handled=True,
+            response=(
+                "Оставить это открытой нитью между разговорами?\n"
+                f"«{body.strip().rstrip('.')}»\nПодтверди: да {proposal.id}"
+            ),
+        )
+
+    def _propose_resolve_thread(self, body: str, conversation_id: str) -> MemoryIntentResult:
+        if self.shared_continuity is None:
+            return MemoryIntentResult(handled=True, response="Общие нити сейчас недоступны.")
+        try:
+            proposal = self.shared_continuity.propose_resolve_thread(
+                self.proposal_store,
+                query=body,
+                conversation_id=conversation_id,
+            )
+        except LookupError:
+            return MemoryIntentResult(handled=True, response="Не нашла такую открытую нить.")
+        except ValueError:
+            return MemoryIntentResult(
+                handled=True,
+                response="Нашла несколько похожих нитей. Уточни формулировку.",
+            )
+        return MemoryIntentResult(
+            handled=True,
+            response=f"Закрыть эту общую нить?\n«{body.strip()}»\nПодтверди: да {proposal.id}",
+        )
 
     def _propose_completion(self, text: str, conversation_id: str) -> MemoryIntentResult:
         if self.memory_management is None:
@@ -222,6 +348,20 @@ class MemoryIntentHandler:
             return MemoryIntentResult(handled=True, response="Эта запись уже сохранена.")
         if proposal.status == ProposalStatus.CANCELLED:
             return MemoryIntentResult(handled=True, response="Это предложение уже отменено; ничего не сохраняла.")
+        if proposal.operation in {"continuity_create", "continuity_update"}:
+            if self.shared_continuity is None:
+                return MemoryIntentResult(handled=True, response="Общие нити сейчас недоступны.")
+            try:
+                self.shared_continuity.confirm_proposal(proposal, self.proposal_store)
+            except Exception:
+                return MemoryIntentResult(
+                    handled=True,
+                    response=f"Не смогла применить предложение {proposal.id}. Оно осталось ожидающим подтверждения.",
+                )
+            return MemoryIntentResult(
+                handled=True,
+                response="Готово. Наша общая нить обновлена.",
+            )
         if proposal.operation != "create":
             if self.memory_management is None:
                 return MemoryIntentResult(handled=True, response="Эта операция сейчас недоступна.")
@@ -359,7 +499,13 @@ class MemoryIntentHandler:
 
     @staticmethod
     def _record_from_proposal(proposal: MemoryProposal) -> ConfirmedRecord:
-        models = {"fact": Fact, "decision": Decision, "commitment": Commitment, "episode": Episode}
+        models = {
+            "fact": Fact,
+            "decision": Decision,
+            "commitment": Commitment,
+            "episode": Episode,
+            "relationship_memory": RelationshipMemory,
+        }
         return models[proposal.record_type].model_validate(proposal.record_payload)
 
     @staticmethod
@@ -371,8 +517,10 @@ class MemoryIntentHandler:
         elif isinstance(record, Commitment):
             deadline = " без срока" if record.due_at is None else f" со сроком {record.due_at.astimezone().strftime('%d.%m.%Y %H:%M')}"
             description = f"Могу сохранить это как обязательство: {record.text}{deadline}."
-        else:
+        elif isinstance(record, Episode):
             description = f"Могу сохранить это как эпизод: {record.summary}."
+        else:
+            description = f"Могу сохранить это как часть нашей истории: {record.content}."
         return f"{description} Источник — твоё явное утверждение. Сохраняем? ID предложения: {proposal.id}"
 
     @staticmethod

@@ -214,6 +214,23 @@ bounded to 100 entries and contain no generated message text. Health checks are
 read-only. Missing backups and a stopped daemon are warnings; the runtime does
 not silently repair or mutate persistent domain state.
 
+## Stage 14 Shared Continuity
+
+Use the conversation CLI or the same commands through `masha.ps1 chat`:
+
+```text
+continuity
+continuity open <тема>
+continuity resolve <тема>
+continuity confirm
+continuity reject
+```
+
+In normal conversation use explicit phrases such as `Маша, сохрани как наш
+момент: ...` or `Маша, оставь открытой нитью: ...`, then confirm the preview.
+Normal chat never creates shared memory automatically. Add `--raw` only for
+local diagnostics; it may include internal IDs and quarantined legacy payloads.
+
 ## Конфигурация
 
 `.env.example` содержит только безопасные локальные значения и зарезервированные ключи. Текущий прототип ещё не загружает `.env` автоматически.

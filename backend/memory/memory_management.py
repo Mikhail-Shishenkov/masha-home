@@ -13,6 +13,14 @@ from .memory_models import Decision, DecisionStatus, Fact, FactStatus, MemoryDoc
 
 
 ManagedRecordType = Literal["fact", "decision", "commitment", "episode"]
+RetrievalRecordType = Literal[
+    "fact",
+    "decision",
+    "commitment",
+    "episode",
+    "relationship_memory",
+    "continuity_state",
+]
 
 
 class MemoryMutationOperation(str, Enum):
@@ -46,7 +54,7 @@ class MemoryRetrievalTrace(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     record_id: str
-    record_type: ManagedRecordType
+    record_type: RetrievalRecordType
     relevance_score: float
     reasons: tuple[str, ...]
     source: str | None

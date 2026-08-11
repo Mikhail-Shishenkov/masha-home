@@ -13,14 +13,30 @@ from .memory_models import (
     Fact,
     IdentityCode,
     MemoryDocument,
+    RelationshipMemory,
     SourceType,
     StrictMemoryModel,
 )
 from .memory_repository import MemoryDocumentRepository
 
 
-ConfirmedRecord = Fact | Decision | Commitment | Episode
-ConfirmedRecordType = Literal["fact", "decision", "commitment", "episode"]
+ConfirmedRecord = Fact | Decision | Commitment | Episode | RelationshipMemory
+ConfirmedRecordType = Literal[
+    "fact",
+    "decision",
+    "commitment",
+    "episode",
+    "relationship_memory",
+]
+
+
+_COLLECTION_BY_RECORD_TYPE = {
+    "fact": "facts",
+    "decision": "decisions",
+    "commitment": "commitments",
+    "episode": "episodes",
+    "relationship_memory": "relationship_memories",
+}
 
 
 class ExplicitMemoryConfirmation(StrictMemoryModel):
@@ -53,7 +69,9 @@ class ConfirmedMemoryService:
             raise ValueError(f"memory id already exists: {confirmation.record.id}")
 
         payload = document.model_dump(mode="json")
-        payload[f"{record_type}s"].append(confirmation.record.model_dump(mode="json"))
+        payload[_COLLECTION_BY_RECORD_TYPE[record_type]].append(
+            confirmation.record.model_dump(mode="json")
+        )
         self.repository.replace_document(
             MemoryDocument.model_validate(payload),
             action="confirmed_memory",
@@ -75,7 +93,9 @@ class ConfirmedMemoryService:
             return "decision"
         if isinstance(record, Commitment):
             return "commitment"
-        return "episode"
+        if isinstance(record, Episode):
+            return "episode"
+        return "relationship_memory"
 
     @staticmethod
     def _contains_id(document: MemoryDocument, memory_id: str) -> bool:

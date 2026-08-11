@@ -473,6 +473,12 @@ Continuity State — небольшой постоянный мост между
 - Continuity State не дублирует полную память;
 - состояние должно быть восстанавливаемо из связанной истории настолько, насколько это практически возможно.
 
+Production status (Stage 14): shared moments and continuity follow-ups use the
+existing local proposal/confirmation/audit path. Normal conversation does not
+create them. Obvious corrupted legacy text is excluded from normal retrieval
+without modifying the stored record and remains inspectable through raw local
+diagnostics.
+
 ## 7. Working Context
 
 Working Context — DTO, который собирается перед обращением к модели и не является постоянной сущностью.

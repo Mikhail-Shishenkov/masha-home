@@ -7,6 +7,7 @@ from typing import Callable
 
 from backend.identity.identity_models import IdentityContext
 from backend.llm.model_models import ModelMessage, ModelRequest
+from backend.memory.shared_continuity import is_readable_continuity_text
 from backend.temporal.temporal_engine import TemporalContext
 
 
@@ -48,12 +49,24 @@ class ConversationContextCompiler:
         execution_model_id: str | None = None,
         execution_think: bool = False,
         execution_timeout_seconds: float = 30.0,
+        context_lens: str = "general",
     ) -> ModelRequest:
         return ModelRequest(
             messages=messages,
             identity_context=identity_context,
             private_context={
                 "behavioral_contract": BEHAVIORAL_CONTRACT,
+                "shared_continuity_contract": (
+                    "ОБЩАЯ ИСТОРИЯ: RelationshipMemory — подтверждённый общий момент, а НЕ Fact "
+                    "о Мише и не доказательство другого события. ContinuityState — открытая тема, "
+                    "а НЕ Commitment и не разрешение написать первой. Называй эти сущности только "
+                    "общим моментом и открытой нитью. Не придумывай дату, вторую точку зрения, "
+                    "завершение нити или отсутствующие подробности. Говори только о записях, "
+                    "переданных в Memory Context. Не обобщай их до «помним каждый шаг», «каждый "
+                    "разговор», «каждую строку кода» или «всю историю». Отсутствие записи в "
+                    "bounded context не означает, что все остальные темы завершены."
+                ),
+                "context_lens": context_lens,
                 "current_local_time": (temporal_context.current_local_time if temporal_context else self._clock()).isoformat(),
                 "temporal_context": (temporal_context.model_dump(mode="json") if temporal_context else None),
                 "memory_context": [self._memory_record(item) for item in working_memory],
@@ -88,4 +101,28 @@ class ConversationContextCompiler:
             record["title"] = data["title"]
             record["summary"] = data["summary"]
             record["occurred_at"] = data["occurred_at"]
+        elif record_type == "relationship_memory":
+            record["kind"] = data["kind"]
+            record["title"] = data["title"]
+            record["content"] = data["content"]
+            record["status"] = data["status"]
+        elif record_type == "continuity_state":
+            record["relationship_key"] = data["relationship_key"]
+            record["current_focus"] = [
+                value
+                for value in data["current_focus"]
+                if is_readable_continuity_text(value)
+            ]
+            record["open_follow_ups"] = [
+                {
+                    "topic": follow_up["topic"],
+                    "summary": follow_up["summary"],
+                    "reason_to_return": follow_up["reason_to_return"],
+                    "revisit_after": follow_up["revisit_after"],
+                }
+                for follow_up in data["intended_follow_ups"]
+                if follow_up["status"] == "open"
+                and is_readable_continuity_text(follow_up["summary"])
+                and is_readable_continuity_text(follow_up["reason_to_return"])
+            ]
         return record

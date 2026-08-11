@@ -466,3 +466,14 @@ waiting-for-user suppression protect attention without LLM discretion. Manual
 and background execution share the same path. A bounded receipt journal,
 read-only runtime health and `masha.ps1` human entry point are implemented.
 SQLite schema, Identity, Memory and Commitment contracts were not changed.
+
+### STAGE-14. Shared Continuity
+
+Статус: **DONE**
+
+Existing `RelationshipMemory` and `ContinuityState` records are now connected
+to explicit proposals, confirmation, audit, bounded retrieval and a human-first
+`continuity` CLI. Shared moments are kept separate from Facts and Episodes;
+open threads remain separate from Commitments and proactive permission. No new
+SQLite schema, second memory system, automatic extraction or model-owned
+relationship state was introduced.

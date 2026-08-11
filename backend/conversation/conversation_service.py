@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from backend.identity.identity_kernel import IdentityKernel
 from backend.llm.model_models import ModelMessage
 from backend.llm.model_provider import ModelProviderUnavailableError, ModelTimeoutError
@@ -19,6 +21,13 @@ class ConversationUnavailableError(RuntimeError):
     """Controlled application error; callers should present it without a traceback."""
 
 
+_SHARED_CONTINUITY_QUERY = re.compile(
+    r"\b(?:между\s+нами|наш(?:а|ей|у)\s+истори(?:я|и|ю)|общ(?:ая|ей|ую)\s+истори(?:я|и|ю)|"
+    r"открыт(?:ая|ые|ую)\s+нит(?:ь|и)|что\s+у\s+нас\s+продолжается)\b",
+    re.IGNORECASE,
+)
+
+
 class ConversationService:
     def __init__(
         self,
@@ -35,6 +44,7 @@ class ConversationService:
         temporal_engine: TemporalEngine | None = None,
         model_profiles: ModelProfileStore | None = None,
         proactive_interactions=None,
+        shared_continuity=None,
     ):
         self.identity_kernel = identity_kernel
         self.memory_retriever = memory_retriever
@@ -48,6 +58,7 @@ class ConversationService:
         self.temporal_engine = temporal_engine or TemporalEngine()
         self.model_profiles = model_profiles
         self.proactive_interactions = proactive_interactions
+        self.shared_continuity = shared_continuity
 
     def send(
         self,
@@ -75,6 +86,14 @@ class ConversationService:
                 return conversation.id, intent.response
 
         memories = self.memory_retriever.retrieve(project_id=project_id, limit=self.memory_limit)
+        context_lens = "general"
+        if _SHARED_CONTINUITY_QUERY.search(user_message):
+            context_lens = "shared_continuity"
+            memories = [
+                item
+                for item in memories
+                if item["type"] in {"relationship_memory", "continuity_state"}
+            ]
         self.working_memory.load(memories)
         active_profile = None if self.model_profiles is None else self.model_profiles.get_active_profile()
         request = self.context_compiler.compile(
@@ -88,6 +107,7 @@ class ConversationService:
             execution_model_id=None if active_profile is None else active_profile.model_id,
             execution_think=False if active_profile is None else active_profile.think,
             execution_timeout_seconds=30.0 if active_profile is None else active_profile.timeout_seconds,
+            context_lens=context_lens,
         )
         try:
             response = self.router.generate(request)

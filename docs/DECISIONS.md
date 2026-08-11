@@ -430,6 +430,24 @@ The bounded local receipt journal records decisions and runtime outcomes but
 does not copy generated messages, conversation content or Memory payloads. It
 cannot evolve Identity or become a second memory subsystem.
 
+### DEC-058. Shared history is confirmed relational meaning
+
+Статус: **Принято и реализовано (Stage 14)**
+
+`RelationshipMemory` хранит явно подтверждённое значение общей истории, а не
+автоматический профиль Миши и не замену `Episode`. Исходный пользовательский
+текст и provenance сохраняются; модель не может задним числом придумать вторую
+точку зрения или превратить интерпретацию в общую правду.
+
+### DEC-059. Continuity is a bridge, not a task or permission
+
+Статус: **Принято и реализовано (Stage 14)**
+
+`ContinuityState` содержит bounded открытые темы между разговорами. Изменение
+проходит через существующий proposal/confirmation/audit flow. Открытая нить не
+является `Commitment`, а её наличие не разрешает proactive contact. Повреждённые
+legacy-фрагменты исключаются из обычного retrieval без изменения исходной БД.
+
 ### DEC-047. Local model profiles are operating configuration
 
 Статус: **Принято и реализовано (LLM-03)**
