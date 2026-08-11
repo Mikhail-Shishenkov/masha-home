@@ -39,3 +39,4 @@ local-data/memory-proposals.json
 local-data/memory-backups/
 local-data/memory-exports/
 local-data/identity-regressions/
+local-data/mem-10-smoke/

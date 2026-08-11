@@ -60,6 +60,10 @@ class ConversationContextCompiler:
         data = item["data"]
         record_type = item["type"]
         record = {"record_type": record_type, "id": data["id"]}
+        record["memory_reference"] = f"[record_id={data['id']}][type={record_type}]"
+        record["source"] = data.get("source")
+        record["status"] = data.get("status")
+        record["retrieval_reasons"] = item.get("reasons", [])
         if record_type == "fact":
             record["subject"] = data["subject"]
             record["key"] = data["key"]

@@ -103,6 +103,15 @@ python -c "from backend.memory.sqlite_repository import MemorySqliteRepository a
 > identity version against active SQLite before startup. Legacy PersonaStore
 > and ContextBuilder are not runtime components.
 
+> **MEM-10 status (2026-08-11):** `MemoryManagementService` operates on the
+> same SQLite repository as conversation retrieval. Its inspection, trace and
+> explicit mutation proposals do not create an alternative memory store.
+
+> **MEM-10.1 status (2026-08-11):** user-facing memory CLI output is
+> human-readable by default; JSON identifiers, audit payloads and retrieval
+> details remain available only through `--raw`/diagnostic output. Preview and
+> explicit confirmation still precede every mutation.
+
 Утверждённый manifest находится в `identity/masha.identity.json`, регрессионные сценарии образа — в `identity/masha.regression.json`, а канонические визуальные assets — в `identity/visual_assets/`. Их назначение и правила изменения описаны в `docs/IDENTITY_GUIDE.md`.
 
 ## Model Router

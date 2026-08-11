@@ -352,4 +352,19 @@
 
 ## 5. Следующая задача
 
-Рекомендуемая следующая задача — `LLM-02`: измерить локальные runtime и модели на этом компьютере. Перед началом потребуется твоё подтверждение на установку runtime и загрузку каждой крупной модели.
+`ID-03 — Identity Evolution Design` завершён как **design only**: определены
+immutable approved manifests, explicit user approval, compatibility check памяти
+и rollback contract. Никакой runtime-код, SQLite schema или manifest не менялись.
+
+Рекомендуемая следующая задача — отдельная реализация versioned Identity
+workflow только после утверждения schema/audit контракта; она не начинается
+автоматически.
+
+### MEM-10. Управляемая долгосрочная память
+
+Статус: **DONE**
+
+Добавлены local inspection, deterministic keyword search, project filtering,
+retrieval trace, pending mutation proposals и подтверждённые edit/archive/
+forget/supersession operations. Conversation history остаётся отдельным JSON
+механизмом и обычный диалог не меняет SQLite memory.

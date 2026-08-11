@@ -61,6 +61,8 @@ class MemoryProposal(BaseModel):
     record_payload: dict
     created_at: AwareDatetime
     status: ProposalStatus
+    operation: str = "create"
+    target_record_id: str | None = None
 
 
 class MemoryProposalStore:

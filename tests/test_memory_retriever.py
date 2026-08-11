@@ -9,7 +9,7 @@ def test_retrieve_returns_ranked_project_memory(memory_path: str):
     )
 
     assert results
-    assert all(set(item) == {"type", "data", "score"} for item in results)
+    assert all(set(item) == {"type", "data", "score", "reasons"} for item in results)
     assert all(item["score"] >= 0 for item in results)
     assert [item["score"] for item in results] == sorted(
         (item["score"] for item in results),

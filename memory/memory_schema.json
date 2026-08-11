@@ -460,6 +460,19 @@
           "title": "Source Episode Ids",
           "type": "array"
         },
+        "supersedes_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Supersedes Id"
+        },
         "superseded_by": {
           "anyOf": [
             {
@@ -839,6 +852,19 @@
           },
           "title": "Source Episode Ids",
           "type": "array"
+        },
+        "supersedes_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Supersedes Id"
         },
         "superseded_by": {
           "anyOf": [

@@ -182,6 +182,7 @@ class Fact(StrictMemoryModel):
     known_by: list[IdentityCode]
     project_ids: list[NonEmptyStr]
     source_episode_ids: list[NonEmptyStr]
+    supersedes_id: NonEmptyStr | None = None
     superseded_by: NonEmptyStr | None
     created_at: AwareDatetime
     updated_at: AwareDatetime
@@ -207,6 +208,7 @@ class Decision(StrictMemoryModel):
     project_ids: list[NonEmptyStr]
     source: SourceType
     source_episode_ids: list[NonEmptyStr]
+    supersedes_id: NonEmptyStr | None = None
     superseded_by: NonEmptyStr | None
     created_at: AwareDatetime
     updated_at: AwareDatetime
@@ -476,10 +478,14 @@ class MemoryDocument(StrictMemoryModel):
             self._require_subset(fact.source_episode_ids, episode_ids, "episode")
             if fact.superseded_by is not None:
                 self._require_reference(fact.superseded_by, fact_ids, "fact")
+            if fact.supersedes_id is not None:
+                self._require_reference(fact.supersedes_id, fact_ids, "fact")
         for decision in self.decisions:
             self._require_subset(decision.source_episode_ids, episode_ids, "episode")
             if decision.superseded_by is not None:
                 self._require_reference(decision.superseded_by, decision_ids, "decision")
+            if decision.supersedes_id is not None:
+                self._require_reference(decision.supersedes_id, decision_ids, "decision")
         for commitment in self.commitments:
             self._require_subset(commitment.source_episode_ids, episode_ids, "episode")
             if commitment.replaces_id is not None:
@@ -637,6 +643,8 @@ class MemoryDocument(StrictMemoryModel):
 
         self._validate_acyclic_supersession(self.facts)
         self._validate_acyclic_supersession(self.decisions)
+        self._validate_reciprocal_supersession(self.facts, "Fact")
+        self._validate_reciprocal_supersession(self.decisions, "Decision")
         self._validate_acyclic_links(self.commitments, "replaces_id")
         self._validate_acyclic_links(
             self.reflections,
@@ -663,6 +671,13 @@ class MemoryDocument(StrictMemoryModel):
     @staticmethod
     def _validate_acyclic_supersession(items):
         MemoryDocument._validate_acyclic_links(items, "superseded_by")
+
+    @staticmethod
+    def _validate_reciprocal_supersession(items, label: str):
+        by_id = {item.id: item for item in items}
+        for item in items:
+            if item.superseded_by is not None and by_id[item.superseded_by].supersedes_id != item.id:
+                raise ValueError(f"superseded {label} must have a reciprocal supersedes_id")
 
     @staticmethod
     def _validate_acyclic_links(items, field_name: str):

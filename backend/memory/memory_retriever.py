@@ -120,10 +120,14 @@ class MemoryRetriever:
                 if not self._matches_status(item):
                     continue
 
+                reasons = ["visible", "active_status"]
+                if project_id is not None:
+                    reasons.append(f"project:{project_id}")
                 results.append({
                     "type": item_type,
                     "data": item,
                     "score": self._score(item, item_type),
+                    "reasons": reasons,
                 })
 
         results.sort(

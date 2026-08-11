@@ -338,3 +338,20 @@ startup error and never mutates either source. The local-only
 `backend.identity.run_identity_regression` runs approved scenarios through the
 production-style compiler/router using fixture memory, stores raw output under
 `local-data/identity-regressions/`, and never rewrites responses.
+
+## CURRENT — MEM-10 MANAGED LONG-TERM MEMORY
+
+`MemoryManagementService` is a local inspection and mutation boundary over the
+same active `MemorySqliteRepository`. It lists/gets/searches records with
+identity version and available audit metadata, supports project filtering and
+reports deterministic Fact conflicts without resolving them. All mutations are
+pending JSON proposals first; only an explicit confirmation applies one SQLite
+transaction and audit event. Archive and forget both use existing
+`visibility=hidden`, preserving the record and excluding it from normal
+retrieval. Fact/Decision supersession retains the old record, marks it
+superseded, and stores reciprocal `supersedes_id` on the new record.
+
+`MemoryRetriever` now emits deterministic reasons and scores; the compiler
+passes a bounded runtime-generated `[record_id=...][type=...]` memory reference
+to the local model context. Chat history remains separate and no ordinary turn
+creates or mutates long-term memory.

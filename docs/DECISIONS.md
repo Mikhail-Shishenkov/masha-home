@@ -308,6 +308,29 @@ Ollama. Основной кандидат MVP — `qwen3.5:9b` (Q4_K_M): он п
 кандидатом для этого ПК из-за требований к памяти и числу GPU; его можно
 рассматривать позднее только как явно разрешённый внешний адаптер.
 
+### DEC-044. Эволюция Identity только через versioned approval
+
+Статус: **Принято (design only; not implemented)**
+
+Approved Identity manifest неизменяем. Изменение начинается как draft, требует
+явного пользовательского approval, создаёт новый manifest/version и проходит
+проверку совместимости с памятью перед activation. LLM может лишь предложить
+изменение; она не может изменять Identity, память, migration или rollback.
+Исторические записи не переписываются автоматически. Реализация потребует
+отдельного schema/audit решения и не входит в ID-03.
+
+### DEC-045. Управляемая long-term memory
+
+Статус: **Принято**
+
+SQLite остаётся единственным production source of truth. Просмотр памяти,
+archive/forget, edit и supersession проходят через local management service и
+явный pending proposal с подтверждением пользователя. `hidden` означает
+неразрушающее archive/forget и исключается из обычного retrieval; physical
+delete не выполняется. Superseded Fact/Decision сохраняется исторически и
+связывается с актуальной записью в обе стороны. LLM не создаёт и не меняет
+память автоматически.
+
 ## 6. Открытые вопросы ближайших этапов
 
 - Формат identity manifest.
