@@ -8,6 +8,15 @@ from .models import (
     SkillRisk,
 )
 from .registry import SkillRegistry
+from .autonomy import (
+    ActionAutonomyEngine,
+    ActionAutonomyPolicy,
+    ActionAutonomyPolicyStore,
+    ActionAutonomyService,
+    ActionDecision,
+    ActionGrant,
+    ActionRequest,
+)
 
 __all__ = [
     "RegisteredSkill",
@@ -16,4 +25,11 @@ __all__ = [
     "SkillManifest",
     "SkillRegistry",
     "SkillRisk",
+    "ActionAutonomyEngine",
+    "ActionAutonomyPolicy",
+    "ActionAutonomyPolicyStore",
+    "ActionAutonomyService",
+    "ActionDecision",
+    "ActionGrant",
+    "ActionRequest",
 ]

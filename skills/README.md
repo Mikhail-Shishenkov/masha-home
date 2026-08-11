@@ -50,3 +50,20 @@ SHA-256 всего содержимого. Registry не импортирует 
 
 Выдача разрешений, исполнение entrypoint, agent loop и установка внешних пакетов
 в Stage 16.1 отсутствуют.
+
+Stage 16.2 добавляет отдельную policy постоянных разрешений, но всё ещё ничего
+не исполняет:
+
+```powershell
+.\masha.ps1 skills policy status
+.\masha.ps1 skills policy on
+.\masha.ps1 skills policy level 2
+.\masha.ps1 skills permissions
+.\masha.ps1 skills grant project_observer local_read workspace:masha-home 2 observe
+.\masha.ps1 skills check project_observer local_read workspace:masha-home 1
+.\masha.ps1 skills revoke 1
+```
+
+Grant действует только для точного сочетания skill + capability + scope и не
+может расширить manifest. `check` показывает решение policy, но не запускает
+действие.

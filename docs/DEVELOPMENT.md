@@ -277,6 +277,25 @@ Run targeted tests with:
 python -m pytest tests/test_skill_registry.py -q
 ```
 
+### Stage 16.2 action permissions
+
+```powershell
+.\masha.ps1 skills policy status
+.\masha.ps1 skills policy on
+.\masha.ps1 skills policy level 2
+.\masha.ps1 skills permissions
+.\masha.ps1 skills grant <skill> <capability> <scope> <level> [risk]
+.\masha.ps1 skills revoke <номер>
+.\masha.ps1 skills check <skill> <capability> <scope> <level> [risk]
+```
+
+Policy state lives at ignored `local-data/config/action-autonomy.json`. `check`
+does not execute anything. Run the combined targeted regression with:
+
+```powershell
+python -m pytest tests/test_skill_registry.py tests/test_action_autonomy.py -q
+```
+
 ## Конфигурация
 
 `.env.example` содержит только безопасные локальные значения и зарезервированные ключи. Текущий прототип ещё не загружает `.env` автоматически.

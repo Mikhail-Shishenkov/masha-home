@@ -3,7 +3,7 @@
 ## Status
 
 - `16.1 Skill Contract & Registry`: **IMPLEMENTED**
-- `16.2 Action Autonomy Policy`: **PLANNED**
+- `16.2 Action Autonomy Policy`: **IMPLEMENTED**
 - `16.3 Bounded Agent Loop`: **PLANNED**
 - `16.4 First Local Skill`: **PLANNED**
 - `16.5 Skill Installation / Upgrade`: **PLANNED**
@@ -137,24 +137,89 @@ configuration, отдельная от:
 ## Known limitations
 
 - registry is a single-user local JSON store without cross-process locking;
-- `requested_scopes` are declarations until Stage 16.2 normalizes and enforces them;
+- `requested_scopes` are exact symbolic boundaries enforced by Stage 16.2;
+  filesystem-path normalization remains part of the future concrete tool adapter;
 - SHA-256 detects local modification but is not publisher signature verification;
 - unregister, upgrade and external package installation are intentionally absent;
 - a future executor must re-check package integrity immediately before every run,
   not rely on an earlier `verify` command.
 
+## Stage 16.2 — Action Autonomy Policy
+
+Persistent policy находится в `local-data/config/action-autonomy.json`, отдельно
+от proactive policy. Она содержит только master switch, глобальный maximum
+autonomy level и точечные standing grants.
+
+Уровни действий:
+
+- 0 — только советовать, никакого silent execution;
+- 1 — наблюдать и диагностировать;
+- 2 — безопасные обратимые локальные действия;
+- 3 — ограниченные многошаговые задачи;
+- 4 — заранее разрешённые локальные routines.
+
+Уровень не является разрешением сам по себе. Для `ALLOW` одновременно нужны:
+
+1. registered + verified skill package;
+2. capability и scope внутри manifest;
+3. risk и required level внутри manifest ceiling;
+4. включённая action policy;
+5. action внутри global level;
+6. точный standing grant по skill + capability + scope;
+7. risk и level внутри grant.
+
+Решения полностью deterministic:
+
+- `ALLOW` — действие укладывается в постоянные границы;
+- `REQUIRE_CONFIRMATION` — действие допустимо, но пересекает standing grant;
+- `DENY` — skill/package/manifest/master boundary нарушены.
+
+`ActionRequest` является application-owned contract. LLM не может занизить
+risk: минимальный риск детерминирован capability. Policy engine не получает
+ModelRouter и физически не способен выполнить действие.
+
+Непередаваемые границы Stage 16.2:
+
+- `identity_write` → `DENY`;
+- `memory_write` → existing explicit confirmation flow;
+- `destructive_operation` → confirmation;
+- `external_communication` → confirmation.
+
+Для них standing grant создать нельзя. Network access остаётся consequential и
+может быть разрешён только явно конкретному skill/scope; network tool пока не
+существует.
+
+Human CLI:
+
+```powershell
+.\masha.ps1 skills policy status|on|off|level <0-4>
+.\masha.ps1 skills permissions
+.\masha.ps1 skills grant <skill> <capability> <scope> <level> [risk]
+.\masha.ps1 skills revoke <номер>
+.\masha.ps1 skills check <skill> <capability> <scope> <level> [risk]
+```
+
+`check` только объясняет решение и всегда пишет, что действие не запускалось.
+В normal UX внутренние grant IDs скрыты.
+
 ## Next safe step
 
-`Stage 16.2 — Action Autonomy Policy`: отдельная локальная policy должна
-выдавать standing grants по сочетанию skill + capability + scope + risk и
-определять `ALLOW`, `REQUIRE_CONFIRMATION` или `DENY`. Даже после 16.2 никакой
-tool не исполняется до отдельного 16.3/16.4.
+`Stage 16.3 — Bounded Agent Loop`: application-owned goal/plan/step budget,
+policy evaluation before every step, verification after every result and a
+local execution receipt. Первый loop должен работать с Fake Tool; реальный
+локальный навык появится только в 16.4.
 
 ## Verification
 
 - Stage 16.1 deterministic tests: `15 passed`;
-- full project regression: `198 passed`;
+- Stage 16.2 deterministic tests: `19 passed`;
+- combined Skill Registry + Action Autonomy regression: `34 passed`;
+- full project regression: `217 passed`;
 - launcher smoke: `masha.ps1 skills list` is human-readable and read-only;
 - registration/restart/integrity smoke is covered on an isolated registry;
 - production SQLite SHA-256 remained
   `55F0C17A3190C97C1FFC60EDF228AEBCE77793E3D08064455F87810181A7548E`.
+
+Stage 16.2 deterministic coverage includes disabled policy, manifest boundary,
+standing grants, narrower risk, autonomy ceilings, revocation, restart,
+tampering and non-delegable operations.

@@ -508,6 +508,23 @@ unsafe instruction paths and understated risk are deterministic failures.
 Human CLI is available through `masha.ps1 skills ...`; hashes and technical
 payloads remain `--raw` diagnostics.
 
-Action permissions, tools, agent planning and execution remain not implemented.
+Stage 16.1 itself added no permission or execution. Stage 16.2 below adds the
+separate deterministic permission decision layer; tools, planning and execution
+remain not implemented.
 
 Current regression after Stage 16.1: `198 passed`.
+
+## CURRENT — STAGE 16.2 ACTION AUTONOMY POLICY
+
+`ActionAutonomyPolicyStore` persists a separate local master switch, global
+level and exact standing grants. `ActionAutonomyEngine` evaluates an
+application-owned ActionRequest against registered package integrity, manifest
+capabilities/scopes/risk/ceiling and the user's grant. It returns only `ALLOW`,
+`REQUIRE_CONFIRMATION` or `DENY` with a deterministic reason.
+
+Policy has no ModelRouter, tool adapter or execution method. Identity write is
+denied; Memory write retains its confirmation flow; destructive actions and
+external communication cannot receive silent grants. Human CLI exposes policy,
+numbered permissions, grant/revoke and read-only checks without internal IDs.
+
+Current regression after Stage 16.2: `217 passed`.

@@ -78,6 +78,12 @@ skill package может задекларировать capabilities, scope, ris
 автономности, но registration не выдаёт permission и не запускает entrypoint.
 Исполнение, standing grants и agent loop вводятся отдельными этапами.
 
+Stage 16.2 adds standing grants without adding execution. Action autonomy is
+separate from initiative: proactive policy decides whether Masha may contact
+Misha, while action policy decides whether a registered skill action is inside
+an already approved capability/scope/risk boundary. Neither policy can expand
+the other.
+
 ## 6. Память
 
 Базовые типы памяти:

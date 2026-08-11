@@ -8,7 +8,15 @@ from pathlib import Path
 
 from backend.conversation.cli import PROJECT_ROOT
 
-from .models import SkillDescriptor, SkillIntegrity
+from .autonomy import (
+    ActionAutonomyEngine,
+    ActionAutonomyPolicyStore,
+    ActionAutonomyService,
+    ActionDecision,
+    ActionPolicyError,
+    ActionRequest,
+)
+from .models import SkillCapability, SkillDescriptor, SkillIntegrity, SkillRisk
 from .registry import SkillRegistry, SkillRegistryError
 
 
@@ -28,11 +36,25 @@ def build_registry(project_root: Path = PROJECT_ROOT) -> SkillRegistry:
     )
 
 
+def build_autonomy_service(
+    registry: SkillRegistry,
+    project_root: Path = PROJECT_ROOT,
+) -> ActionAutonomyService:
+    return ActionAutonomyService(
+        store=ActionAutonomyPolicyStore(
+            project_root / "local-data" / "config" / "action-autonomy.json"
+        ),
+        registry=registry,
+    )
+
+
 def run_command(
     command: str,
     *,
     skill_id: str | None = None,
     registry: SkillRegistry,
+    autonomy: ActionAutonomyService | None = None,
+    arguments: tuple[str, ...] = (),
     raw: bool = False,
     output=print,
 ) -> int:
@@ -48,6 +70,114 @@ def run_command(
                     "Навыки Маши:\n\n"
                     + "\n\n".join(_summary(index, row) for index, row in enumerate(rows, 1))
                 )
+            return 0
+
+        if command == "policy":
+            autonomy = _require_autonomy(autonomy)
+            action = arguments[0] if arguments else "status"
+            if action == "on":
+                policy = autonomy.set_enabled(True)
+            elif action == "off":
+                policy = autonomy.set_enabled(False)
+            elif action == "level" and len(arguments) == 2:
+                policy = autonomy.set_level(int(arguments[1]))
+            elif action == "status":
+                policy = autonomy.policy()
+            else:
+                output("Команды: skills policy status|on|off|level <0-4>.")
+                return 2
+            if raw:
+                output(json.dumps(policy.model_dump(mode="json"), ensure_ascii=False))
+            else:
+                output(_policy_details(policy))
+            return 0
+
+        if command == "permissions":
+            autonomy = _require_autonomy(autonomy)
+            grants = autonomy.grants()
+            if raw:
+                output(json.dumps([item.model_dump(mode="json") for item in grants], ensure_ascii=False))
+            elif not grants:
+                output("Постоянных разрешений пока нет.")
+            else:
+                output(
+                    "Постоянные разрешения Маши:\n\n"
+                    + "\n\n".join(
+                        f"{index}. {item.skill_id}: {item.capability.value}\n"
+                        f"   Область: {item.scope} · до уровня {item.maximum_autonomy_level}"
+                        for index, item in enumerate(grants, 1)
+                    )
+                )
+            return 0
+
+        if command == "grant":
+            autonomy = _require_autonomy(autonomy)
+            if len(arguments) not in {4, 5}:
+                output("Использование: skills grant <skill> <capability> <scope> <level> [risk].")
+                return 2
+            grant = autonomy.grant(
+                skill_id=arguments[0],
+                capability=SkillCapability(arguments[1]),
+                scope=arguments[2],
+                maximum_autonomy_level=int(arguments[3]),
+                maximum_risk=SkillRisk(arguments[4]) if len(arguments) == 5 else None,
+            )
+            if raw:
+                output(json.dumps(grant.model_dump(mode="json"), ensure_ascii=False))
+            else:
+                output(
+                    f"Разрешение сохранено: {grant.skill_id} может использовать "
+                    f"{grant.capability.value} в области {grant.scope} до уровня "
+                    f"{grant.maximum_autonomy_level}. Само действие ещё не запускалось."
+                )
+            return 0
+
+        if command == "revoke":
+            autonomy = _require_autonomy(autonomy)
+            if len(arguments) != 1:
+                output("Использование: skills revoke <номер>.")
+                return 2
+            grants = autonomy.grants()
+            try:
+                grant = grants[int(arguments[0]) - 1]
+            except (ValueError, IndexError):
+                output("Выбери номер из skills permissions.")
+                return 2
+            policy = autonomy.revoke(grant.grant_id)
+            if raw:
+                output(json.dumps(policy.model_dump(mode="json"), ensure_ascii=False))
+            else:
+                output("Постоянное разрешение отозвано. Новое действие потребует подтверждения.")
+            return 0
+
+        if command == "check":
+            autonomy = _require_autonomy(autonomy)
+            if len(arguments) not in {4, 5}:
+                output("Использование: skills check <skill> <capability> <scope> <level> [risk].")
+                return 2
+            descriptor = registry.inspect(arguments[0])
+            if descriptor.manifest is None:
+                raise ActionPolicyError("skill manifest is unavailable")
+            risk = (
+                SkillRisk(arguments[4])
+                if len(arguments) == 5
+                else descriptor.manifest.risk_level
+            )
+            evaluation = ActionAutonomyEngine().evaluate(
+                ActionRequest(
+                    skill_id=arguments[0],
+                    capability=SkillCapability(arguments[1]),
+                    scope=arguments[2],
+                    required_autonomy_level=int(arguments[3]),
+                    risk_level=risk,
+                ),
+                policy=autonomy.policy(),
+                registry=registry,
+            )
+            if raw:
+                output(json.dumps(evaluation.model_dump(mode="json"), ensure_ascii=False))
+            else:
+                output(_evaluation_details(evaluation.decision, evaluation.reason))
             return 0
 
         if skill_id is None:
@@ -80,7 +210,7 @@ def run_command(
                     "Это ещё не разрешение на выполнение действий."
                 )
             return 0
-    except SkillRegistryError as error:
+    except (SkillRegistryError, ActionPolicyError, ValueError) as error:
         output(f"Не удалось обработать навык: {error}")
         return 1
     raise ValueError(f"unknown skills command: {command}")
@@ -112,18 +242,63 @@ def _details(row: SkillDescriptor) -> str:
     )
 
 
+def _require_autonomy(value: ActionAutonomyService | None) -> ActionAutonomyService:
+    if value is None:
+        raise ActionPolicyError("action autonomy service is unavailable")
+    return value
+
+
+def _policy_details(policy) -> str:
+    enabled = "включена" if policy.enabled else "выключена"
+    level_labels = {
+        0: "только советовать",
+        1: "наблюдать и диагностировать",
+        2: "безопасные обратимые действия",
+        3: "ограниченные многошаговые задачи",
+        4: "заранее разрешённые локальные routines",
+    }
+    return (
+        "Автономность действий\n"
+        f"Состояние: {enabled}\n"
+        f"Уровень: {policy.maximum_autonomy_level} — "
+        f"{level_labels[policy.maximum_autonomy_level]}\n"
+        f"Постоянных разрешений: {len(policy.grants)}\n"
+        "Наличие разрешения не запускает навык само по себе."
+    )
+
+
+def _evaluation_details(decision: ActionDecision, reason: str) -> str:
+    labels = {
+        ActionDecision.ALLOW: "Разрешено текущими постоянными границами",
+        ActionDecision.REQUIRE_CONFIRMATION: "Нужно подтверждение Миши",
+        ActionDecision.DENY: "Запрещено текущей архитектурой или настройками",
+    }
+    return f"{labels[decision]}. Причина: {reason}. Действие не запускалось."
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Masha Home local skill registry")
-    parser.add_argument("command", nargs="?", default="list", choices=("list", "show", "verify", "register"))
-    parser.add_argument("skill_id", nargs="?")
+    parser.add_argument(
+        "command",
+        nargs="?",
+        default="list",
+        choices=(
+            "list", "show", "verify", "register", "policy", "permissions",
+            "grant", "revoke", "check",
+        ),
+    )
+    parser.add_argument("arguments", nargs="*")
     parser.add_argument("--raw", action="store_true")
     parser.add_argument("--project-root", type=Path, default=PROJECT_ROOT)
     args = parser.parse_args()
+    registry = build_registry(args.project_root)
     raise SystemExit(
         run_command(
             args.command,
-            skill_id=args.skill_id,
-            registry=build_registry(args.project_root),
+            skill_id=args.arguments[0] if args.arguments else None,
+            arguments=tuple(args.arguments),
+            registry=registry,
+            autonomy=build_autonomy_service(registry, args.project_root),
             raw=args.raw,
         )
     )

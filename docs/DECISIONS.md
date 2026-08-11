@@ -496,6 +496,25 @@ modified, missing и invalid. Discovery и registration не импортиру�
 и не исполняют package code. Изменение пакета требует отдельного будущего
 upgrade flow; оно не наследует прежнее доверие автоматически.
 
+### DEC-065. Action autonomy is a standing deterministic boundary
+
+Статус: **Принято и реализовано (Stage 16.2)**
+
+Action autonomy хранится отдельно от proactive contact policy. `ALLOW` требует
+verified package, manifest boundary, enabled master switch, global level и
+точный grant по skill/capability/scope с достаточными risk/level limits.
+Отсутствующий grant означает `REQUIRE_CONFIRMATION`, а не автоматический отказ.
+LLM не создаёт request authority, grant или решение policy.
+
+### DEC-066. Some capabilities cannot become silent standing permissions
+
+Статус: **Принято и реализовано (Stage 16.2)**
+
+Identity write всегда запрещён. Memory write сохраняет существующий explicit
+confirmation flow. Destructive operations и external communication требуют
+подтверждения на конкретное действие. Standing grant не может отменить эти
+границы. Выключенная action policy является полным `DENY` для skill actions.
+
 ### DEC-047. Local model profiles are operating configuration
 
 Статус: **Принято и реализовано (LLM-03)**

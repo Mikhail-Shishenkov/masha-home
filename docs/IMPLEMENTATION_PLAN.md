@@ -505,9 +505,19 @@ was changed.
 
 ### STAGE-16.2. Action Autonomy Policy
 
+Статус: **DONE**
+
+Explicit standing grants by skill, capability, scope, risk and level are stored
+in a separate local policy. The deterministic engine returns `ALLOW`,
+`REQUIRE_CONFIRMATION` or `DENY`; exact grants avoid repeated questions inside
+approved boundaries. Identity write remains denied, while Memory write,
+destructive actions and external communication require confirmation. No tool,
+LLM planner or agent loop is connected.
+
+### STAGE-16.3. Bounded Agent Loop
+
 Статус: **NEXT — NOT IMPLEMENTED**
 
-Define explicit standing grants by skill, capability, scope and risk. The
-deterministic policy must return `ALLOW`, `REQUIRE_CONFIRMATION` or `DENY` and
-remain separate from proactive contact policy. This stage must not execute a
-tool or introduce an agent loop.
+Introduce application-owned goals, bounded plans, step/time budgets, per-step
+policy evaluation, deterministic verification and receipts. Start with a Fake
+Tool only; do not connect a real filesystem/process/network skill yet.
