@@ -134,6 +134,66 @@ before changing the file. It never downloads models and never falls back.
 Profiles do not change Masha's identity, SQLite memory, conversation history,
 or temporal state.
 
+## MEM-12.1 temporal foundation
+
+`backend.temporal.temporal_runtime` deterministically recovers only overdue
+Commitment events into the existing local `temporal_events` table. Event IDs
+are stable across restart. `backend.temporal.proactive` is a pure policy
+decision layer; it has no scheduler, delivery, LLM call, CLI or persistent user
+settings. It never mutates MemoryDocument, Commitment, Identity or history.
+
+## MEM-12.2 proactive interaction
+
+`ProactiveInteractionService` routes only an authorised `REMIND` candidate
+through the existing ModelRouter and active local profile. The local SQLite
+interaction state prevents repeat delivery after acknowledgement/dismiss.
+There is no scheduler, background process, external delivery or fallback.
+
+## MEM-12.3 persistent proactive policy
+
+`local-data/config/proactive-policy.json` is local operating configuration
+separate from `models.json`. Use `proactive status`, `proactive on`,
+`proactive off`, `proactive level <0-5>` and `proactive run` in the CLI. The
+default policy is disabled / level 0. The run is manual and local: it can only
+deliver a deterministically authorised Commitment reminder and never changes
+Memory, Identity, Commitment or conversation history.
+
+## MEM-12.5 proactive event store
+
+Migration v4 adds `proactive_events`, a standalone lifecycle table for
+`commitment_reminder` and `check_in`. Use it through
+`backend.temporal.proactive_events.ProactiveEventStore`; it has no LLM,
+scheduler, detection or delivery responsibility.
+
+## MEM-12.6 check-in detection
+
+`ConversationStore.latest_message()` returns the globally newest stored
+message. `CheckInDetector` combines it with `TemporalEngine` and a policy
+threshold to persist an idempotent CHECK_IN event. It has no CLI, scheduler,
+LLM call or delivery path.
+
+## MEM-12.7 check-in lifecycle
+
+`CheckInLifecycleRuntime` applies existing proactive policy and persists only
+`detected → candidate` when authorised. It has no delivery or LLM dependency.
+
+## MEM-12.8 controlled proactive runtime
+
+Use `proactive mode manual|background`, `proactive run`, and `proactive daemon
+start|stop|status`. Background mode is opt-in and persists in the existing
+policy file. Runtime lock/status/stop files live under `local-data/runtime`.
+There is no OS autostart or external channel.
+
+## MEM-12.9 proactive UX and safety boundaries
+
+Use `proactive status`, `proactive settings`, `proactive pending` and
+`proactive history` for human-readable operation. Add `--raw` only for local
+diagnostics. Decision reasons come from deterministic runtime rules and are
+recorded in the existing audit log. `proactive off` is the complete delivery
+switch. The daemon recovers stale locks and records cycle failures without
+gaining decision authority. External events are not implemented and are always
+suppressed at the explicit origin boundary.
+
 ## Конфигурация
 
 `.env.example` содержит только безопасные локальные значения и зарезервированные ключи. Текущий прототип ещё не загружает `.env` автоматически.

@@ -34,6 +34,15 @@ class ConversationStore:
             return None
         return Conversation.model_validate(self._data["conversations"][-1])
 
+    def latest_message(self) -> ConversationMessage | None:
+        """Return the globally newest persisted message, independent of creation order."""
+        if not self._data["messages"]:
+            return None
+        return max(
+            (ConversationMessage.model_validate(raw) for raw in self._data["messages"]),
+            key=lambda message: (message.created_at, message.id),
+        )
+
     def append(self, conversation_id: str, role: ConversationRole, content: str) -> ConversationMessage:
         self.get(conversation_id)
         message = ConversationMessage(

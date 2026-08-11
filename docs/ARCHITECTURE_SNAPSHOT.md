@@ -183,6 +183,23 @@ context. It is a working choice, not an irreversible identity decision.
 
 No automatic multi-model routing is implemented or justified yet.
 
+### CURRENT — MEM-12.1 TEMPORAL FOUNDATION (2026-08-11)
+
+The existing local SQLite `temporal_events` table now stores deterministic,
+idempotently recovered overdue Commitment events. `TemporalRuntime` uses the
+MEM-11 clock and never changes a Commitment or MemoryDocument. A bounded
+`TemporalEventContext` and pure `ProactiveDecisionEngine` exist; policy is
+disabled by default. No scheduler, proactive delivery, LLM decision, CLI,
+external event source, schema migration, or persistent policy settings exist.
+
+### CURRENT — MEM-12.2 PROACTIVE INTERACTION (2026-08-11)
+
+`ProactiveInteractionService` forms only deterministic-policy-authorised
+reminders through ModelRouter and the active local profile. SQLite stores
+candidate/delivery/acknowledgement/dismissal state separately from memory.
+There is no scheduler, external delivery, external event source, automatic
+mutation, fallback or model switching.
+
 ### CURRENT — LLM-03 LOCAL MODEL PROFILES (2026-08-11)
 
 `local-data/config/models.json` is a local operating-configuration file, not
@@ -381,3 +398,52 @@ durations, deadlines or overdue status. `due_at` is stored in UTC; overdue is
 computed only (`due_at == now` remains open) and completed never becomes overdue.
 Commitment creation and completion are explicit proposal/confirmation mutations;
 ordinary conversational statements do not mutate them.
+
+## CURRENT — MEM-12.3 CONTROLLED PROACTIVITY
+
+Proactive policy is persisted as local operating configuration in
+`local-data/config/proactive-policy.json`, separate from Identity, Memory,
+history, Commitments and model profiles. A manual `proactive run` is the only
+delivery entry point: deterministic recovery and policy authorise a candidate
+before the active local profile can formulate it through `ModelRouter`. There
+is no scheduler, daemon, external channel, fallback or autonomous mutation.
+
+## CURRENT — MEM-12.5 PROACTIVE EVENT STORE
+
+`proactive_events` is a separate SQLite runtime/event table, not long-term
+Memory. It stores deterministic CHECK_IN and Commitment-reminder event identity
+and lifecycle independently from their sources. No runtime detection, scheduler
+or check-in delivery is connected in this storage-only slice.
+
+## CURRENT — MEM-12.6 CHECK-IN DETECTION
+
+`ConversationStore.latest_message()` is a read-only global history anchor; it
+does not rely on the last created conversation. `CheckInDetector` uses that
+anchor, deterministic TemporalEngine absence duration and the policy threshold
+to create one stable CHECK_IN event in `ProactiveEventStore`. It does not make
+a policy decision, deliver a message, call an LLM or modify source subsystems.
+
+## CURRENT — MEM-12.7 CHECK-IN LIFECYCLE
+
+`CheckInLifecycleRuntime` deterministically turns an authorised detected event
+into `candidate`, or returns `SUPPRESS` with a reason. A later user message
+resolves only check-ins delivered before that message; reminders remain intact.
+
+## CURRENT — MEM-12.8 CONTROLLED PROACTIVE RUNTIME
+
+Migration v5 preserves REMIND interactions through `temporal_event_id` and
+adds CHECK_IN interactions through mutually exclusive `proactive_event_id`.
+An authorised bounded candidate is formulated by the active local profile.
+Manual cycles and an opt-in local daemon use the same deterministic pipeline;
+the daemon has no decision authority.
+
+## CURRENT — MEM-12.9 PROACTIVE UX AND SAFETY BOUNDARIES
+
+The CLI exposes human-readable `proactive status`, `settings`, `pending` and
+`history`; internal event IDs remain available only in `--raw` output.
+Deterministic runtime reasons are stored in the existing audit log and cannot
+be produced or changed by the LLM. `proactive off` blocks delivery. The local
+daemon detects a live duplicate process, recovers stale locks, records cycle
+errors and continues with later cycles. Only `LOCAL_TEMPORAL_EVENT` is within
+the runtime trust boundary; `EXTERNAL_EVENT` is explicitly suppressed as not
+implemented. No external source or delivery channel exists.

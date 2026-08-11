@@ -377,6 +377,73 @@ Deterministic Clock/TemporalContext, bounded model context, deadline parsing,
 computed overdue status and explicit Commitment creation/completion are active.
 No scheduler, reminders, proactive behaviour or event recovery is included.
 
+### MEM-12.1. Temporal recovery and proactive decision foundation
+
+Статус: **DONE**
+
+Implemented only local deterministic recovery of overdue Commitment events,
+stable event IDs, bounded temporal candidates, and a pure injected proactive
+policy/decision engine. There is no scheduler, daemon, CLI, delivery, LLM
+decision, external source, schema migration, or Memory/Commitment mutation.
+
+### MEM-12.2. Proactive Interaction
+
+Статус: **DONE**
+
+An authorised reminder can be formulated locally through the active model
+profile and stored as a delivered interaction. Explicit acknowledgement/dismiss
+persists separately from Commitment state and prevents repeat delivery after
+restart. No scheduler or autonomous external action exists.
+
+### MEM-12.3. Persistent proactive policy and controlled local delivery
+
+Статус: **DONE**
+
+The separate local policy store and human-readable CLI control whether a manual
+local delivery pass may formulate an already authorised overdue-Commitment
+reminder. Policy, interaction state and execution model remain separate from
+Identity and Memory. Check-in permission is deterministic at Level 2; delivery
+is intentionally deferred pending its own event contract.
+
+### MEM-12.5. Proactive Event Store
+
+Статус: **DONE**
+
+Persistent proactive events now have a separate SQLite lifecycle store. It is
+not a Memory record and does not activate check-in detection or delivery.
+
+### MEM-12.6. Deterministic check-in detection
+
+Статус: **DONE**
+
+Detection uses the read-only global latest history message as a stable absence
+anchor. Only `absence > threshold` creates an idempotent CHECK_IN event; no
+delivery or background execution is enabled.
+
+### MEM-12.7. Check-in lifecycle and decision flow
+
+Статус: **DONE**
+
+Policy determines `SUPPRESS` or `CHECK_IN`; only an authorised event becomes a
+candidate. No delivery, LLM call, scheduler or background runtime was added.
+
+### MEM-12.8. Controlled proactive runtime
+
+Статус: **DONE**
+
+Dual-source interaction persistence, bounded local CHECK_IN formulation,
+manual/background modes and a stoppable single-instance local daemon are
+implemented without fallback or external delivery.
+
+### MEM-12.9. Proactive runtime UX and safety boundaries
+
+Статус: **DONE**
+
+Human-readable status, pending interaction numbering and deterministic decision
+history are implemented. Daemon stale-lock and cycle-failure recovery are
+covered by regression tests. External events remain an explicit suppressed
+boundary; model switching changes formulation execution only.
+
 ### LLM-03. Local Model Profiles
 
 Статус: **DONE**

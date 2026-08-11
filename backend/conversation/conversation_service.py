@@ -34,6 +34,7 @@ class ConversationService:
         history_limit: int = 16,
         temporal_engine: TemporalEngine | None = None,
         model_profiles: ModelProfileStore | None = None,
+        proactive_interactions=None,
     ):
         self.identity_kernel = identity_kernel
         self.memory_retriever = memory_retriever
@@ -46,6 +47,7 @@ class ConversationService:
         self.history_limit = history_limit
         self.temporal_engine = temporal_engine or TemporalEngine()
         self.model_profiles = model_profiles
+        self.proactive_interactions = proactive_interactions
 
     def send(
         self,
@@ -57,7 +59,9 @@ class ConversationService:
         conversation = self.history.create() if conversation_id is None else self.history.get(conversation_id)
         last_interaction_at = self.history.last_interaction_at(conversation.id)
         temporal_context = self.temporal_engine.context(last_interaction_at)
-        self.history.append(conversation.id, ConversationRole.USER, user_message)
+        user_history_message = self.history.append(conversation.id, ConversationRole.USER, user_message)
+        if self.proactive_interactions is not None:
+            self.proactive_interactions.resolve_check_ins_for_user_message(user_history_message.created_at)
 
         if self.memory_intent_handler is not None:
             intent = self.memory_intent_handler.handle(

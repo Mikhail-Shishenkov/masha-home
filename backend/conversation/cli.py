@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 
 from backend.identity.identity_kernel import (
@@ -23,6 +25,11 @@ from backend.memory.confirmed_memory_service import ConfirmedMemoryService
 from backend.memory.memory_management import MemoryManagementService, MemoryMutationOperation
 from backend.memory.memory_presentation import detail, history, list_views, preview, summary
 from backend.temporal.temporal_engine import MOSCOW, TemporalEngine
+from backend.temporal.temporal_runtime import TemporalRuntime
+from backend.temporal.proactive import ProactiveDecisionEngine, ProactivePolicy, ProactivePolicyStore
+from backend.temporal.proactive_interaction import ProactiveInteractionService, ProactiveInteractionStore, ProactiveInteractionUnavailableError
+from backend.temporal.proactive_daemon import ProactiveDaemon
+from backend.temporal.proactive_runtime import ControlledProactiveRuntime
 
 from .conversation_service import ConversationService, ConversationUnavailableError
 from .conversation_store import ConversationStore
@@ -55,6 +62,7 @@ def build_service(*, project_root: Path = PROJECT_ROOT) -> ConversationService:
             memory_management=memory_management,
         ),
         model_profiles=profiles,
+        proactive_interactions=ProactiveInteractionStore(memory_store),
     )
 
 
@@ -99,6 +107,9 @@ def run_cli(
             continue
         if user_message.startswith("commitments"):
             _run_commitments_command(user_message, service=service, output_fn=output_fn)
+            continue
+        if user_message.startswith("proactive"):
+            _run_proactive_command(user_message[9:].strip(), service=service, output_fn=output_fn)
             continue
         if user_message.startswith("memory ") and memory_management is not None and proposal_store is not None:
             _run_memory_command(
@@ -235,6 +246,252 @@ def _run_model_command(command: str, *, service: ConversationService, output_fn:
             output_fn(f"Не удалось переключиться: {error}. Профиль {old.profile_id} не изменён.")
         return
     output_fn("Команды: model list, model current, model use <profile>.")
+
+
+_PROACTIVE_REASONS = {
+    "authorised": "настройки разрешают это сообщение",
+    "proactive_disabled": "инициативность выключена",
+    "level_below_checkin": "текущий уровень не разрешает check-in",
+    "level_below_reminder": "текущий уровень не разрешает напоминания",
+    "checkins_disabled": "check-in выключены",
+    "absence_threshold_not_reached": "порог отсутствия ещё не достигнут",
+    "quiet_hours": "сейчас тихие часы",
+    "daily_limit": "дневной лимит сообщений исчерпан",
+    "cooldown": "ещё действует пауза между сообщениями",
+    "higher_priority_reminder": "есть более приоритетное напоминание",
+    "background_disabled": "выбран ручной режим",
+    "cycle_error": "цикл завершился ошибкой",
+    "policy_suppressed": "настройки не разрешили сообщение",
+    "external_event_not_implemented": "внешние события не подключены и всегда блокируются",
+}
+
+
+def _local_time_label(value: str | None) -> str:
+    if not value:
+        return "ещё не было"
+    moment = datetime.fromisoformat(value).astimezone(MOSCOW)
+    now = datetime.now(MOSCOW)
+    return f"сегодня в {moment:%H:%M}" if moment.date() == now.date() else moment.strftime("%d.%m.%Y в %H:%M")
+
+
+def _interaction_kind(row: dict) -> str:
+    return "Check-in" if row.get("proactive_event_id") else "Напоминание"
+
+
+def _interaction_state(state: str) -> str:
+    return {
+        "candidate": "готовится",
+        "delivered": "ждёт реакции",
+        "acknowledged": "подтверждено",
+        "dismissed": "отклонено",
+        "resolved": "закрыто ответом",
+        "expired": "истекло",
+    }.get(state, state)
+
+
+def _run_proactive_command_legacy(command: str, *, service: ConversationService, output_fn: Callable[[str], None]) -> None:
+    store = ProactiveInteractionStore(service.memory_retriever.memory_store)
+    parts = command.split()
+    action = parts[0] if parts else "status"
+    policy_store = ProactivePolicyStore(service.model_profiles.path.parent / "proactive-policy.json")
+    policy = policy_store.load()
+    project_root = service.model_profiles.path.parents[2]
+    daemon = ProactiveDaemon(project_root)
+    if action in {"status", "settings"}:
+        state = daemon.status()
+        output_fn(f"Daemon: {state.get('daemon', 'stopped')}\nРежим: {policy.runtime_mode}\nИнициативность: {'включена' if policy.enabled else 'выключена'}\nУровень: {policy.proactive_level}\nНапоминания: {'включены' if policy.allow_commitment_reminders else 'выключены'}\nCheck-in: {'включён' if policy.allow_checkins else 'выключен'}\nQuiet hours: {policy.quiet_hours_start or 'нет'}–{policy.quiet_hours_end or 'нет'}\nCooldown: {policy.cooldown_seconds // 3600} ч\nЛимит: {policy.daily_message_limit} в день\nПоследний цикл: {state.get('last_cycle', 'нет')}\nРезультат: {state.get('last_result', 'нет')}\nОшибка: {state.get('last_error') or 'нет'}\nСледующий цикл: {state.get('next_cycle', 'нет')}")
+        return
+    if action == "mode" and len(parts) == 2 and parts[1] in {"manual", "background"}:
+        policy_store.save(policy.model_copy(update={"runtime_mode": parts[1]}))
+        output_fn(f"Режим инициативности: {parts[1]}.")
+        return
+    if action == "checkins" and len(parts) == 2 and parts[1] in {"on", "off"}:
+        enabled = parts[1] == "on"
+        policy_store.save(policy.model_copy(update={"allow_checkins": enabled, "proactive_level": max(2, policy.proactive_level) if enabled else policy.proactive_level}))
+        output_fn("Check-in включены." if enabled else "Check-in выключены.")
+        return
+    if action == "daemon" and len(parts) >= 2:
+        if parts[1] == "start":
+            if daemon.is_running():
+                output_fn("Proactive daemon уже запущен."); return
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
+            subprocess.Popen([sys.executable, "-m", "backend.temporal.proactive_daemon", "--project-root", str(project_root)], cwd=project_root, creationflags=flags, close_fds=True)
+            output_fn("Proactive daemon запускается."); return
+        if parts[1] == "stop":
+            daemon.request_stop(); output_fn("Остановка proactive daemon запрошена."); return
+        if parts[1] == "status":
+            output_fn(json.dumps(daemon.status(), ensure_ascii=False) if "--raw" in parts else f"Daemon: {daemon.status().get('daemon', 'stopped')}"); return
+    if action in {"on", "off"}:
+        if action == "on":
+            policy = policy.model_copy(update={
+                "enabled": True,
+                "proactive_level": max(1, policy.proactive_level),
+                "allow_commitment_reminders": True,
+                "maximum_reminders": max(1, policy.maximum_reminders),
+                "daily_message_limit": max(1, policy.daily_message_limit),
+            })
+        else:
+            policy = policy.model_copy(update={"enabled": False})
+        policy_store.save(policy)
+        output_fn("Инициативность включена." if action == "on" else "Инициативность выключена.")
+        return
+    if action == "level" and len(parts) == 2:
+        try: updated = policy.model_copy(update={"proactive_level": int(parts[1])}); ProactivePolicy.model_validate(updated.model_dump())
+        except (ValueError, TypeError): output_fn("Уровень должен быть числом от 0 до 5."); return
+        policy_store.save(updated); output_fn(f"Уровень инициативности: {updated.proactive_level}."); return
+    rows = store.list()
+    if action in {"pending", "history"}:
+        selected = [row for row in rows if action != "pending" or row["state"] in {"candidate", "delivered"}]
+        if not selected:
+            output_fn("Инициативных сообщений пока нет."); return
+        output_fn("Инициативные сообщения:\n" + "\n".join(f"{i}. {row.get('message_text') or 'Напоминание подготовлено'}\n   Статус: {row['state']}" for i, row in enumerate(selected, 1))); return
+    if action in {"acknowledge", "dismiss"} and len(parts) == 2:
+        try: row = rows[int(parts[1]) - 1]
+        except (ValueError, IndexError): output_fn("Выбери номер сообщения из списка."); return
+        result = store.acknowledge(row["event_id"], service.temporal_engine.clock.now_utc()) if action == "acknowledge" else store.dismiss(row["event_id"], service.temporal_engine.clock.now_utc())
+        output_fn("Поняла, отметила." if result["state"] == "acknowledged" else "Хорошо, больше не буду повторять это напоминание."); return
+    if action in {"recover", "run"}:
+        runtime = TemporalRuntime(service.memory_retriever.memory_store, service.temporal_engine)
+        context = runtime.recover()
+        if "--remind" in parts: policy = policy.model_copy(update={"enabled": True, "proactive_level": max(1, policy.proactive_level), "allow_commitment_reminders": True, "maximum_reminders": max(1, policy.maximum_reminders), "daily_message_limit": max(1, policy.daily_message_limit)})
+        interaction = ProactiveInteractionService(store=store, identity_kernel=service.identity_kernel, router=service.router, model_profiles=service.model_profiles)
+        document = service.memory_retriever.memory_store.read_document(); commitments = {item.id: item for item in document.commitments}
+        delivered = []
+        reminders_sent, last_delivery_at = store.delivery_stats(context.generated_at)
+        for event in context.events:
+            decision_engine = ProactiveDecisionEngine()
+            decision = decision_engine.decide(
+                event,
+                policy,
+                now=context.generated_at,
+                reminders_sent=reminders_sent,
+                last_reminder_at=last_delivery_at,
+            )
+            if decision.value == "remind":
+                reason = "authorised"
+            elif not policy.enabled:
+                reason = "proactive_disabled"
+            elif policy.proactive_level < 1 or not policy.allow_commitment_reminders:
+                reason = "level_below_reminder"
+            elif decision_engine._in_quiet_hours(context.generated_at, policy):
+                reason = "quiet_hours"
+            elif reminders_sent >= min(policy.maximum_reminders, policy.daily_message_limit):
+                reason = "daily_limit"
+            elif last_delivery_at is not None and (context.generated_at - last_delivery_at).total_seconds() < policy.cooldown_seconds:
+                reason = "cooldown"
+            else:
+                reason = "policy_suppressed"
+            previous = [item for item in service.memory_retriever.memory_store.list_audit_events() if item["action"] == "proactive_decision" and item["entity_id"] == event.event_id]
+            trace = {"decision": decision.value, "reason": reason, "model_profile": service.model_profiles.get_active_profile().profile_id}
+            if not previous or previous[-1]["payload"] != trace:
+                service.memory_retriever.memory_store.record_event(action="proactive_decision", entity_type="temporal_event", entity_id=event.event_id, payload=trace)
+            if decision.value != "remind": continue
+            candidate = ProactiveDecisionEngine.candidate(event, commitment_text=commitments[event.source_commitment_id].text, temporal_context=service.temporal_engine.context(None), decision=decision, generated_at=context.generated_at)
+            try:
+                result = interaction.formulate(candidate)
+                delivered.append(result.get("message_text") or "Напоминание подготовлено")
+                if result["state"] == "delivered":
+                    reminders_sent += 1
+                    last_delivery_at = context.generated_at
+            except ProactiveInteractionUnavailableError: output_fn("Локальная модель недоступна; состояние кандидата сохранено.")
+        try:
+            checkin = ControlledProactiveRuntime(history=service.history, temporal_engine=service.temporal_engine, repository=service.memory_retriever.memory_store, identity_kernel=service.identity_kernel, router=service.router, model_profiles=service.model_profiles).run_checkin_cycle(policy)
+            if checkin.decision == "delivered" and checkin.message:
+                delivered.append(checkin.message)
+        except ProactiveInteractionUnavailableError:
+            output_fn("Локальная модель недоступна; CHECK_IN остаётся кандидатом для следующей попытки.")
+        output_fn("Нет разрешённых напоминаний." if not delivered else "\n".join(delivered)); return
+    output_fn("Команды: proactive status|settings, proactive on|off, proactive checkins on|off, proactive level <0-5>, proactive mode manual|background, proactive run, proactive daemon start|stop|status, proactive pending, proactive acknowledge <номер>, proactive dismiss <номер>.")
+
+
+def _run_proactive_command(command: str, *, service: ConversationService, output_fn: Callable[[str], None]) -> None:
+    """Human-first proactive controls; technical IDs are exposed only with --raw."""
+    parts = command.split()
+    action = parts[0] if parts else "status"
+    raw = "--raw" in parts
+    repository = service.memory_retriever.memory_store
+    store = ProactiveInteractionStore(repository)
+    policy = ProactivePolicyStore(service.model_profiles.path.parent / "proactive-policy.json").load()
+    daemon = ProactiveDaemon(service.model_profiles.path.parents[2])
+
+    if action in {"status", "settings"}:
+        state = daemon.status()
+        waiting = sum(row["state"] == "delivered" for row in store.list())
+        if raw:
+            output_fn(json.dumps({"policy": policy.model_dump(mode="json"), "daemon": {**state, "running": daemon.is_running()}, "waiting_for_response": waiting}, ensure_ascii=False))
+            return
+        result = {"delivered": "сообщение доставлено", "suppress": "новых сообщений нет", "manual_mode": "ручной режим", "error": "цикл завершился ошибкой"}.get(state.get("last_result"), "проверок ещё не было")
+        lines = [
+            f"Инициативность: {'включена' if policy.enabled else 'выключена'}",
+            f"Режим: {policy.runtime_mode}",
+            f"Уровень: {policy.proactive_level}",
+            f"Check-in: {'включён' if policy.allow_checkins else 'выключен'}",
+            f"Напоминания: {'включены' if policy.allow_commitment_reminders else 'выключены'}",
+            f"Daemon: {'работает' if daemon.is_running() else 'не запущен'}",
+            "",
+            f"Последняя проверка: {_local_time_label(state.get('last_cycle'))}",
+            f"Результат: {result}",
+        ]
+        reason = _PROACTIVE_REASONS.get(state.get("last_reason"), state.get("last_reason"))
+        if reason:
+            lines.append(f"Причина: {reason}")
+        if state.get("last_error"):
+            lines.append(f"Ошибка: {state['last_error']}")
+        lines += ["", f"Ожидают реакции: {waiting}"]
+        if action == "settings":
+            quiet = "не заданы" if policy.quiet_hours_start is None else f"{policy.quiet_hours_start:%H:%M}–{policy.quiet_hours_end:%H:%M}"
+            lines += [f"Тихие часы: {quiet}", f"Пауза: {policy.cooldown_seconds // 3600} ч", f"Лимит: {policy.daily_message_limit} в день"]
+        output_fn("\n".join(lines))
+        return
+
+    if action == "pending":
+        rows = [row for row in store.list() if row["state"] in {"candidate", "delivered"}]
+        if raw:
+            output_fn(json.dumps(rows, ensure_ascii=False))
+            return
+        if not rows:
+            output_fn("Инициативных сообщений пока нет.")
+            return
+        blocks = []
+        for index, row in enumerate(rows, 1):
+            detail = row.get("message_text") or ("Давно не было сообщений" if row.get("proactive_event_id") else "Напоминание подготовлено")
+            blocks.append(f"{index}. {_interaction_kind(row)}\n   {detail}\n   Создано: {_local_time_label(row['created_at'])}\n   Статус: {_interaction_state(row['state'])}")
+        output_fn("Ожидают реакции:\n\n" + "\n\n".join(blocks))
+        return
+
+    if action == "history":
+        traces = [item for item in repository.list_audit_events() if item["action"] == "proactive_decision"]
+        if raw:
+            output_fn(json.dumps(traces, ensure_ascii=False))
+            return
+        if not traces:
+            output_fn("Истории решений пока нет.")
+            return
+        interactions = {row["event_id"]: row for row in store.list()}
+        blocks = []
+        for index, trace in enumerate(reversed(traces), 1):
+            payload = trace["payload"]
+            decision = "отправить" if payload["decision"] in {"check_in", "remind"} else "не отправлять"
+            reason = _PROACTIVE_REASONS.get(payload.get("reason"), payload.get("reason", "детерминированное правило runtime"))
+            interaction = interactions.get(trace["entity_id"])
+            kind = _interaction_kind(interaction) if interaction else ("Напоминание" if trace["entity_type"] == "temporal_event" else "Check-in")
+            blocks.append(f"{index}. Событие: {kind}\n   Решение: {decision}\n   Время: {_local_time_label(trace['occurred_at'])}\n   Причина: {reason}\n   Профиль модели: {payload.get('model_profile', 'не применялся')}")
+        output_fn("История решений:\n\n" + "\n\n".join(blocks))
+        return
+
+    if action in {"acknowledge", "dismiss"} and len(parts) == 2:
+        rows = [row for row in store.list() if row["state"] in {"candidate", "delivered"}]
+        try:
+            row = rows[int(parts[1]) - 1]
+        except (ValueError, IndexError):
+            output_fn("Выбери номер сообщения из списка proactive pending.")
+            return
+        now = service.temporal_engine.clock.now_utc()
+        result = store.acknowledge(row["event_id"], now) if action == "acknowledge" else store.dismiss(row["event_id"], now)
+        output_fn("Поняла, отметила." if result["state"] == "acknowledged" else "Хорошо, больше не буду повторять это сообщение.")
+        return
+
+    _run_proactive_command_legacy(command, service=service, output_fn=output_fn)
 
 
 def _run_commitments_command(command: str, *, service: ConversationService, output_fn: Callable[[str], None]) -> None:

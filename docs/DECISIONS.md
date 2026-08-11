@@ -340,6 +340,79 @@ configuration. Temporal Engine, not LLM, resolves supported dates and computed
 commitment status. `due_at == now` is open; only `due_at < now` is overdue.
 Commitment creation/completion require explicit proposal and confirmation.
 
+### DEC-048. Proactive permission is a deterministic operating policy
+
+Статус: **Принято и частично реализовано (MEM-12.1)**
+
+Temporal event detection and recovery are application-owned and local. A pure
+`ProactiveDecisionEngine`, not an LLM, may return permission such as `REMIND`
+or `SUPPRESS`; the conservative default is disabled. MEM-12.1 has no scheduler
+or delivery, and does not mutate Memory/Commitments. Initiative levels, quiet
+hours, cooldown and delivery require later explicit user settings.
+
+### DEC-049. Interaction state is separate from Commitment state
+
+Статус: **Принято и реализовано (MEM-12.2)**
+
+Delivery, acknowledgement and dismissal are local interaction state keyed by a
+stable temporal event. They never complete or mutate a Commitment; completion
+continues to require the existing explicit proposal-confirmation flow.
+
+### DEC-050. Proactive policy is local operating configuration
+
+Статус: **Accepted and implemented (MEM-12.3)**
+
+Persistent initiative permission belongs in a local policy file, not Identity,
+long-term Memory, history, Commitments or model profiles. Policy is evaluated
+deterministically before any LLM call. A manual local run may formulate only an
+authorised candidate through the active profile and router; LLM output cannot
+enable policy, bypass limits, or mutate domain data. No scheduler or external
+delivery is implied.
+
+### DEC-051. Proactive events are not Memory
+
+Статус: **Принято и реализовано (MEM-12.5)**
+
+CHECK_IN and Commitment reminder runtime events have their own SQLite store and
+deterministic identities. Their lifecycle does not modify Identity, long-term
+Memory, Commitment, conversation history or model profiles.
+
+### DEC-052. Check-in detection uses a global history anchor
+
+Статус: **Принято и реализовано (MEM-12.6)**
+
+The newest persisted message globally — not the newest created conversation —
+anchors a deterministic absence period. At the exact threshold no CHECK_IN is
+created; only a strictly longer absence qualifies. Detection is read-only with
+respect to history and writes only its separate proactive event.
+
+### DEC-053. Check-in lifecycle remains deterministic
+
+Статус: **Принято и реализовано (MEM-12.7)**
+
+Policy and priority decide candidate creation. A normal user message resolves
+only a previously delivered CHECK_IN after its delivery timestamp; it never
+resolves a Commitment reminder or mutates domain records.
+
+### DEC-054. Daemon executes; policy and DecisionEngine authorise
+
+Статус: **Принято и реализовано (MEM-12.8)**
+
+The local daemon invokes the existing cycle only in persistent background
+mode. It cannot create permission, bypass policy, select a fallback model or
+mutate Memory/Identity/Commitment. REMIND and CHECK_IN share one dual-source
+interaction table while retaining distinct event stores.
+
+### DEC-055. Proactive explanations are deterministic and external events are denied
+
+Статус: **Принято и реализовано (MEM-12.9)**
+
+Decision reasons are runtime-generated audit data, never LLM output. Normal CLI
+views hide technical IDs and present status, pending interactions and reasons in
+human language. The trust boundary currently admits only deterministic local
+temporal events. External events are `SUPPRESS / NOT_IMPLEMENTED` until a
+separately approved trusted-source and verification contract exists.
+
 ### DEC-047. Local model profiles are operating configuration
 
 Статус: **Принято и реализовано (LLM-03)**

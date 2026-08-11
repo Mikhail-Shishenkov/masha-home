@@ -89,4 +89,80 @@ MIGRATIONS = (
             "CREATE INDEX idx_temporal_events_status_due ON temporal_events(status, due_at)",
         ),
     ),
+    SqliteMigration(
+        version=3,
+        name="proactive_interactions",
+        statements=(
+            """CREATE TABLE proactive_interactions (
+                event_id TEXT PRIMARY KEY,
+                decision TEXT NOT NULL,
+                state TEXT NOT NULL CHECK (state IN ('candidate','delivered','acknowledged','dismissed')),
+                created_at TEXT NOT NULL,
+                delivered_at TEXT,
+                acknowledged_at TEXT,
+                dismissed_at TEXT,
+                message_text TEXT,
+                FOREIGN KEY(event_id) REFERENCES temporal_events(id)
+            )""",
+            "CREATE INDEX idx_proactive_interactions_state ON proactive_interactions(state)",
+        ),
+    ),
+    SqliteMigration(
+        version=4,
+        name="proactive_events",
+        statements=(
+            """CREATE TABLE proactive_events (
+                event_id TEXT PRIMARY KEY,
+                event_type TEXT NOT NULL CHECK (event_type IN ('commitment_reminder', 'check_in')),
+                source_type TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                detected_at TEXT NOT NULL,
+                valid_until TEXT,
+                state TEXT NOT NULL CHECK (state IN (
+                    'detected', 'candidate', 'delivered', 'acknowledged',
+                    'dismissed', 'resolved', 'expired'
+                )),
+                payload_json TEXT NOT NULL,
+                delivered_at TEXT,
+                acknowledged_at TEXT,
+                resolved_at TEXT,
+                dismissed_at TEXT
+            )""",
+            "CREATE INDEX idx_proactive_events_state ON proactive_events(state)",
+            "CREATE INDEX idx_proactive_events_source ON proactive_events(source_type, source_id)",
+            "CREATE INDEX idx_proactive_events_valid_until ON proactive_events(valid_until)",
+        ),
+    ),
+    SqliteMigration(
+        version=5,
+        name="dual_source_proactive_interactions",
+        statements=(
+            "ALTER TABLE proactive_interactions RENAME TO proactive_interactions_v3",
+            """CREATE TABLE proactive_interactions (
+                event_id TEXT PRIMARY KEY,
+                temporal_event_id TEXT UNIQUE,
+                proactive_event_id TEXT UNIQUE,
+                decision TEXT NOT NULL,
+                state TEXT NOT NULL CHECK (state IN ('candidate','delivered','acknowledged','dismissed','resolved','expired')),
+                created_at TEXT NOT NULL,
+                delivered_at TEXT,
+                acknowledged_at TEXT,
+                dismissed_at TEXT,
+                resolved_at TEXT,
+                message_text TEXT,
+                CHECK ((temporal_event_id IS NOT NULL) != (proactive_event_id IS NOT NULL)),
+                FOREIGN KEY(temporal_event_id) REFERENCES temporal_events(id),
+                FOREIGN KEY(proactive_event_id) REFERENCES proactive_events(event_id)
+            )""",
+            """INSERT INTO proactive_interactions(
+                event_id, temporal_event_id, proactive_event_id, decision, state,
+                created_at, delivered_at, acknowledged_at, dismissed_at, message_text
+            ) SELECT event_id, event_id, NULL, decision, state, created_at,
+                delivered_at, acknowledged_at, dismissed_at, message_text
+              FROM proactive_interactions_v3""",
+            "DROP TABLE proactive_interactions_v3",
+            "CREATE INDEX idx_proactive_interactions_state ON proactive_interactions(state)",
+        ),
+    ),
 )
