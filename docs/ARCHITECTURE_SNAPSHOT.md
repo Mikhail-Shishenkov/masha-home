@@ -610,3 +610,31 @@ ModelProfile, Router, provider or SQLite schema contract changed. No UI was
 implemented.
 
 Current regression after Stage 16.6: `279 passed`.
+
+## CURRENT — UI-01 LOCAL APPLICATION BOUNDARY
+
+`backend.application` is the public in-process boundary for a future local UI.
+`build_masha_application(project_root=...)` is the CLI-independent composition
+root and returns `MashaApplication`; existing CLI construction delegates to the
+same conversation wiring instead of owning a second production assembly.
+
+The facade exposes UI-safe conversation, status, visual-asset and model-profile
+contracts. `ConversationTurnResult` distinguishes completed, unavailable,
+timeout and failed turns while retaining the persisted user message on a model
+failure. `MashaStatusView` keeps runtime health, model availability, proactive
+policy, runtime mode and the emergency-stop latch as separate machine-readable
+fields. It contains counts rather than internal proposal/event rows.
+
+`VisualIdentityResolver` reads the approved manifest internally, verifies the
+canonical asset hash and returns bytes plus display metadata; the UI receives
+no filesystem path. `ModelSettingsService` verifies enabled profile, provider
+and exact local model before persisting a new active profile. Failure preserves
+the previous profile and never triggers fallback.
+
+The boundary exposes no repository, SQLite path, JSON path, raw proposal/audit
+payload, daemon lock file, Ollama endpoint or Identity manifest structure.
+Identity, Memory, Commitment, Temporal, Proactive, ModelRouter, Skills,
+permissions, Agent Loop and SQLite schema semantics are unchanged. UI-01 adds
+no frontend, HTTP, streaming, scheduler or agent capability.
+
+Current regression after UI-01: `290 passed`.

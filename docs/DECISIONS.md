@@ -622,6 +622,34 @@ provider-neutral `ModelRequest` только execution model и `think`; он н
 является частью Identity, Memory, conversation history или temporal state.
 Router выбирает provider, но не модель.
 
+### DEC-077. The local UI is a thin client of an application boundary
+
+Статус: **Принято и реализовано (UI-01)**
+
+The future UI integrates through `MashaApplication`, not CLI handlers,
+repositories or persistence files. The application layer may assemble services,
+map UI commands, normalize errors and build presentation views, but it cannot
+own or duplicate Identity, Memory, Temporal, proactive, model-routing or
+permission semantics. UI-01 is in-process and adds no HTTP server.
+
+### DEC-078. Model availability is checked before profile persistence
+
+Статус: **Принято и реализовано (UI-01)**
+
+`ModelSettingsService.use()` validates the requested profile, enabled state,
+provider availability and exact local model before calling the existing
+`ModelProfileStore` mutation. A rejected switch preserves the previous profile;
+there is no fallback. Only the execution target changes.
+
+### DEC-079. Visual identity paths and integrity stay behind the boundary
+
+Статус: **Принято и реализовано (UI-01)**
+
+The UI receives canonical asset identifiers, display metadata and resolved
+bytes. `VisualIdentityResolver` alone reads manifest paths and validates the
+approved SHA-256. The Identity manifest remains unchanged and is not a frontend
+configuration file.
+
 ## 6. Открытые вопросы ближайших этапов
 
 - Формат identity manifest.

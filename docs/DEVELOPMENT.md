@@ -426,6 +426,42 @@ python -m pytest tests/test_permissions_control.py tests/test_agent_loop.py test
 
 Stage 16.6 baseline: `279 passed` full regression.
 
+## UI-01 local application boundary
+
+Future local interfaces must use the public in-process composition root:
+
+```python
+from pathlib import Path
+
+from backend.application import build_masha_application
+
+application = build_masha_application(project_root=Path.cwd())
+status = application.status()
+profiles = application.model_profiles()
+assets = application.canonical_visual_assets()
+```
+
+Public operations currently cover:
+
+- `send_message()` and `conversation()`;
+- `status()`, `emergency_stop()` and `resume_autonomy()`;
+- `canonical_visual_assets()` and `resolve_visual_asset()`;
+- `model_profiles()`, `current_model()` and `use_model()`.
+
+The returned contracts deliberately contain no SQLite/JSON paths, repository
+objects, raw proposal/audit payloads, daemon files, Ollama endpoint or Identity
+manifest internals. Expected conversation/model errors use stable codes and
+separate human labels. The boundary remains synchronous and in-process; it is
+not an HTTP API and does not implement streaming.
+
+Targeted verification:
+
+```powershell
+python -m pytest tests/test_application_boundary.py -q
+```
+
+UI-01 baseline: `290 passed` full regression.
+
 ## Конфигурация
 
 `.env.example` содержит только безопасные локальные значения и зарезервированные ключи. Текущий прототип ещё не загружает `.env` автоматически.

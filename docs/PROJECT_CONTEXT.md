@@ -199,3 +199,19 @@ persistent emergency-stop latch overrides both skill execution and proactive
 cycles without deleting their settings. Releasing it never resumes work or
 starts background activity automatically. This operating control remains
 outside Identity, Memory, commitments, conversation history and model profiles.
+
+## 12. Local application boundary
+
+UI-01 adds `backend.application` as the only intended integration boundary for
+a future local interface. `MashaApplication` composes existing domain services
+and returns UI-safe conversation, Masha status, canonical visual asset and model
+profile views. It does not expose persistence locations, repository objects,
+raw proposals/audit events, daemon files, Ollama endpoints or Identity manifest
+internals.
+
+This layer is presentation and orchestration, not a new source of truth.
+IdentityKernel, SQLite Memory, TemporalEngine, ProactiveDecisionEngine,
+ModelRouter, ModelProfileStore, Skill Registry, permission gates, emergency
+stop and Agent Loop retain their existing authority and semantics. No visual UI,
+HTTP API, streaming, scheduler, fallback or new autonomous capability exists in
+UI-01.

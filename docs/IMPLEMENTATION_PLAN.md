@@ -571,3 +571,21 @@ Human commands:
 
 This is a backend/CLI contract ready for a future UI; Stage 16.6 adds no visual
 interface, scheduler, planner, tool or external channel.
+
+### UI-01. Local Application Boundary Foundation
+
+Статус: **DONE**
+
+Added the public in-process `MashaApplication` composition root and UI-safe
+contracts for conversation turns/history, aggregate Masha status, canonical
+visual assets and local model settings. Expected failures are stable machine
+codes with separate human labels. UI callers do not receive repository,
+SQLite/JSON paths, raw proposal/audit data, daemon files, Ollama endpoints or
+Identity manifest internals.
+
+The existing synchronous conversation, profile validation, safety latch and all
+domain services remain authoritative. No frontend, HTTP/REST, streaming, async
+job framework, scheduler, fallback, schema migration or new agent capability is
+part of UI-01.
+
+Full regression: `290 passed`.

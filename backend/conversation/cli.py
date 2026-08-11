@@ -10,22 +10,10 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
-from backend.identity.identity_kernel import (
-    IdentityKernel,
-    IdentityMemoryVersionMismatchError,
-)
-from backend.identity.identity_store import IdentityStore
-from backend.llm.model_router import ModelRouter
-from backend.llm.ollama_provider import OllamaProvider
-from backend.llm.model_profiles import ModelProfileStore
-from backend.memory.memory_retriever import MemoryRetriever
-from backend.memory.sqlite_repository import MemorySqliteRepository
-from backend.memory.working_memory import WorkingMemory
-from backend.memory.confirmed_memory_service import ConfirmedMemoryService
+from backend.identity.identity_kernel import IdentityMemoryVersionMismatchError
 from backend.memory.memory_management import MemoryManagementService, MemoryMutationOperation
 from backend.memory.memory_presentation import detail, history, list_views, preview, summary
-from backend.memory.shared_continuity import SharedContinuityService
-from backend.memory.reflection import ReflectionService, ReflectionUnavailableError
+from backend.memory.reflection import ReflectionUnavailableError
 from backend.temporal.temporal_engine import MOSCOW, TemporalEngine
 from backend.temporal.temporal_runtime import TemporalRuntime
 from backend.temporal.proactive import ProactiveDecisionEngine, ProactivePolicy, ProactivePolicyStore
@@ -34,6 +22,7 @@ from backend.temporal.proactive_daemon import ProactiveDaemon
 from backend.temporal.proactive_runtime import ControlledProactiveRuntime
 from backend.runtime.daily_runtime import DailyRuntime, DailyRuntimeJournal
 from backend.runtime.safety import AutonomySafetyStore
+from backend.application.composition import build_conversation_service
 
 from .conversation_service import ConversationService, ConversationUnavailableError
 from .conversation_store import ConversationStore
@@ -48,40 +37,7 @@ EXIT_COMMANDS = {":exit", ":quit"}
 
 def build_service(*, project_root: Path = PROJECT_ROOT) -> ConversationService:
     """Assemble the local SQLite memory, identity, router, and Ollama provider."""
-    memory_store = MemorySqliteRepository(project_root / "local-data" / "memory" / "masha.sqlite3")
-    identity_kernel = IdentityKernel(
-        IdentityStore(project_root / "identity" / "masha.identity.json")
-    )
-    identity_kernel.validate_memory_identity(memory_store)
-    memory_management = MemoryManagementService(memory_store)
-    shared_continuity = SharedContinuityService(memory_store)
-    profiles = ModelProfileStore(project_root / "local-data" / "config" / "models.json")
-    router = ModelRouter([OllamaProvider()])
-    reflection_service = ReflectionService(
-        repository=memory_store,
-        identity_kernel=identity_kernel,
-        memory_retriever=MemoryRetriever(memory_store),
-        router=router,
-        model_profiles=profiles,
-    )
-    return ConversationService(
-        identity_kernel=identity_kernel,
-        memory_retriever=MemoryRetriever(memory_store),
-        working_memory=WorkingMemory(max_items=6),
-        router=router,
-        history=ConversationStore(project_root / "local-data" / "conversations" / "history.json"),
-        memory_intent_handler=MemoryIntentHandler(
-            proposal_store=MemoryProposalStore(project_root / "local-data" / "memory-proposals.json"),
-            confirmed_memory=ConfirmedMemoryService(memory_store),
-            memory_management=memory_management,
-            shared_continuity=shared_continuity,
-        ),
-        model_profiles=profiles,
-        proactive_interactions=ProactiveInteractionStore(memory_store),
-        shared_continuity=shared_continuity,
-        reflection_intent_handler=ReflectionIntentHandler(reflection_service),
-        reflection_service=reflection_service,
-    )
+    return build_conversation_service(project_root=project_root)
 
 
 def run_cli(
