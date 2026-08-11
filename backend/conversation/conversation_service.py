@@ -6,6 +6,7 @@ from backend.llm.model_provider import ModelProviderUnavailableError, ModelTimeo
 from backend.llm.model_router import ModelRouter
 from backend.memory.memory_retriever import MemoryRetriever
 from backend.memory.working_memory import WorkingMemory
+from backend.temporal.temporal_engine import TemporalEngine
 
 from .conversation_models import ConversationRole
 from .context_compiler import ConversationContextCompiler
@@ -30,6 +31,7 @@ class ConversationService:
         memory_intent_handler: MemoryIntentHandler | None = None,
         memory_limit: int = 6,
         history_limit: int = 16,
+        temporal_engine: TemporalEngine | None = None,
     ):
         self.identity_kernel = identity_kernel
         self.memory_retriever = memory_retriever
@@ -40,6 +42,7 @@ class ConversationService:
         self.memory_intent_handler = memory_intent_handler
         self.memory_limit = memory_limit
         self.history_limit = history_limit
+        self.temporal_engine = temporal_engine or TemporalEngine()
 
     def send(
         self,
@@ -49,6 +52,8 @@ class ConversationService:
         conversation_id: str | None = None,
     ) -> tuple[str, str]:
         conversation = self.history.create() if conversation_id is None else self.history.get(conversation_id)
+        last_interaction_at = self.history.last_interaction_at(conversation.id)
+        temporal_context = self.temporal_engine.context(last_interaction_at)
         self.history.append(conversation.id, ConversationRole.USER, user_message)
 
         if self.memory_intent_handler is not None:
@@ -71,6 +76,7 @@ class ConversationService:
             ),
             identity_context=self.identity_kernel.build_context(),
             working_memory=self.working_memory.get_all(),
+            temporal_context=temporal_context,
         )
         try:
             response = self.router.generate(request)

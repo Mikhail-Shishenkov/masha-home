@@ -331,6 +331,15 @@ delete не выполняется. Superseded Fact/Decision сохраняет�
 связывается с актуальной записью в обе стороны. LLM не создаёт и не меняет
 память автоматически.
 
+### DEC-046. Deterministic temporal semantics
+
+Статус: **Принято**
+
+UTC — canonical internal time. Moscow UTC+03:00 is the offline MVP display
+configuration. Temporal Engine, not LLM, resolves supported dates and computed
+commitment status. `due_at == now` is open; only `due_at < now` is overdue.
+Commitment creation/completion require explicit proposal and confirmation.
+
 ## 6. Открытые вопросы ближайших этапов
 
 - Формат identity manifest.

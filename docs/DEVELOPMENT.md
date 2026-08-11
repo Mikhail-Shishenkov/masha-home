@@ -107,6 +107,11 @@ python -c "from backend.memory.sqlite_repository import MemorySqliteRepository a
 > same SQLite repository as conversation retrieval. Its inspection, trace and
 > explicit mutation proposals do not create an alternative memory store.
 
+> **MEM-11 status:** time is deterministic and application-owned: UTC is
+> canonical, Moscow is offline UTC+03:00, and due dates are stored in UTC.
+> Overdue is computed at runtime. A Commitment is created or completed only by
+> explicit proposal and confirmation; ordinary conversation never changes it.
+
 > **MEM-10.1 status (2026-08-11):** user-facing memory CLI output is
 > human-readable by default; JSON identifiers, audit payloads and retrieval
 > details remain available only through `--raw`/diagnostic output. Preview and

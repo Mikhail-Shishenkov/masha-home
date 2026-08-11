@@ -32,6 +32,8 @@ from backend.memory.memory_models import (
     SourceType,
     Visibility,
 )
+from backend.temporal.temporal_engine import TemporalEngine
+from backend.memory.memory_management import MemoryMutationOperation
 
 
 MemoryRecordType = Literal["fact", "decision", "commitment", "episode"]
@@ -42,6 +44,7 @@ _EXPLICIT_INTENT = re.compile(
 _CONFIRM = re.compile(r"^\s*(?:да|подтверждаю|сохраняй|сохрани)(?:\s+(?P<id>[0-9a-f-]{36}))?\s*$", re.IGNORECASE)
 _REJECT = re.compile(r"^\s*(?:нет|не надо|не запоминай|отмена)(?:\s+(?P<id>[0-9a-f-]{36}))?\s*$", re.IGNORECASE)
 _MEMORY_PREFIX = re.compile(r"^\s*(?:маша\s*,?\s*)?запомни\b", re.IGNORECASE)
+_COMPLETE = re.compile(r"^\s*(?:маша\s*,?\s*)?отметь\s+(?P<body>.+?)\s+выполненным\s*$", re.IGNORECASE)
 
 
 class ProposalStatus(str, Enum):
@@ -135,9 +138,13 @@ class MemoryIntentHandler:
         *,
         proposal_store: MemoryProposalStore,
         confirmed_memory: ConfirmedMemoryService,
+        temporal_engine: TemporalEngine | None = None,
+        memory_management=None,
     ):
         self.proposal_store = proposal_store
         self.confirmed_memory = confirmed_memory
+        self.temporal_engine = temporal_engine or TemporalEngine()
+        self.memory_management = memory_management
 
     def handle(
         self,
@@ -146,6 +153,8 @@ class MemoryIntentHandler:
         conversation_id: str,
         project_id: str,
     ) -> MemoryIntentResult:
+        if complete := _COMPLETE.match(message):
+            return self._propose_completion(complete.group("body"), conversation_id)
         match = _EXPLICIT_INTENT.match(message)
         if match:
             return self._propose(match, conversation_id=conversation_id, project_id=project_id)
@@ -160,6 +169,21 @@ class MemoryIntentHandler:
             )
         return MemoryIntentResult(handled=False)
 
+    def _propose_completion(self, text: str, conversation_id: str) -> MemoryIntentResult:
+        if self.memory_management is None:
+            return MemoryIntentResult(handled=True, response="Завершение обязательств сейчас недоступно.")
+        matches = [view for view in self.memory_management.list(record_type="commitment") if view.payload.get("status") == "open" and text.casefold() in view.payload["text"].casefold()]
+        if not matches:
+            return MemoryIntentResult(handled=True, response="Не нашла открытое обязательство с таким текстом.")
+        if len(matches) != 1:
+            return MemoryIntentResult(handled=True, response="Нашла несколько обязательств; уточни текст точнее.")
+        view = matches[0]
+        payload = dict(view.payload)
+        now = self.temporal_engine.clock.now_utc()
+        payload.update(status="completed", completed_at=now.isoformat(), updated_at=now.isoformat())
+        proposal = self.memory_management.propose(self.proposal_store, operation=MemoryMutationOperation.EDIT, record_id=view.record_id, conversation_id=conversation_id, replacement_payload=payload)
+        return MemoryIntentResult(handled=True, response=f"Отметить обязательство выполненным?\n«{view.payload['text']}»\nСтатус: открыто → выполнено.\nПодтверди: да {proposal.id}")
+
     def _propose(self, match: re.Match[str], *, conversation_id: str, project_id: str) -> MemoryIntentResult:
         body = match.group("body").strip().rstrip(".")
         if not body:
@@ -168,7 +192,12 @@ class MemoryIntentHandler:
                 response="Что именно сохранить: факт, решение, обязательство или эпизод?",
             )
         record_type = self._record_type(match.group("kind"))
-        record = self._make_record(record_type, body, project_id)
+        due = None
+        if match.group("kind") is None:
+            body, due = self.temporal_engine.extract_due(body)
+            if due is not None:
+                record_type = "commitment"
+        record = self._make_record(record_type, body, project_id, due_at=None if due is None else due.resolved_utc)
         proposal = self.proposal_store.create(
             MemoryProposal(
                 id=str(uuid4()),
@@ -193,6 +222,14 @@ class MemoryIntentHandler:
             return MemoryIntentResult(handled=True, response="Эта запись уже сохранена.")
         if proposal.status == ProposalStatus.CANCELLED:
             return MemoryIntentResult(handled=True, response="Это предложение уже отменено; ничего не сохраняла.")
+        if proposal.operation != "create":
+            if self.memory_management is None:
+                return MemoryIntentResult(handled=True, response="Эта операция сейчас недоступна.")
+            try:
+                self.memory_management.confirm_proposal(proposal, self.proposal_store)
+            except Exception:
+                return MemoryIntentResult(handled=True, response=f"Не смогла применить предложение {proposal.id}. Оно осталось ожидающим подтверждения.")
+            return MemoryIntentResult(handled=True, response="Готово, обязательство отмечено выполненным.")
         try:
             self.confirmed_memory.confirm(
                 ExplicitMemoryConfirmation(
@@ -244,7 +281,7 @@ class MemoryIntentHandler:
         return "fact"
 
     @classmethod
-    def _make_record(cls, record_type: MemoryRecordType, body: str, project_id: str) -> ConfirmedRecord:
+    def _make_record(cls, record_type: MemoryRecordType, body: str, project_id: str, due_at=None) -> ConfirmedRecord:
         now = cls._now()
         record_id = f"{record_type}_{uuid4()}"
         if record_type == "fact":
@@ -291,7 +328,7 @@ class MemoryIntentHandler:
                 status=CommitmentStatus.OPEN,
                 visibility=Visibility.VISIBLE,
                 project_ids=[project_id],
-                due_at=None,
+                due_at=due_at,
                 completed_at=None,
                 importance=0.7,
                 source=SourceType.EXPLICIT_USER_INPUT,
@@ -332,7 +369,8 @@ class MemoryIntentHandler:
         elif isinstance(record, Decision):
             description = f"Могу сохранить это как решение: {record.decision}."
         elif isinstance(record, Commitment):
-            description = f"Могу сохранить это как обязательство: {record.text}."
+            deadline = " без срока" if record.due_at is None else f" со сроком {record.due_at.astimezone().strftime('%d.%m.%Y %H:%M')}"
+            description = f"Могу сохранить это как обязательство: {record.text}{deadline}."
         else:
             description = f"Могу сохранить это как эпизод: {record.summary}."
         return f"{description} Источник — твоё явное утверждение. Сохраняем? ID предложения: {proposal.id}"

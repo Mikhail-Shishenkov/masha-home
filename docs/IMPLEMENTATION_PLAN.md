@@ -368,3 +368,11 @@ workflow только после утверждения schema/audit контр�
 retrieval trace, pending mutation proposals и подтверждённые edit/archive/
 forget/supersession operations. Conversation history остаётся отдельным JSON
 механизмом и обычный диалог не меняет SQLite memory.
+
+### MEM-11. Temporal Engine
+
+Статус: **DONE**
+
+Deterministic Clock/TemporalContext, bounded model context, deadline parsing,
+computed overdue status and explicit Commitment creation/completion are active.
+No scheduler, reminders, proactive behaviour or event recovery is included.

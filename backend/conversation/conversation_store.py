@@ -56,6 +56,10 @@ class ConversationStore:
         ]
         return tuple(messages[-limit:])
 
+    def last_interaction_at(self, conversation_id: str) -> datetime | None:
+        messages = self.messages(conversation_id, limit=1)
+        return messages[-1].created_at if messages else None
+
     def _load(self) -> dict[str, list[dict]]:
         if not self.file_path.exists():
             return {"conversations": [], "messages": []}

@@ -355,3 +355,13 @@ superseded, and stores reciprocal `supersedes_id` on the new record.
 passes a bounded runtime-generated `[record_id=...][type=...]` memory reference
 to the local model context. Chat history remains separate and no ordinary turn
 creates or mutates long-term memory.
+
+## CURRENT — MEM-11 TEMPORAL ENGINE
+
+UTC is canonical internal time; the offline MVP local presentation is fixed
+`Europe/Moscow` UTC+03:00, independent from OS timezone settings. Temporal
+context is compiled before the model request, so LLM never determines time,
+durations, deadlines or overdue status. `due_at` is stored in UTC; overdue is
+computed only (`due_at == now` remains open) and completed never becomes overdue.
+Commitment creation and completion are explicit proposal/confirmation mutations;
+ordinary conversational statements do not mutate them.

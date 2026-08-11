@@ -136,6 +136,16 @@ def test_explicit_decision_is_proposed_and_ordinary_statement_is_not_handled(tmp
     assert proposals.pending_for_conversation("c")[0].record_type == "decision"
 
 
+def test_explicit_deadline_creates_commitment_proposal_deterministically(tmp_path, memory_path):
+    handler, proposals = _handler(tmp_path, MemoryStore(memory_path))
+    result = handler.handle("Запомни, что завтра в 18:00 нужно отправить отчёт", conversation_id="c", project_id=PROJECT_ID)
+    proposal = proposals.pending_for_conversation("c")[0]
+
+    assert proposal.record_type == "commitment"
+    assert proposal.record_payload["due_at"] is not None
+    assert "отправить отчёт" in result.response
+
+
 def test_incomplete_explicit_memory_request_asks_for_type_instead_of_guessing(tmp_path, memory_path):
     handler, proposals = _handler(tmp_path, MemoryStore(memory_path))
 

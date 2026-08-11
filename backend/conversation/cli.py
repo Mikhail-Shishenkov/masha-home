@@ -21,6 +21,7 @@ from backend.memory.working_memory import WorkingMemory
 from backend.memory.confirmed_memory_service import ConfirmedMemoryService
 from backend.memory.memory_management import MemoryManagementService, MemoryMutationOperation
 from backend.memory.memory_presentation import detail, history, list_views, preview, summary
+from backend.temporal.temporal_engine import MOSCOW, TemporalEngine
 
 from .conversation_service import ConversationService, ConversationUnavailableError
 from .conversation_store import ConversationStore
@@ -39,6 +40,7 @@ def build_service(*, project_root: Path = PROJECT_ROOT) -> ConversationService:
         IdentityStore(project_root / "identity" / "masha.identity.json")
     )
     identity_kernel.validate_memory_identity(memory_store)
+    memory_management = MemoryManagementService(memory_store)
     return ConversationService(
         identity_kernel=identity_kernel,
         memory_retriever=MemoryRetriever(memory_store),
@@ -48,6 +50,7 @@ def build_service(*, project_root: Path = PROJECT_ROOT) -> ConversationService:
         memory_intent_handler=MemoryIntentHandler(
             proposal_store=MemoryProposalStore(project_root / "local-data" / "memory-proposals.json"),
             confirmed_memory=ConfirmedMemoryService(memory_store),
+            memory_management=memory_management,
         ),
     )
 
@@ -85,6 +88,12 @@ def run_cli(
         if user_message.lower() in EXIT_COMMANDS:
             output_fn("Conversation stopped.")
             return
+        if user_message.startswith("time"):
+            _run_time_command(user_message, service=service, conversation_id=active_id, output_fn=output_fn)
+            continue
+        if user_message.startswith("commitments"):
+            _run_commitments_command(user_message, service=service, output_fn=output_fn)
+            continue
         if user_message.startswith("memory ") and memory_management is not None and proposal_store is not None:
             _run_memory_command(
                 user_message[7:], memory_management=memory_management,
@@ -175,6 +184,37 @@ def _run_memory_command(command: str, *, memory_management: MemoryManagementServ
         output_fn(f"Applied {proposal.operation}: {view.record_id}")
         return
     output_fn("Команды: list, get <id>, find <текст>, history <id>, conflicts, archive|forget <id>, edit|supersede <id> <новый текст>, confirm, reject. Добавь --raw для диагностики.")
+
+
+def _run_time_command(command: str, *, service: ConversationService, conversation_id: str | None, output_fn: Callable[[str], None]) -> None:
+    context = service.temporal_engine.context(None if conversation_id is None else service.history.last_interaction_at(conversation_id))
+    if "--raw" in command:
+        output_fn(json.dumps(context.model_dump(mode="json"), ensure_ascii=False))
+        return
+    local = context.current_local_time.strftime("%d.%m.%Y, %H:%M")
+    utc = context.current_utc_time.strftime("%d.%m.%Y, %H:%M")
+    lines = ["Время:", f"Москва: {local}", f"UTC: {utc}"]
+    if context.last_interaction_at is None:
+        lines.append("Последнего разговора пока нет.")
+    else:
+        minutes = context.absence_duration_seconds // 60
+        lines += [f"Последний разговор: {context.last_interaction_at.astimezone(MOSCOW).strftime('%d.%m.%Y, %H:%M')}", f"Тебя не было: {minutes // 60} ч {minutes % 60} мин"]
+    output_fn("\n".join(lines))
+
+
+def _run_commitments_command(command: str, *, service: ConversationService, output_fn: Callable[[str], None]) -> None:
+    document = service.memory_retriever.memory_store.read_document()
+    commitments = [] if document is None else document.commitments
+    engine = service.temporal_engine
+    mode = command.split(maxsplit=1)[1] if len(command.split(maxsplit=1)) > 1 else "list"
+    rows = [(item, engine.commitment_status(item)) for item in commitments if item.visibility.value == "visible"]
+    if mode == "overdue": rows = [row for row in rows if row[1] == "overdue"]
+    if mode == "upcoming": rows = [row for row in rows if row[1] == "open" and row[0].due_at is not None]
+    if "--raw" in command:
+        output_fn(json.dumps([{"id": item.id, "status": status, "due_at": item.due_at.isoformat() if item.due_at else None} for item, status in rows], ensure_ascii=False)); return
+    if not rows:
+        output_fn("Обязательств не нашла."); return
+    output_fn("Обязательства:\n" + "\n".join(f"{index}. {item.text}\n   До: {item.due_at.astimezone(MOSCOW).strftime('%d.%m.%Y, %H:%M') if item.due_at else 'без срока'}\n   Статус: {status}" for index, (item, status) in enumerate(rows, 1)))
 
 
 def main() -> None:

@@ -7,6 +7,7 @@ from typing import Callable
 
 from backend.identity.identity_models import IdentityContext
 from backend.llm.model_models import ModelMessage, ModelRequest
+from backend.temporal.temporal_engine import TemporalContext
 
 
 BEHAVIORAL_CONTRACT = (
@@ -43,13 +44,15 @@ class ConversationContextCompiler:
         messages: tuple[ModelMessage, ...],
         identity_context: IdentityContext,
         working_memory: list[dict],
+        temporal_context: TemporalContext | None = None,
     ) -> ModelRequest:
         return ModelRequest(
             messages=messages,
             identity_context=identity_context,
             private_context={
                 "behavioral_contract": BEHAVIORAL_CONTRACT,
-                "current_local_time": self._clock().isoformat(),
+                "current_local_time": (temporal_context.current_local_time if temporal_context else self._clock()).isoformat(),
+                "temporal_context": (temporal_context.model_dump(mode="json") if temporal_context else None),
                 "memory_context": [self._memory_record(item) for item in working_memory],
             },
             preferred_provider_id="ollama-local",
