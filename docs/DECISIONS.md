@@ -515,6 +515,24 @@ confirmation flow. Destructive operations и external communication требую
 подтверждения на конкретное действие. Standing grant не может отменить эти
 границы. Выключенная action policy является полным `DENY` для skill actions.
 
+### DEC-067. Agent execution is receipt-first and re-evaluated per step
+
+Статус: **Принято и реализовано (Stage 16.3)**
+
+Каждый шаг проходит текущие registry integrity и Action Autonomy Policy заново.
+До tool call сохраняется `executing` receipt. После restart такой шаг не
+повторяется автоматически, потому что система не может доказать, успел ли tool
+оказать эффект. Verified steps и terminal runs идемпотентны.
+
+### DEC-068. A result exists only after deterministic verification
+
+Статус: **Принято и реализовано (Stage 16.3)**
+
+Успешный возврат Tool Adapter сам по себе не означает завершение. Отдельный
+verification result обязан подтвердить evidence; failure, exception или
+unverified result заканчивают run без claim `completed`. Receipts не сохраняют
+raw inputs/outputs и не становятся Memory. LLM planner в loop отсутствует.
+
 ### DEC-047. Local model profiles are operating configuration
 
 Статус: **Принято и реализовано (LLM-03)**

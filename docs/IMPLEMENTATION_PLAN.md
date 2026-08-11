@@ -516,8 +516,20 @@ LLM planner or agent loop is connected.
 
 ### STAGE-16.3. Bounded Agent Loop
 
+Статус: **DONE**
+
+Application-owned immutable plans now have step/time/input budgets, per-step
+policy and package-integrity evaluation, explicit confirmation pauses,
+receipt-before-execution, injected Fake Tool verification and restart-safe
+idempotence. Interrupted execution is never automatically replayed. No real
+filesystem/process/network tool, LLM planner or ConversationService integration
+is connected.
+
+### STAGE-16.4. First Local Read-only Skill
+
 Статус: **NEXT — NOT IMPLEMENTED**
 
-Introduce application-owned goals, bounded plans, step/time budgets, per-step
-policy evaluation, deterministic verification and receipts. Start with a Fake
-Tool only; do not connect a real filesystem/process/network skill yet.
+Implement one application-wired ProjectObserver Tool with an explicit resolved
+workspace root, bounded read-only operations and deterministic evidence. Do not
+load arbitrary manifest entrypoints, write files, execute processes or access
+the network.

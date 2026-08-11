@@ -528,3 +528,21 @@ external communication cannot receive silent grants. Human CLI exposes policy,
 numbered permissions, grant/revoke and read-only checks without internal IDs.
 
 Current regression after Stage 16.2: `217 passed`.
+
+## CURRENT — STAGE 16.3 BOUNDED AGENT LOOP
+
+`BoundedAgentLoop` executes immutable application-owned plans through injected
+Tool Adapters. Every step rechecks registered package integrity and the current
+Action Autonomy Policy, pauses on confirmation, persists `executing` before the
+call and requires deterministic verification afterward. Fake Tool is the only
+implemented adapter and performs no real I/O.
+
+`AgentRunStore` keeps a bounded local operating receipt without raw inputs or
+outputs. Completed/failed/denied/budget-exhausted runs are idempotent. Restart
+never replays an ambiguous `executing` step. The read-only `agent runs/show` CLI
+hides technical plan identity in normal UX.
+
+No filesystem/process/network tool, LLM planner, background agent or automatic
+domain mutation is connected.
+
+Current regression after Stage 16.3: `236 passed`.

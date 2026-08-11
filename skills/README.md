@@ -67,3 +67,14 @@ Stage 16.2 добавляет отдельную policy постоянных р�
 Grant действует только для точного сочетания skill + capability + scope и не
 может расширить manifest. `check` показывает решение policy, но не запускает
 действие.
+
+Stage 16.3 adds only the bounded execution protocol and `FakeTool`. There is no
+real skill adapter yet. Read operating receipts with:
+
+```powershell
+.\masha.ps1 agent runs
+.\masha.ps1 agent show <номер>
+```
+
+A future Tool Adapter is injected by application code; registry never imports a
+manifest entrypoint automatically.

@@ -17,6 +17,8 @@ from .autonomy import (
     ActionGrant,
     ActionRequest,
 )
+from .agent_loop import AgentPlan, AgentRunStore, AgentStep, BoundedAgentLoop
+from .tools import FakeTool, ToolAdapter, ToolExecutionResult, ToolVerification
 
 __all__ = [
     "RegisteredSkill",
@@ -32,4 +34,12 @@ __all__ = [
     "ActionDecision",
     "ActionGrant",
     "ActionRequest",
+    "AgentPlan",
+    "AgentRunStore",
+    "AgentStep",
+    "BoundedAgentLoop",
+    "FakeTool",
+    "ToolAdapter",
+    "ToolExecutionResult",
+    "ToolVerification",
 ]

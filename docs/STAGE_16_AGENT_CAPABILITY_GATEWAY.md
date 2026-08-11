@@ -4,7 +4,7 @@
 
 - `16.1 Skill Contract & Registry`: **IMPLEMENTED**
 - `16.2 Action Autonomy Policy`: **IMPLEMENTED**
-- `16.3 Bounded Agent Loop`: **PLANNED**
+- `16.3 Bounded Agent Loop`: **IMPLEMENTED**
 - `16.4 First Local Skill`: **PLANNED**
 - `16.5 Skill Installation / Upgrade`: **PLANNED**
 - `16.6 Permissions UX & Emergency Stop`: **PLANNED**
@@ -204,10 +204,10 @@ Human CLI:
 
 ## Next safe step
 
-`Stage 16.3 — Bounded Agent Loop`: application-owned goal/plan/step budget,
-policy evaluation before every step, verification after every result and a
-local execution receipt. Первый loop должен работать с Fake Tool; реальный
-локальный навык появится только в 16.4.
+`Stage 16.4 — First Local Skill`: connect one strictly read-only
+`ProjectObserver` adapter to the injected Tool boundary. It must normalize an
+explicit workspace root, expose bounded operations, produce deterministic
+evidence and never inherit arbitrary entrypoints from a manifest.
 
 ## Verification
 
@@ -223,3 +223,83 @@ local execution receipt. Первый loop должен работать с Fake
 Stage 16.2 deterministic coverage includes disabled policy, manifest boundary,
 standing grants, narrower risk, autonomy ceilings, revocation, restart,
 tampering and non-delegable operations.
+
+## Stage 16.3 — Bounded Agent Loop
+
+Stage 16.3 adds an application-owned sequential loop without an LLM planner and
+without real computer access:
+
+```text
+AgentPlan
+  → step/time/input budgets
+  → current Skill Registry integrity
+  → current Action Autonomy Policy
+  → ALLOW / REQUIRE_CONFIRMATION / DENY
+  → pre-execution receipt(state=executing)
+  → injected Fake Tool
+  → deterministic tool verification
+  → verified step receipt
+  → next step or terminal result
+```
+
+The plan is immutable and digest-bound. Maximums are 20 steps, 3600 seconds and
+16 KiB input per step. The current stage accepts plans only from application
+code/tests; LLM output is not an authority and is not connected.
+
+### Confirmation
+
+`REQUIRE_CONFIRMATION` pauses before the tool call. Explicit confirmation stores
+`confirmed_by=misha` and timestamp, bound to the same plan digest and step. The
+confirmation call itself never executes the tool. A separate `run()` resumes
+and re-evaluates current policy; confirmation can bypass only
+`REQUIRE_CONFIRMATION`, never `DENY`.
+
+### Restart and exactness
+
+- completed, denied, failed and budget-exhausted runs are terminal and never
+  silently retried;
+- verified steps are skipped after restart;
+- same `plan_id` with different content is rejected;
+- policy and skill integrity are evaluated again before every new step;
+- `executing` is persisted before calling a tool;
+- an `executing` step found after restart becomes
+  `interrupted_execution_requires_review`, not an automatic replay.
+
+### Proof of result
+
+The loop calls tool verification after every successful execution. A tool
+failure, exception or unverified result can never produce `completed`. The
+receipt stores bounded summaries and verification codes, not raw step inputs or
+tool outputs.
+
+Receipts live in ignored `local-data/runtime/agent-runs.json`, capped at 100.
+They are operating evidence, not Memory, Identity or conversation history.
+
+Human read-only UX:
+
+```powershell
+.\masha.ps1 agent runs
+.\masha.ps1 agent show <номер>
+```
+
+Normal output hides plan IDs and hashes. `--raw` remains diagnostic.
+
+### Still not implemented
+
+- real filesystem/process/network tools;
+- manifest entrypoint loading;
+- LLM goal decomposition or planning;
+- background agent execution;
+- plan persistence independent of the receipt;
+- retries, rollback orchestration or branching plans;
+- ConversationService integration;
+- automatic Memory or Identity mutation.
+
+### Stage 16.3 verification
+
+- Bounded Agent Loop deterministic tests: `19 passed`;
+- Registry + Autonomy + Agent targeted regression: `53 passed`;
+- full project regression: `236 passed`;
+- read-only launcher smoke: `masha.ps1 agent runs` — successful and created no file;
+- production SQLite SHA-256 remained
+  `55F0C17A3190C97C1FFC60EDF228AEBCE77793E3D08064455F87810181A7548E`.

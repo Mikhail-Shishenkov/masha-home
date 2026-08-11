@@ -84,6 +84,12 @@ Misha, while action policy decides whether a registered skill action is inside
 an already approved capability/scope/risk boundary. Neither policy can expand
 the other.
 
+Stage 16.3 adds bounded execution semantics without real tools. A plan is
+application-owned, every step rechecks current permission and package integrity,
+and no result is called complete before tool-owned deterministic verification.
+Ambiguous interrupted execution is not retried automatically. This is the
+foundation for useful autonomy without hidden or unprovable action claims.
+
 ## 6. Память
 
 Базовые типы памяти:

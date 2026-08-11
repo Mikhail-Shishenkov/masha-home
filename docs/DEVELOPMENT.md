@@ -296,6 +296,27 @@ does not execute anything. Run the combined targeted regression with:
 python -m pytest tests/test_skill_registry.py tests/test_action_autonomy.py -q
 ```
 
+## Stage 16.3 Bounded Agent Loop
+
+Read local operating receipts:
+
+```powershell
+.\masha.ps1 agent runs
+.\masha.ps1 agent show <номер>
+```
+
+The CLI is currently read-only because production has no real Tool Adapter or
+plan-authoring flow. Agent tests use only `FakeTool`; it never reads/writes the
+workspace, launches a process, accesses the network or calls an LLM.
+
+```powershell
+python -m pytest tests/test_agent_loop.py tests/test_action_autonomy.py tests/test_skill_registry.py -q
+```
+
+Receipts are stored only after an explicit application run at
+`local-data/runtime/agent-runs.json`. Listing an empty journal does not create
+the file.
+
 ## Конфигурация
 
 `.env.example` содержит только безопасные локальные значения и зарезервированные ключи. Текущий прототип ещё не загружает `.env` автоматически.
