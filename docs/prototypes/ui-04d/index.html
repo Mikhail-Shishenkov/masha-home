@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Masha Home · UI-04D Visual Prototype</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main id="home" data-scenario="idle" aria-live="polite">
+    <div id="ambient" class="ambient-backdrop" aria-hidden="true"></div>
+    <div class="room-wash" aria-hidden="true"></div>
+
+    <section id="scene-shell" class="scene-shell" aria-label="Визуальная сцена Дома Маши">
+      <div class="scene-window">
+        <img id="scene-image" class="scene-image board-image" alt="">
+      </div>
+      <div class="depth-vignette" aria-hidden="true"></div>
+      <div class="attention-light" aria-hidden="true"></div>
+      <div class="safety-boundary" aria-hidden="true"></div>
+    </section>
+
+    <div class="supporting-trace" aria-hidden="true"></div>
+
+    <header class="visual-chrome prototype-mark">
+      <span>UI-04D</span>
+      <span id="viewport-mode">wide composition</span>
+    </header>
+
+    <section class="visual-chrome state-copy" aria-label="Описание текущей сцены">
+      <p id="state-index" class="state-index"></p>
+      <h1 id="state-title"></h1>
+      <p id="state-note"></p>
+    </section>
+
+    <button id="previous" class="visual-chrome edge-control edge-control-left" type="button" aria-label="Предыдущая сцена">
+      <span aria-hidden="true">‹</span>
+    </button>
+    <button id="next" class="visual-chrome edge-control edge-control-right" type="button" aria-label="Следующая сцена">
+      <span aria-hidden="true">›</span>
+    </button>
+
+    <nav id="scenario-dock" class="visual-chrome scenario-dock" aria-label="Сценарии прототипа"></nav>
+
+    <footer class="visual-chrome help-line">
+      <span>← → сцены</span>
+      <span>H скрыть подписи</span>
+      <span>F полный экран</span>
+    </footer>
+  </main>
+  <script src="prototype.js"></script>
+</body>
+</html>

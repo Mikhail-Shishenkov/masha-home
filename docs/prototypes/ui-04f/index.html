@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Masha Home · UI-04F Living Room</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main id="living-home" data-scenario="idle" data-ambient="default" data-attention="none" data-safety="normal">
+    <section class="room" aria-label="Дом Маши">
+      <img id="room-image" class="room-image" alt="Комната Маши">
+      <div class="room-depth" aria-hidden="true"></div>
+      <div class="ambient ambient-warm" aria-hidden="true"></div>
+      <div class="ambient ambient-focus" aria-hidden="true"></div>
+      <div class="spatial-path path-one" aria-hidden="true"></div>
+      <div class="spatial-path path-two" aria-hidden="true"></div>
+
+      <section id="masha" class="masha" aria-label="Маша">
+        <div class="contact-shadow" aria-hidden="true"></div>
+        <div id="character-frame-a" class="character-frame is-visible"><img id="character-a" class="atlas-image" alt=""></div>
+        <div id="character-frame-b" class="character-frame"><img id="character-b" class="atlas-image" alt=""></div>
+        <div class="presence-light" aria-hidden="true"></div>
+      </section>
+
+      <section id="conversation-surface" class="surface conversation-surface" aria-label="Разговор">
+        <div class="surface-depth" aria-hidden="true"></div>
+        <p class="surface-origin">между нами</p>
+        <p class="conversation-text">Я здесь. Давай разберёмся вместе.</p>
+        <div class="speech-line" aria-hidden="true"></div>
+      </section>
+
+      <section id="activity-zone" class="activity-zone" aria-label="Совместная работа">
+        <div class="work-plane" aria-hidden="true"></div>
+        <div class="work-grid" aria-hidden="true"></div>
+        <p class="surface-origin">совместная работа</p>
+        <p id="activity-title" class="activity-title">Собираю архитектурную нить</p>
+        <p id="activity-status" class="activity-status">Начинаю с контекста</p>
+        <div class="progress-path" aria-label="Прогресс"><span id="progress-fill"></span></div>
+        <p id="progress-label" class="progress-label">0%</p>
+        <div class="completion-mark" aria-hidden="true">✓</div>
+      </section>
+
+      <div class="support-trace" aria-hidden="true"></div>
+      <div class="safety-boundary" aria-hidden="true"></div>
+      <p class="safety-text">Автономность остановлена. Разговор остаётся доступным.</p>
+      <div class="privacy-veil" aria-hidden="true"><span>личный контекст скрыт</span></div>
+    </section>
+
+    <header class="prototype-chrome scene-title">
+      <span>UI-04F</span>
+      <strong id="scene-title">Маша дома</strong>
+    </header>
+
+    <aside class="prototype-chrome state-trace">
+      <span id="pose-trace"></span><span id="expression-trace"></span><span id="attention-trace"></span>
+    </aside>
+
+    <nav class="prototype-chrome scenario-rail" aria-label="Сцены">
+      <button data-scenario="idle"><kbd>1</kbd><span>дом</span></button>
+      <button data-scenario="conversation"><kbd>2</kbd><span>разговор</span></button>
+      <button data-scenario="activity"><kbd>3</kbd><span>работа</span></button>
+      <button data-scenario="completed"><kbd>4</kbd><span>готово</span></button>
+      <button data-scenario="home_evening"><kbd>5</kbd><span>вечер</span></button>
+      <button data-scenario="special_evening"><kbd>6</kbd><span>особенный</span></button>
+      <button data-scenario="thinking_attention"><kbd>7</kbd><span>думаю</span></button>
+      <button data-scenario="safety"><kbd>8</kbd><span>стоп</span></button>
+    </nav>
+
+    <footer class="prototype-chrome help">
+      <span>Space — продолжить сцену</span><span>H — без chrome</span><span>V — privacy</span><span>F — fullscreen</span><span>R — reset</span>
+    </footer>
+  </main>
+  <script src="living-core.js"></script>
+  <script src="prototype.js"></script>
+</body>
+</html>

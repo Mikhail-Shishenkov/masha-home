@@ -1,0 +1,358 @@
+:root {
+  color-scheme: dark;
+  --warm-white: #f3e8d7;
+  --muted-warm: #c8b8a5;
+  --amber: #d69a52;
+  --teal: #78b8c4;
+  --safety: #d66d4d;
+  --scene-size: min(100vw, 100vh);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #100c09;
+  font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+}
+
+button {
+  font: inherit;
+}
+
+#home {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  isolation: isolate;
+  background: #100c09;
+  color: var(--warm-white);
+  cursor: default;
+}
+
+.ambient-backdrop {
+  position: absolute;
+  inset: -48px;
+  z-index: -3;
+  background-position: center;
+  background-size: cover;
+  filter: blur(34px) saturate(.72) brightness(.34);
+  transform: scale(1.1);
+  transition: background-image 500ms ease, filter 700ms ease;
+}
+
+.room-wash {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  background:
+    radial-gradient(circle at 35% 42%, transparent 0 28%, rgba(10, 7, 5, .28) 70%),
+    linear-gradient(90deg, rgba(15, 10, 7, .42), transparent 20% 78%, rgba(11, 8, 7, .52));
+  pointer-events: none;
+}
+
+.scene-shell {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: var(--scene-size);
+  height: var(--scene-size);
+  overflow: hidden;
+  transform: translate(-50%, -50%);
+  background: #18110c;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, .48);
+}
+
+.scene-window,
+.scene-image,
+.depth-vignette,
+.attention-light,
+.safety-boundary {
+  position: absolute;
+  inset: 0;
+}
+
+.scene-window {
+  overflow: hidden;
+}
+
+.scene-image {
+  display: block;
+  max-width: none;
+  opacity: 1;
+  transition: opacity 380ms ease, transform 900ms cubic-bezier(.2, .7, .2, 1);
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.scene-image.board-image {
+  width: 300%;
+  height: 200%;
+  left: calc(var(--crop-column, 0) * -100%);
+  top: calc(var(--crop-row, 0) * -100%);
+}
+
+.scene-image.full-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+
+#home.is-changing .scene-image {
+  opacity: .15;
+  transform: scale(1.012);
+}
+
+.depth-vignette {
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(8, 5, 3, .12), transparent 28% 72%, rgba(7, 4, 3, .38)),
+    radial-gradient(circle at 50% 45%, transparent 45%, rgba(7, 4, 3, .26) 100%);
+}
+
+.attention-light {
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(circle at 55% 52%, rgba(220, 166, 91, .18), transparent 34%);
+  transition: opacity 700ms ease;
+}
+
+#home[data-scenario="check-in"] .attention-light,
+#home[data-scenario="confirmation"] .attention-light {
+  opacity: 1;
+}
+
+.safety-boundary {
+  inset: 18px;
+  border: 1px solid transparent;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 500ms ease, border-color 500ms ease;
+}
+
+#home[data-scenario="emergency-stop"] .safety-boundary {
+  opacity: .9;
+  border-color: rgba(214, 109, 77, .76);
+  box-shadow: inset 0 0 44px rgba(140, 43, 26, .14);
+}
+
+#home[data-scenario="emergency-stop"] .ambient-backdrop {
+  filter: blur(34px) saturate(.45) brightness(.26);
+}
+
+.prototype-mark {
+  position: absolute;
+  top: 28px;
+  left: 32px;
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  color: rgba(243, 232, 215, .7);
+  font-size: 11px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+
+.prototype-mark span + span::before {
+  content: "·";
+  margin-right: 14px;
+  color: rgba(214, 154, 82, .7);
+}
+
+.state-copy {
+  position: absolute;
+  left: clamp(28px, 5vw, 76px);
+  bottom: clamp(62px, 9vh, 116px);
+  width: min(410px, 72vw);
+  text-shadow: 0 2px 18px rgba(0, 0, 0, .8);
+}
+
+.state-index {
+  margin: 0 0 8px;
+  color: var(--amber);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .17em;
+  text-transform: uppercase;
+}
+
+.state-copy h1 {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(28px, 4.2vw, 58px);
+  font-weight: 400;
+  letter-spacing: -.025em;
+}
+
+.state-copy p:last-child {
+  max-width: 36ch;
+  margin: 10px 0 0;
+  color: rgba(243, 232, 215, .76);
+  font-size: clamp(13px, 1.2vw, 16px);
+  line-height: 1.45;
+}
+
+.edge-control {
+  position: absolute;
+  top: 18%;
+  bottom: 18%;
+  z-index: 4;
+  width: min(90px, 9vw);
+  padding: 0;
+  border: 0;
+  outline: 0;
+  color: rgba(243, 232, 215, .58);
+  background: transparent;
+  cursor: pointer;
+  opacity: .25;
+  transition: opacity 200ms ease, background 200ms ease;
+}
+
+.edge-control:hover,
+.edge-control:focus-visible {
+  opacity: 1;
+}
+
+.edge-control:focus-visible {
+  box-shadow: inset 0 0 0 1px rgba(214, 154, 82, .72);
+}
+
+.edge-control span {
+  font-family: Georgia, serif;
+  font-size: 52px;
+  font-weight: 300;
+}
+
+.edge-control-left {
+  left: 0;
+  background: linear-gradient(90deg, rgba(8, 5, 3, .24), transparent);
+}
+
+.edge-control-right {
+  right: 0;
+  background: linear-gradient(-90deg, rgba(8, 5, 3, .24), transparent);
+}
+
+.scenario-dock {
+  position: absolute;
+  left: 50%;
+  bottom: 28px;
+  z-index: 5;
+  display: flex;
+  gap: 10px;
+  transform: translateX(-50%);
+}
+
+.scenario-dot {
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(243, 232, 215, .32);
+  box-shadow: 0 0 0 5px transparent;
+  cursor: pointer;
+  transition: transform 250ms ease, background 250ms ease, box-shadow 250ms ease;
+}
+
+.scenario-dot:hover,
+.scenario-dot:focus-visible {
+  background: rgba(243, 232, 215, .72);
+  outline: none;
+}
+
+.scenario-dot.is-active {
+  transform: scale(1.24);
+  background: var(--amber);
+  box-shadow: 0 0 18px rgba(214, 154, 82, .54);
+}
+
+.help-line {
+  position: absolute;
+  right: 30px;
+  bottom: 27px;
+  display: flex;
+  gap: 18px;
+  color: rgba(243, 232, 215, .45);
+  font-size: 10px;
+  letter-spacing: .06em;
+}
+
+.visual-chrome {
+  transition: opacity 350ms ease;
+}
+
+#home.chrome-hidden .visual-chrome {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.supporting-trace {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  :root {
+    --scene-size: min(100vw, 68vh);
+  }
+
+  .scene-shell {
+    top: 38%;
+  }
+
+  .state-copy {
+    left: 24px;
+    right: 24px;
+    bottom: 92px;
+    width: auto;
+  }
+
+  .state-copy h1 {
+    font-size: clamp(28px, 8vw, 42px);
+  }
+
+  .state-copy p:last-child {
+    max-width: 52ch;
+  }
+
+  .help-line {
+    display: none;
+  }
+
+  .scenario-dock {
+    bottom: 34px;
+  }
+
+  .supporting-trace {
+    position: absolute;
+    left: 14%;
+    right: 14%;
+    bottom: 72px;
+    display: block;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(120, 184, 196, .7), transparent);
+    box-shadow: 0 0 14px rgba(120, 184, 196, .28);
+  }
+
+  #home[data-scenario="emergency-stop"] .supporting-trace {
+    background: linear-gradient(90deg, transparent, rgba(214, 109, 77, .78), transparent);
+    box-shadow: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
+    animation-duration: 1ms !important;
+  }
+}

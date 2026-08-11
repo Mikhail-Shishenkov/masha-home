@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Masha Home · UI-04E Workshop</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main id="workshop" data-mode="scenario" data-scenario="idle" data-attention="none" data-safety="normal">
+    <section class="home-stage" aria-label="Дом Маши">
+      <img id="room-layer" class="room-layer" alt="Тёплая комната Маши">
+      <div class="room-depth" aria-hidden="true"></div>
+      <div class="ambient-light" aria-hidden="true"></div>
+      <div class="light-path light-path-one" aria-hidden="true"></div>
+      <div class="light-path light-path-two" aria-hidden="true"></div>
+
+      <section id="masha-layer" class="masha-layer" aria-label="Маша">
+        <div id="masha-pose-frame" class="atlas-frame pose-frame">
+          <img id="masha-pose" class="atlas-image" alt="">
+        </div>
+        <div id="masha-expression-frame" class="atlas-frame expression-frame">
+          <img id="masha-expression" class="atlas-image" alt="">
+        </div>
+        <div class="attention-cue" aria-hidden="true"></div>
+      </section>
+
+      <section id="surface-conversation" class="interaction-surface soft-surface" aria-label="Разговор">
+        <p class="surface-kicker">наш разговор</p>
+        <p class="conversation-line">Я здесь. Рассказывай, что у тебя сейчас в голове.</p>
+        <div class="conversation-trace" aria-hidden="true"></div>
+      </section>
+
+      <section id="surface-activity" class="interaction-surface working-surface" aria-label="Совместная работа">
+        <div class="work-light" aria-hidden="true"></div>
+        <p class="surface-kicker">работаем вместе</p>
+        <p class="activity-title">Разбираю проект и держу нить</p>
+        <div class="activity-progress" aria-hidden="true"><span></span></div>
+        <p class="activity-detail">структура · связи · следующий безопасный шаг</p>
+      </section>
+
+      <section id="surface-confirmation" class="interaction-surface decision-surface" aria-label="Требуется решение">
+        <p class="surface-kicker">нужно твоё решение</p>
+        <p>Запомнить это как часть нашей общей истории?</p>
+        <div class="decision-options"><span>да</span><span>не сейчас</span></div>
+      </section>
+
+      <section id="surface-proactive" class="interaction-surface whisper-surface" aria-label="Мягкий check-in">
+        <p>Миш, ты как?</p>
+      </section>
+
+      <div class="supporting-trace" aria-hidden="true"></div>
+      <div class="safety-boundary" aria-hidden="true"></div>
+      <p class="safety-copy">Автономность остановлена. Я остаюсь рядом.</p>
+    </section>
+
+    <header class="workshop-chrome workshop-title">
+      <span>UI-04E</span>
+      <strong id="current-label">Маша дома</strong>
+    </header>
+
+    <aside class="workshop-chrome axis-readout" aria-label="Текущее визуальное состояние">
+      <span id="readout-pose"></span>
+      <span id="readout-expression"></span>
+      <span id="readout-attention"></span>
+      <span id="readout-outfit"></span>
+    </aside>
+
+    <button id="previous" class="workshop-chrome edge edge-left" type="button" aria-label="Предыдущее состояние">‹</button>
+    <button id="next" class="workshop-chrome edge edge-right" type="button" aria-label="Следующее состояние">›</button>
+
+    <nav class="workshop-chrome mode-dock" aria-label="Режимы мастерской">
+      <button data-mode="scenario">сцены <kbd>1–8</kbd></button>
+      <button data-mode="expression">мимика <kbd>E</kbd></button>
+      <button data-mode="attention">внимание <kbd>A</kbd></button>
+      <button data-mode="pose">позы <kbd>P</kbd></button>
+      <button data-mode="outfit">образы <kbd>O</kbd></button>
+      <button data-mode="surface">surfaces <kbd>S</kbd></button>
+      <button data-mode="motion">motion <kbd>M</kbd></button>
+    </nav>
+
+    <footer class="workshop-chrome help-line">
+      <span>← → выбирать</span><span>Space проиграть motion</span><span>H без подписей</span><span>F fullscreen</span><span>R reset</span>
+    </footer>
+  </main>
+  <script src="workshop-core.js"></script>
+  <script src="prototype.js"></script>
+</body>
+</html>

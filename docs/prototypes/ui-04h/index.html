@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Masha Home · UI-04H Conversation</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main id="home" data-safety="normal" data-phase="conversation">
+    <img id="scene" class="scene" alt="Маша в своём доме">
+    <div class="ambient" aria-hidden="true"></div>
+    <div class="privacy-veil" aria-hidden="true">
+      <strong>Личный контекст скрыт</strong>
+      <span>Дом остаётся здесь. Разговор и детали временно не видны.</span>
+    </div>
+
+    <section id="conversation" class="conversation" aria-label="Разговор с Машей">
+      <p id="conversation-origin" class="eyebrow"></p>
+      <div id="message-history" class="message-history" role="log" aria-live="polite" aria-label="Переписка"></div>
+      <p id="thinking" class="thinking" hidden>Маша собирает ответ…</p>
+      <form id="composer" class="composer">
+        <label class="sr-only" for="composer-input">Сообщение Маше</label>
+        <input id="composer-input" autocomplete="off" maxlength="500">
+        <button type="submit" aria-label="Отправить сообщение">Отправить</button>
+      </form>
+    </section>
+
+    <section id="decision" class="decision" aria-live="polite" aria-label="Подтверждение">
+      <p class="eyebrow">нужно твоё решение</p>
+      <h1 id="decision-title"></h1>
+      <p id="decision-preview" class="preview"></p>
+      <div class="choice-line" aria-hidden="true"></div>
+      <div class="actions">
+        <button id="confirm" class="primary" type="button"></button>
+        <button id="edit" class="quiet" type="button"></button>
+        <button id="dismiss" class="quiet" type="button"></button>
+      </div>
+    </section>
+
+    <section id="activity" class="activity" aria-live="polite" aria-label="Ход задачи" hidden>
+      <p id="activity-eyebrow" class="eyebrow"></p>
+      <h2 id="activity-title"></h2>
+      <p id="activity-detail" class="activity-detail"></p>
+      <ol id="activity-steps" class="activity-steps"></ol>
+      <button id="activity-action" class="activity-action" type="button"></button>
+    </section>
+
+    <section id="checkin" class="checkin" aria-live="polite" aria-label="Сообщение от Маши" hidden>
+      <p id="checkin-eyebrow" class="eyebrow"></p>
+      <p id="checkin-message" class="checkin-message"></p>
+      <div class="checkin-actions">
+        <button id="checkin-reply" type="button"></button>
+        <button id="checkin-dismiss" type="button"></button>
+      </div>
+    </section>
+
+    <nav id="home-nav" class="home-nav" aria-label="Ориентир Дома">
+      <button type="button" data-focus="conversation">Разговор</button>
+      <button type="button" data-focus="activity">Дело</button>
+      <button type="button" data-focus="decision">Решение</button>
+      <button type="button" data-focus="checkin">Рядом</button>
+    </nav>
+
+    <p id="receipt" class="receipt" aria-live="polite"></p>
+    <button id="safety" class="safety" type="button" aria-label="Остановить автономную активность" aria-pressed="false"><span class="safety-mark">■</span><span class="safety-label">Стоп</span></button>
+    <button id="privacy" class="privacy" type="button" aria-label="Скрыть личный контекст">◐</button>
+    <section id="stopped" class="stopped" aria-live="polite">
+      <p class="eyebrow">Пауза автономности</p>
+      <p>Я не буду начинать действия сама. Разговор остаётся доступным.</p>
+    </section>
+  </main>
+  <script src="confirmation-core.js"></script>
+  <script src="prototype.js"></script>
+</body>
+</html>
