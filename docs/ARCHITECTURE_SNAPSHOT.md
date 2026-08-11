@@ -546,3 +546,23 @@ No filesystem/process/network tool, LLM planner, background agent or automatic
 domain mutation is connected.
 
 Current regression after Stage 16.3: `236 passed`.
+
+## CURRENT — STAGE 16.4 FIRST LOCAL SKILL
+
+`ProjectObserverTool` is the first real application-wired adapter. It exposes
+only bounded `list_tree`, `read_text` and `inspect_path` operations inside one
+resolved workspace. Protected/private paths, path traversal, symlinks, writes,
+subprocesses and network access are blocked.
+
+The shipped `skills/project_observer` package remains declarative and inert;
+the registry never imports it. Explicit registration, enabled action autonomy
+and an exact `local_read` standing grant are all required before observation.
+The Agent Loop also binds injected `tool_id` to the authorized `skill_id`.
+
+Observed content is returned only after deterministic repeat-read verification
+and is never persisted in agent receipts, Memory or conversation history.
+Human local access is available through `masha.ps1 observe tree|read|inspect`.
+Identity, Memory, Commitment, Temporal, Model Profiles, Router and SQLite schema
+are unchanged.
+
+Current regression after Stage 16.4: `249 passed`.

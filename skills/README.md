@@ -68,13 +68,23 @@ Grant действует только для точного сочетания s
 может расширить manifest. `check` показывает решение policy, но не запускает
 действие.
 
-Stage 16.3 adds only the bounded execution protocol and `FakeTool`. There is no
-real skill adapter yet. Read operating receipts with:
+Stage 16.3 adds the bounded execution protocol and receipts. Read operating
+receipts with:
 
 ```powershell
 .\masha.ps1 agent runs
 .\masha.ps1 agent show <номер>
 ```
 
-A future Tool Adapter is injected by application code; registry never imports a
-manifest entrypoint automatically.
+Stage 16.4 ships the first real adapter, `ProjectObserver`, but registry still
+never imports a manifest entrypoint automatically. The application injects the
+adapter and the same registry/policy/agent-loop checks apply.
+
+```powershell
+.\masha.ps1 observe tree
+.\masha.ps1 observe read README.md
+.\masha.ps1 observe inspect pyproject.toml
+```
+
+The observer is bounded to the explicit workspace, excludes private and local
+runtime paths, never writes, never starts a process and never uses the network.

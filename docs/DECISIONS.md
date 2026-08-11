@@ -533,6 +533,24 @@ verification result обязан подтвердить evidence; failure, excep
 unverified result заканчивают run без claim `completed`. Receipts не сохраняют
 raw inputs/outputs и не становятся Memory. LLM planner в loop отсутствует.
 
+### DEC-069. A Tool Adapter is bound to one declared skill
+
+Статус: **Принято и реализовано (Stage 16.4)**
+
+Каждый application-injected Tool Adapter объявляет собственный `skill_id`.
+Bounded Agent Loop отклоняет несовпадение между этим идентификатором и
+`ActionRequest.skill_id` до вызова tool. Manifest остаётся декларацией и не
+может подменить adapter через автоматический import entrypoint.
+
+### DEC-070. Read results are verified but not persisted as agent history
+
+Статус: **Принято и реализовано (Stage 16.4)**
+
+ProjectObserver повторно получает тот же bounded read и сверяет точный output с
+SHA-256 evidence. Только после этого результат передаётся вызывающему коду через
+короткоживущий in-process канал. Содержимое файлов не сохраняется в AgentRunStore,
+Memory или conversation history; receipt хранит только итог и verification code.
+
 ### DEC-047. Local model profiles are operating configuration
 
 Статус: **Принято и реализовано (LLM-03)**

@@ -31,6 +31,7 @@ class ToolVerification(StrictToolModel):
 class ToolAdapter(ABC):
     """Application-injected operation boundary; tools never grant permission."""
 
+    skill_id: str
     tool_id: str
 
     @abstractmethod
@@ -51,6 +52,7 @@ class ToolAdapter(ABC):
 class FakeTool(ToolAdapter):
     """No-I/O tool for tests; supported operations are deterministic."""
 
+    skill_id: str = "project_observer"
     tool_id: str = "fake"
     on_execute: Callable[[str], None] | None = None
     calls: list[str] = field(default_factory=list, init=False)

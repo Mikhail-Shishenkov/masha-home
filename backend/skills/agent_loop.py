@@ -20,7 +20,7 @@ from .autonomy import (
 )
 from .models import utc_now
 from .registry import SkillRegistry
-from .tools import ToolAdapter
+from .tools import ToolAdapter, ToolExecutionResult
 
 
 class StrictAgentModel(BaseModel):
@@ -203,7 +203,12 @@ class BoundedAgentLoop:
         self._clock = clock
         self.decisions = ActionAutonomyEngine()
 
-    def run(self, plan: AgentPlan) -> AgentRunReceipt:
+    def run(
+        self,
+        plan: AgentPlan,
+        *,
+        on_verified_result: Callable[[AgentStep, ToolExecutionResult], None] | None = None,
+    ) -> AgentRunReceipt:
         digest = plan.digest()
         receipt = self.run_store.get(plan.plan_id)
         if receipt is not None and receipt.plan_sha256 != digest:
@@ -256,6 +261,21 @@ class BoundedAgentLoop:
                 )
                 receipt = self._with_step(receipt, failed, AgentRunStatus.FAILED, "tool_not_injected")
                 return receipt
+            if tool.skill_id != step.action.skill_id:
+                failed = self._step_receipt(
+                    step,
+                    ActionEvaluation(decision=ActionDecision.DENY, reason="tool_skill_mismatch"),
+                    status=AgentStepStatus.FAILED,
+                    finished=True,
+                    result_summary="Configured tool does not belong to the authorized skill.",
+                    verification_code="tool_skill_mismatch",
+                )
+                return self._with_step(
+                    receipt,
+                    failed,
+                    AgentRunStatus.FAILED,
+                    "tool_skill_mismatch",
+                )
 
             evaluation = self.decisions.evaluate(
                 step.action,
@@ -350,6 +370,8 @@ class BoundedAgentLoop:
                 None,
                 terminal=False,
             )
+            if on_verified_result is not None:
+                on_verified_result(step, result)
             existing[step.step_id] = verified
 
         return self._terminal(receipt, AgentRunStatus.COMPLETED, "all_steps_verified")

@@ -5,7 +5,7 @@
 - `16.1 Skill Contract & Registry`: **IMPLEMENTED**
 - `16.2 Action Autonomy Policy`: **IMPLEMENTED**
 - `16.3 Bounded Agent Loop`: **IMPLEMENTED**
-- `16.4 First Local Skill`: **PLANNED**
+- `16.4 First Local Skill`: **IMPLEMENTED**
 - `16.5 Skill Installation / Upgrade`: **PLANNED**
 - `16.6 Permissions UX & Emergency Stop`: **PLANNED**
 
@@ -204,10 +204,9 @@ Human CLI:
 
 ## Next safe step
 
-`Stage 16.4 — First Local Skill`: connect one strictly read-only
-`ProjectObserver` adapter to the injected Tool boundary. It must normalize an
-explicit workspace root, expose bounded operations, produce deterministic
-evidence and never inherit arbitrary entrypoints from a manifest.
+`Stage 16.5 — Skill Installation / Upgrade`: design an explicit local package
+installation and upgrade flow. A changed package must not inherit its earlier
+registration or permissions silently.
 
 ## Verification
 
@@ -301,5 +300,65 @@ Normal output hides plan IDs and hashes. `--raw` remains diagnostic.
 - Registry + Autonomy + Agent targeted regression: `53 passed`;
 - full project regression: `236 passed`;
 - read-only launcher smoke: `masha.ps1 agent runs` — successful and created no file;
+- production SQLite SHA-256 remained
+  `55F0C17A3190C97C1FFC60EDF228AEBCE77793E3D08064455F87810181A7548E`.
+
+## Stage 16.4 — First Local Skill
+
+`ProjectObserver` is the first real Tool Adapter. Its package is declarative:
+`entrypoint=null`, capability `local_read`, exact scope
+`workspace:masha-home`, observe risk and autonomy ceiling 1. Application code,
+not the manifest, injects the adapter into `BoundedAgentLoop`.
+
+```text
+human observe command
+  → application-owned one-step AgentPlan
+  → Skill Registry integrity
+  → Action Autonomy Policy
+  → tool_id + skill_id binding
+  → ProjectObserverTool
+  → repeat-read deterministic verification
+  → verified ephemeral result
+  → human-readable output
+```
+
+Supported operations are intentionally small:
+
+- `list_tree`: bounded depth and entry count;
+- `read_text`: bounded UTF-8 text from an extension allowlist;
+- `inspect_path`: type, bounded size and SHA-256 for a permitted file.
+
+The resolved workspace root is mandatory. Traversal, absolute paths, symlinks,
+`.git`, `.venv`, `local-data`, environment/credential files and key material
+are blocked. The adapter has no write method, network client or subprocess
+runner. It cannot access Identity, Memory, Commitment, TemporalContext,
+ConversationService, ModelRouter or SQLite.
+
+Raw observed text is returned only through an in-process callback after the
+verified receipt is persisted. Agent receipts still contain only summary and
+verification code, so project contents do not become operating history or
+Memory. A Tool Adapter must now declare `skill_id`; a mismatched injected tool
+is rejected before execution.
+
+Human commands:
+
+```powershell
+.\masha.ps1 observe tree [path]
+.\masha.ps1 observe read <path>
+.\masha.ps1 observe inspect <path>
+```
+
+The package is shipped discovered but not automatically registered. Execution
+still requires explicit registration, enabled action autonomy and the exact
+standing `local_read` grant. There is no LLM planning or automatic permission.
+
+### Stage 16.4 verification
+
+- ProjectObserver + Agent Loop deterministic tests: `32 passed`;
+- Registry + Autonomy + Agent + ProjectObserver targeted regression: `66 passed`;
+- full project regression: `249 passed`;
+- isolated Windows launcher/CLI smoke covered registration, restart-persistent policy/grant,
+  tree, text read, metadata/hash inspection and receipt privacy;
+- smoke state was removed and no production skill policy was created;
 - production SQLite SHA-256 remained
   `55F0C17A3190C97C1FFC60EDF228AEBCE77793E3D08064455F87810181A7548E`.

@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "skill_id": "project_observer",
+  "name": "Project Observer",
+  "version": "1.0.0",
+  "description": "Читает только разрешённую и ограниченную часть локального проекта без изменений.",
+  "entrypoint": null,
+  "instructions_file": "SKILL.md",
+  "capabilities": [
+    "local_read"
+  ],
+  "requested_scopes": [
+    "workspace:masha-home"
+  ],
+  "risk_level": "observe",
+  "maximum_autonomy_level": 1,
+  "supports_dry_run": true,
+  "supports_rollback": false,
+  "verification": "Повторно читает тот же ограниченный источник и сверяет точный результат и SHA-256 evidence."
+}

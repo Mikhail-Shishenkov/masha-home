@@ -273,6 +273,17 @@ def test_missing_tool_fails_without_execution(tmp_path):
     assert receipt.terminal_reason == "tool_not_injected"
 
 
+def test_injected_tool_must_belong_to_authorized_skill(tmp_path):
+    wrong_tool = FakeTool(skill_id="different_skill")
+    _, _, _, _, _, _, loop = _stack(tmp_path, tool=wrong_tool)
+
+    receipt = loop.run(_plan())
+
+    assert receipt.status == AgentRunStatus.FAILED
+    assert receipt.terminal_reason == "tool_skill_mismatch"
+    assert wrong_tool.calls == []
+
+
 def test_policy_is_re_evaluated_before_every_step(tmp_path):
     holder = {}
 
@@ -376,6 +387,21 @@ def test_receipt_excludes_raw_inputs_and_tool_outputs(tmp_path):
     assert secret not in raw
     assert "result_summary" in raw
     assert "verification_code" in raw
+
+
+def test_verified_output_can_be_consumed_without_persistence(tmp_path):
+    _, _, _, _, store, _, loop = _stack(tmp_path)
+    secret = "EPHEMERAL_OUTPUT_456"
+    captured = []
+
+    receipt = loop.run(
+        _plan(_step("step_one", value=secret)),
+        on_verified_result=lambda _step, result: captured.append(result.output),
+    )
+
+    assert receipt.status == AgentRunStatus.COMPLETED
+    assert captured == [{"value": secret}]
+    assert secret not in store.path.read_text(encoding="utf-8")
 
 
 def test_same_plan_id_with_changed_content_is_rejected(tmp_path):

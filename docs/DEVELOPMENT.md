@@ -305,9 +305,9 @@ Read local operating receipts:
 .\masha.ps1 agent show <номер>
 ```
 
-The CLI is currently read-only because production has no real Tool Adapter or
-plan-authoring flow. Agent tests use only `FakeTool`; it never reads/writes the
-workspace, launches a process, accesses the network or calls an LLM.
+The agent journal CLI is read-only. Stage 16.4 additionally provides one real,
+strictly read-only ProjectObserver adapter; there is still no LLM planner or
+general plan-authoring flow.
 
 ```powershell
 python -m pytest tests/test_agent_loop.py tests/test_action_autonomy.py tests/test_skill_registry.py -q
@@ -316,6 +316,38 @@ python -m pytest tests/test_agent_loop.py tests/test_action_autonomy.py tests/te
 Receipts are stored only after an explicit application run at
 `local-data/runtime/agent-runs.json`. Listing an empty journal does not create
 the file.
+
+## Stage 16.4 Project Observer
+
+The first real skill is shipped as a discovered but unregistered package. To
+enable its exact read-only boundary deliberately:
+
+```powershell
+.\masha.ps1 skills register project_observer
+.\masha.ps1 skills policy on
+.\masha.ps1 skills policy level 1
+.\masha.ps1 skills grant project_observer local_read workspace:masha-home 1 observe
+```
+
+Then use the human-readable observer:
+
+```powershell
+.\masha.ps1 observe tree
+.\masha.ps1 observe tree backend --max-depth 2 --max-entries 100
+.\masha.ps1 observe read README.md --max-chars 8000
+.\masha.ps1 observe inspect pyproject.toml
+```
+
+`--raw` exposes diagnostic payloads. Normal output hides plan IDs and internal
+policy identifiers. The observer cannot read `local-data`, `.git`, `.venv`,
+environment/credential/key files or symlinks, and has no write, process or
+network capability. Read contents are not stored in agent receipts.
+
+Targeted verification:
+
+```powershell
+python -m pytest tests/test_project_observer.py tests/test_agent_loop.py tests/test_action_autonomy.py tests/test_skill_registry.py -q
+```
 
 ## Конфигурация
 

@@ -527,9 +527,18 @@ is connected.
 
 ### STAGE-16.4. First Local Read-only Skill
 
+Статус: **DONE**
+
+Implemented one application-wired ProjectObserver Tool with an explicit
+resolved workspace root, bounded tree/text/metadata reads and repeat-read
+deterministic evidence. Protected paths, traversal, symlinks, writes,
+subprocesses and network access are unavailable. Verified results remain
+ephemeral and raw project content is not stored in agent receipts.
+
+### STAGE-16.5. Skill Installation / Upgrade
+
 Статус: **NEXT — NOT IMPLEMENTED**
 
-Implement one application-wired ProjectObserver Tool with an explicit resolved
-workspace root, bounded read-only operations and deterministic evidence. Do not
-load arbitrary manifest entrypoints, write files, execute processes or access
-the network.
+Design explicit local installation and upgrade for declarative skill packages.
+Package changes must require deliberate re-verification and must not silently
+inherit an earlier integrity pin or permission grant.

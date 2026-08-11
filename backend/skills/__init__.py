@@ -19,6 +19,8 @@ from .autonomy import (
 )
 from .agent_loop import AgentPlan, AgentRunStore, AgentStep, BoundedAgentLoop
 from .tools import FakeTool, ToolAdapter, ToolExecutionResult, ToolVerification
+from .project_observer import ProjectObserverTool
+from .project_observer_service import ProjectObservation, ProjectObserverService
 
 __all__ = [
     "RegisteredSkill",
@@ -42,4 +44,7 @@ __all__ = [
     "ToolAdapter",
     "ToolExecutionResult",
     "ToolVerification",
+    "ProjectObserverTool",
+    "ProjectObservation",
+    "ProjectObserverService",
 ]

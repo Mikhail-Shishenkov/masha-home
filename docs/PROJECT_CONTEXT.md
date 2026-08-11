@@ -175,3 +175,12 @@ MVP должен:
 - `docs/IMPLEMENTATION_PLAN.md` — порядок реализации.
 - `docs/DECISIONS.md` — принятые и отложенные решения.
 - `docs/MEMORY_SPEC.md` — текущая спецификация памяти до её последующей синхронизации с кодом.
+
+## 11. Current bounded agent capability
+
+Stage 16.4 adds one real but strictly read-only capability: Project Observer.
+It can inspect a bounded, non-private part of the local workspace only after
+explicit package registration and an exact user grant. It cannot write, run a
+process, access the network, mutate domain state or turn observed file content
+into Memory. This is the reference safety shape for later skills, not general
+computer access.
