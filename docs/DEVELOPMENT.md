@@ -121,7 +121,18 @@ python -c "from backend.memory.sqlite_repository import MemorySqliteRepository a
 
 ## Model Router
 
-Модельный слой находится в `backend.llm`. Для тестов используется только локальный `FakeProvider`; реальный runtime, модель и внешний API не настраиваются автоматически. `ModelRequest` содержит Immutable Identity Context, а `private_context` допускается только для локального маршрута. Подключение или установка реального провайдера — отдельный подтверждаемый этап `LLM-02`.
+Модельный слой находится в `backend.llm`. `ModelRequest` содержит Immutable
+Identity Context, а `private_context` допускается только для локального
+маршрута. Production CLI uses `OllamaProvider` through `ModelRouter`; tests may
+use `FakeProvider`.
+
+The local file `local-data/config/models.json` persists only the active
+execution profile. Use `model list`, `model current`, and `model use fast` in
+the conversation CLI. `primary` is `qwen3.5:9b`, `fast` is `qwen3.5:4b`; both
+use `think=false`. The command verifies local Ollama and the target model
+before changing the file. It never downloads models and never falls back.
+Profiles do not change Masha's identity, SQLite memory, conversation history,
+or temporal state.
 
 ## Конфигурация
 

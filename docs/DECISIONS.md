@@ -340,6 +340,18 @@ configuration. Temporal Engine, not LLM, resolves supported dates and computed
 commitment status. `due_at == now` is open; only `due_at < now` is overdue.
 Commitment creation/completion require explicit proposal and confirmation.
 
+### DEC-047. Local model profiles are operating configuration
+
+Статус: **Принято и реализовано (LLM-03)**
+
+`primary` (`qwen3.5:9b`) и `fast` (`qwen3.5:4b`) — вручную выбираемые
+локальные execution-профили в `local-data/config/models.json`. CLI проверяет
+Ollama и конкретную модель до сохранения выбора. Неуспешная смена сохраняет
+прежний профиль, automatic fallback отсутствует. Профиль передаёт в
+provider-neutral `ModelRequest` только execution model и `think`; он не
+является частью Identity, Memory, conversation history или temporal state.
+Router выбирает provider, но не модель.
+
 ## 6. Открытые вопросы ближайших этапов
 
 - Формат identity manifest.

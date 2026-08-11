@@ -25,6 +25,10 @@ class ModelRouter:
             raise ValueError(f"duplicate provider id: {provider.provider_id}")
         self._providers[provider.provider_id] = provider
 
+    def get_provider(self, provider_id: str) -> ModelProvider | None:
+        """Return a registered provider without selecting or falling back."""
+        return self._providers.get(provider_id)
+
     def generate(self, request: ModelRequest) -> ModelResponse:
         provider = self.select_provider(request)
         return provider.generate(request)

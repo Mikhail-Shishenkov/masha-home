@@ -4,6 +4,7 @@ from backend.identity.identity_kernel import IdentityKernel
 from backend.llm.model_models import ModelMessage
 from backend.llm.model_provider import ModelProviderUnavailableError, ModelTimeoutError
 from backend.llm.model_router import ModelRouter
+from backend.llm.model_profiles import ModelProfileStore
 from backend.memory.memory_retriever import MemoryRetriever
 from backend.memory.working_memory import WorkingMemory
 from backend.temporal.temporal_engine import TemporalEngine
@@ -32,6 +33,7 @@ class ConversationService:
         memory_limit: int = 6,
         history_limit: int = 16,
         temporal_engine: TemporalEngine | None = None,
+        model_profiles: ModelProfileStore | None = None,
     ):
         self.identity_kernel = identity_kernel
         self.memory_retriever = memory_retriever
@@ -43,6 +45,7 @@ class ConversationService:
         self.memory_limit = memory_limit
         self.history_limit = history_limit
         self.temporal_engine = temporal_engine or TemporalEngine()
+        self.model_profiles = model_profiles
 
     def send(
         self,
@@ -69,6 +72,7 @@ class ConversationService:
 
         memories = self.memory_retriever.retrieve(project_id=project_id, limit=self.memory_limit)
         self.working_memory.load(memories)
+        active_profile = None if self.model_profiles is None else self.model_profiles.get_active_profile()
         request = self.context_compiler.compile(
             messages=tuple(
                 ModelMessage(role=message.role.value, content=message.content)
@@ -77,6 +81,9 @@ class ConversationService:
             identity_context=self.identity_kernel.build_context(),
             working_memory=self.working_memory.get_all(),
             temporal_context=temporal_context,
+            execution_model_id=None if active_profile is None else active_profile.model_id,
+            execution_think=False if active_profile is None else active_profile.think,
+            execution_timeout_seconds=30.0 if active_profile is None else active_profile.timeout_seconds,
         )
         try:
             response = self.router.generate(request)

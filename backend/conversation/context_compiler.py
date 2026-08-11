@@ -45,6 +45,9 @@ class ConversationContextCompiler:
         identity_context: IdentityContext,
         working_memory: list[dict],
         temporal_context: TemporalContext | None = None,
+        execution_model_id: str | None = None,
+        execution_think: bool = False,
+        execution_timeout_seconds: float = 30.0,
     ) -> ModelRequest:
         return ModelRequest(
             messages=messages,
@@ -56,6 +59,9 @@ class ConversationContextCompiler:
                 "memory_context": [self._memory_record(item) for item in working_memory],
             },
             preferred_provider_id="ollama-local",
+            execution_model_id=execution_model_id,
+            execution_think=execution_think,
+            timeout_seconds=execution_timeout_seconds,
         )
 
     @staticmethod

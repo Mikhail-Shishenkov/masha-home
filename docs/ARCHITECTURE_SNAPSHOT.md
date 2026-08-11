@@ -183,6 +183,22 @@ context. It is a working choice, not an irreversible identity decision.
 
 No automatic multi-model routing is implemented or justified yet.
 
+### CURRENT — LLM-03 LOCAL MODEL PROFILES (2026-08-11)
+
+`local-data/config/models.json` is a local operating-configuration file, not
+Identity, Memory, conversation history, or temporal state. It persists the
+manually selected profile across a restart. The initial profiles are
+`primary` (`qwen3.5:9b`), `fast` (`qwen3.5:4b`), and disabled
+`experimental` / `vision-candidate` configuration entries.
+
+`ConversationService` passes the active profile's model ID and `think=false`
+through provider-neutral `ModelRequest`. `ModelRouter` still selects only the
+provider; it neither selects a model nor falls back. `OllamaProvider` executes
+exactly the selected target. `model list`, `model current`, and `model use
+<profile>` are local CLI commands. A switch checks the enabled profile, local
+Ollama, and the selected model before persistence; failure preserves the
+previous profile. There is no automatic switching or fallback.
+
 ## KNOWN ISSUES
 
 - SQLite audit-event test can be nondeterministic when timestamps match.
@@ -258,7 +274,7 @@ and the local Ollama adapter were only planned. The implemented path is:
 
 `terminal CLI -> ConversationService -> IdentityKernel + MemoryRetriever +
 WorkingMemory -> ConversationContextCompiler -> ModelRouter -> OllamaProvider
--> qwen3.5:9b -> JSON conversation history`.
+-> active local ModelProfile -> JSON conversation history`.
 
 The command `python -m backend.conversation.cli` starts the local terminal
 conversation. It opens the most recently created conversation by default, or a

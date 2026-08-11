@@ -376,3 +376,15 @@ forget/supersession operations. Conversation history остаётся отдел
 Deterministic Clock/TemporalContext, bounded model context, deadline parsing,
 computed overdue status and explicit Commitment creation/completion are active.
 No scheduler, reminders, proactive behaviour or event recovery is included.
+
+### LLM-03. Local Model Profiles
+
+Статус: **DONE**
+
+The local execution profile is persisted in `local-data/config/models.json`.
+`primary` uses `qwen3.5:9b`; `fast` uses `qwen3.5:4b`; both use `think=false`.
+Selection is manual via `model list`, `model current`, and `model use <profile>`.
+Availability is checked before persistence and no automatic fallback exists.
+Changing a profile changes only the LLM execution target; it does not mutate
+Identity, SQLite memory, proposals/audit, conversation history/ID, or
+TemporalContext.

@@ -41,3 +41,4 @@ local-data/memory-exports/
 local-data/identity-regressions/
 local-data/mem-10-smoke/
 local-data/mem-11-smoke/
+local-data/config/

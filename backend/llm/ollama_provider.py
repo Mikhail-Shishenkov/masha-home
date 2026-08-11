@@ -17,7 +17,7 @@ from .model_provider import ModelProvider, ModelProviderUnavailableError, ModelT
 
 class OllamaProvider(ModelProvider):
     provider_id = "ollama-local"
-    model_id = "qwen3.5:9b"
+    model_id = ""
     capabilities = ModelCapabilities(tools=True, vision=True)
     is_local = True
 
@@ -25,7 +25,7 @@ class OllamaProvider(ModelProvider):
         self,
         *,
         endpoint: str = "http://127.0.0.1:11434",
-        model_id: str = "qwen3.5:9b",
+        model_id: str = "",
     ):
         self.endpoint = endpoint.rstrip("/")
         self.model_id = model_id
@@ -37,9 +37,20 @@ class OllamaProvider(ModelProvider):
         except (OSError, URLError):
             return False
 
+    def is_model_available(self, model_id: str) -> bool:
+        try:
+            with urlopen(f"{self.endpoint}/api/tags", timeout=2.0) as response:
+                body = json.loads(response.read().decode("utf-8"))
+            return any(item.get("name") == model_id for item in body.get("models", []))
+        except (OSError, URLError, json.JSONDecodeError):
+            return False
+
     def generate(self, request: ModelRequest) -> ModelResponse:
+        model_id = request.execution_model_id or self.model_id
+        if not model_id:
+            raise ModelProviderUnavailableError("no local model selected")
         payload = {
-            "model": self.model_id,
+            "model": model_id,
             "messages": [
                 {"role": "system", "content": self._system_context(request)},
                 *[
@@ -47,7 +58,7 @@ class OllamaProvider(ModelProvider):
                     for message in request.messages
                 ],
             ],
-            "think": False,
+            "think": request.execution_think,
             "stream": False,
         }
         http_request = Request(
@@ -70,7 +81,7 @@ class OllamaProvider(ModelProvider):
             raise ModelProviderUnavailableError("local Ollama returned an empty response")
         return ModelResponse(
             provider_id=self.provider_id,
-            model_id=str(body.get("model", self.model_id)),
+            model_id=str(body.get("model", model_id)),
             text=text,
             finish_reason=FinishReason.LENGTH if body.get("done_reason") == "length" else FinishReason.COMPLETED,
             capabilities=self.capabilities,

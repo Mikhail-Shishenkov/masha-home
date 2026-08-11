@@ -34,6 +34,7 @@ def _request():
         messages=(ModelMessage(role="user", content="Привет"),),
         identity_context=IdentityKernel(IdentityStore(PROJECT_ROOT / "identity" / "masha.identity.json")).build_context(),
         private_context={"current_local_time": "2026-08-11T00:00:00+03:00", "memory_context": []},
+        execution_model_id="qwen3.5:9b",
     )
 
 
@@ -52,6 +53,20 @@ def test_provider_sends_local_identity_context_and_disables_thinking(monkeypatch
     assert captured["payload"]["think"] is False
     assert "Identity Context" in captured["payload"]["messages"][0]["content"]
     assert "current_local_time" in captured["payload"]["messages"][0]["content"]
+
+
+def test_provider_uses_selected_execution_model_without_fallback(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        return _Response({"message": {"content": "Привет."}, "done": True})
+
+    monkeypatch.setattr("backend.llm.ollama_provider.urlopen", fake_urlopen)
+    response = OllamaProvider().generate(_request().model_copy(update={"execution_model_id": "qwen3.5:4b"}))
+
+    assert captured["payload"]["model"] == "qwen3.5:4b"
+    assert response.model_id == "qwen3.5:4b"
 
 
 def test_provider_maps_ollama_errors_to_controlled_provider_error(monkeypatch):

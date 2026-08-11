@@ -15,6 +15,7 @@ from backend.identity.identity_kernel import (
 from backend.identity.identity_store import IdentityStore
 from backend.llm.model_router import ModelRouter
 from backend.llm.ollama_provider import OllamaProvider
+from backend.llm.model_profiles import ModelProfileStore
 from backend.memory.memory_retriever import MemoryRetriever
 from backend.memory.sqlite_repository import MemorySqliteRepository
 from backend.memory.working_memory import WorkingMemory
@@ -41,6 +42,7 @@ def build_service(*, project_root: Path = PROJECT_ROOT) -> ConversationService:
     )
     identity_kernel.validate_memory_identity(memory_store)
     memory_management = MemoryManagementService(memory_store)
+    profiles = ModelProfileStore(project_root / "local-data" / "config" / "models.json")
     return ConversationService(
         identity_kernel=identity_kernel,
         memory_retriever=MemoryRetriever(memory_store),
@@ -52,6 +54,7 @@ def build_service(*, project_root: Path = PROJECT_ROOT) -> ConversationService:
             confirmed_memory=ConfirmedMemoryService(memory_store),
             memory_management=memory_management,
         ),
+        model_profiles=profiles,
     )
 
 
@@ -88,6 +91,9 @@ def run_cli(
         if user_message.lower() in EXIT_COMMANDS:
             output_fn("Conversation stopped.")
             return
+        if user_message.startswith("model "):
+            _run_model_command(user_message[6:], service=service, output_fn=output_fn)
+            continue
         if user_message.startswith("time"):
             _run_time_command(user_message, service=service, conversation_id=active_id, output_fn=output_fn)
             continue
@@ -200,6 +206,35 @@ def _run_time_command(command: str, *, service: ConversationService, conversatio
         minutes = context.absence_duration_seconds // 60
         lines += [f"Последний разговор: {context.last_interaction_at.astimezone(MOSCOW).strftime('%d.%m.%Y, %H:%M')}", f"Тебя не было: {minutes // 60} ч {minutes % 60} мин"]
     output_fn("\n".join(lines))
+
+
+def _run_model_command(command: str, *, service: ConversationService, output_fn: Callable[[str], None]) -> None:
+    store = service.model_profiles
+    if store is None:
+        output_fn("Профили моделей не настроены."); return
+    parts = command.split()
+    action = parts[0] if parts else "current"
+    provider = None
+    if action == "list":
+        active = store.get_active_profile().profile_id
+        output_fn("Доступные модели:\n" + "\n".join(f"{'* ' if p.profile_id == active else '  '}{p.profile_id}\n  {p.model_id or 'не задана'}\n  {'включена' if p.enabled else 'отключена'}" for p in store.list_profiles())); return
+    if action == "current":
+        p = store.get_active_profile(); output_fn(f"Текущий профиль:\n{p.profile_id}\nМодель: {p.model_id}\nThink: {str(p.think).lower()}"); return
+    if action == "use" and len(parts) == 2:
+        old = store.get_active_profile()
+        try:
+            candidate = store.get_profile(parts[1])
+            if not candidate.enabled: raise ValueError("профиль отключён")
+            provider = service.router.get_provider(candidate.provider_id)
+            if provider is None or not provider.is_available(): raise RuntimeError("Ollama недоступен")
+            is_model_available = getattr(provider, "is_model_available", None)
+            if not callable(is_model_available) or not is_model_available(candidate.model_id): raise RuntimeError(f"модель {candidate.model_id} недоступна")
+            store.set_active_profile(candidate.profile_id)
+            output_fn(f"Переключено на {candidate.profile_id} — {candidate.model_id}.")
+        except (KeyError, OSError, ValueError, RuntimeError) as error:
+            output_fn(f"Не удалось переключиться: {error}. Профиль {old.profile_id} не изменён.")
+        return
+    output_fn("Команды: model list, model current, model use <profile>.")
 
 
 def _run_commitments_command(command: str, *, service: ConversationService, output_fn: Callable[[str], None]) -> None:

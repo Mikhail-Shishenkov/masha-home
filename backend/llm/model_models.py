@@ -56,6 +56,8 @@ class ModelRequest(StrictModel):
     privacy_scope: PrivacyScope = PrivacyScope.LOCAL_ONLY
     preferred_provider_id: NonEmptyStr | None = None
     timeout_seconds: PositiveSeconds = 30.0
+    execution_model_id: NonEmptyStr | None = None
+    execution_think: bool = False
 
     @model_validator(mode="after")
     def validate_messages(self):
@@ -71,4 +73,3 @@ class ModelResponse(StrictModel):
     finish_reason: FinishReason
     capabilities: ModelCapabilities
     is_local: bool
-

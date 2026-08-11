@@ -1,5 +1,6 @@
 from pathlib import Path
 import ast
+import shutil
 
 from backend.conversation.cli import build_service, run_cli
 from backend.conversation.conversation_service import ConversationUnavailableError
@@ -49,14 +50,20 @@ def test_cli_presents_controlled_local_model_failure():
     assert any("local Ollama is not responding" in line for line in output)
 
 
-def test_cli_assembles_only_the_local_primary_provider():
-    project_root = Path(__file__).resolve().parents[1]
+def test_cli_assembles_local_provider_and_primary_execution_profile(tmp_path):
+    source_root = Path(__file__).resolve().parents[1]
+    project_root = tmp_path / "project"
+    shutil.copytree(source_root / "identity", project_root / "identity")
+    MemorySqliteRepository(project_root / "local-data" / "memory" / "masha.sqlite3").import_json(
+        source_root / "tests" / "fixtures" / "test_memory.json"
+    )
     service = build_service(project_root=project_root)
 
     provider = service.router._providers["ollama-local"]
     assert provider.is_local is True
-    assert provider.model_id == "qwen3.5:9b"
+    assert provider.model_id == ""
     assert provider.endpoint == "http://127.0.0.1:11434"
+    assert service.model_profiles.get_active_profile().model_id == "qwen3.5:9b"
     assert isinstance(service.memory_retriever.memory_store, MemorySqliteRepository)
 
 
