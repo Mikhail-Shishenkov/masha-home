@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' qrc:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Masha Home</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="home" aria-label="Дом Маши">
+    <div class="scene-stack" aria-hidden="true">
+      <img class="scene is-active" src="assets/canonical-master.png" alt="">
+      <img class="scene" src="assets/canonical-master.png" alt="">
+    </div>
+    <div class="ambient" aria-hidden="true"></div>
+    <section class="conversation-surface" id="conversation-surface" aria-label="Разговор с Машей">
+      <header class="surface-header">
+        <p class="eyebrow">между нами</p>
+        <div class="surface-actions">
+          <button class="recent-conversations-toggle" id="recent-conversations-toggle" type="button" disabled>Разговоры</button>
+          <button class="new-conversation" id="new-conversation" type="button" disabled>Новый разговор</button>
+        </div>
+      </header>
+      <h1 id="conversation-title">Я здесь.</h1>
+      <p class="surface-status" id="surface-status">Подключаю локальный разговор…</p>
+      <ol class="transcript" id="transcript" aria-live="polite"></ol>
+      <form class="composer" id="composer">
+        <label class="sr-only" for="message-input">Сообщение Маше</label>
+        <textarea id="message-input" rows="2" maxlength="4000" placeholder="Напиши Маше…" disabled></textarea>
+        <button class="send" id="send-button" type="submit" disabled>Отправить</button>
+      </form>
+      <aside class="recent-conversations" id="recent-conversations" aria-label="Недавние разговоры" hidden>
+        <p class="recent-heading">Недавние разговоры</p>
+        <ol class="recent-list" id="recent-list"></ol>
+      </aside>
+    </section>
+    <p class="orientation">Дом Маши · локально</p>
+    <p class="runtime-truth" id="runtime-truth" aria-live="polite">Локальный режим</p>
+  </main>
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  <script src="scene-map.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

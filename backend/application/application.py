@@ -5,6 +5,7 @@ from __future__ import annotations
 from .contracts import (
     ConversationTurnResult,
     ConversationView,
+    ConversationSummaryView,
     MashaStatusView,
     ModelProfileView,
     ModelSwitchResult,
@@ -13,6 +14,7 @@ from .contracts import (
     VisualAssetView,
 )
 from .conversation import ConversationApplicationService
+from .home_snapshot import HomeSnapshotService, HomeSnapshotView
 from .model_settings import ModelSettingsService
 from .status import MashaStatusService
 from .visual_assets import VisualIdentityResolver
@@ -28,17 +30,26 @@ class MashaApplication:
         status: MashaStatusService,
         visuals: VisualIdentityResolver,
         models: ModelSettingsService,
+        home_snapshot: HomeSnapshotService,
     ):
         self._conversation = conversation
         self._status = status
         self._visuals = visuals
         self._models = models
+        self._home_snapshot = home_snapshot
 
     def send_message(self, content: str, *, project_id: str, conversation_id: str | None = None) -> ConversationTurnResult:
         return self._conversation.send_message(content, project_id=project_id, conversation_id=conversation_id)
 
     def conversation(self, conversation_id: str, *, limit: int = 16) -> ConversationView:
         return self._conversation.conversation(conversation_id, limit=limit)
+
+    def latest_conversation(self, *, limit: int = 16) -> ConversationView | None:
+        """Read the transcript with the latest actual interaction, if one exists."""
+        return self._conversation.latest_conversation(limit=limit)
+
+    def recent_conversations(self, *, limit: int = 8) -> tuple[ConversationSummaryView, ...]:
+        return self._conversation.recent_conversations(limit=limit)
 
     def status(self) -> MashaStatusView:
         return self._status.snapshot()
@@ -63,3 +74,11 @@ class MashaApplication:
 
     def use_model(self, profile_id: str) -> ModelSwitchResult:
         return self._models.use(profile_id)
+
+    def home_snapshot(self) -> HomeSnapshotView:
+        """Return the one-way, renderer-safe current Home projection."""
+        return self._home_snapshot.snapshot()
+
+    def open_home_session(self):
+        """Create a deterministic presentation session for one local Home window."""
+        return self._home_snapshot.open_session()

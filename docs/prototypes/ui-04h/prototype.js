@@ -19,6 +19,8 @@ function render() {
   root.dataset.safety = view.safety;
   root.dataset.phase = view.decisionState;
   root.dataset.focus = view.focus;
+  root.dataset.expression = view.presence.expression;
+  root.dataset.attention = view.presence.attention;
   root.classList.toggle("is-private", view.privacy);
   safetyButton.setAttribute("aria-pressed", String(view.safety === "stopped"));
   safetyButton.setAttribute("aria-label", view.safety === "stopped" ? "Возобновить автономную активность" : "Остановить автономную активность");

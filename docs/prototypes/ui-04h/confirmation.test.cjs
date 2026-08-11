@@ -22,10 +22,27 @@ test("conversation composer appends a bounded local message and waits for a fixt
   const view = core.project(state);
   assert.equal(view.conversation.messages.at(-1).content, "Давай продолжим.");
   assert.equal(view.conversation.assistantStatus, "thinking");
+  assert.equal(view.sceneId, "scene.thinking");
   assert.equal(view.decisionVisible, false);
-  assert.equal(view.sceneId, "scene.conversation");
   assert.equal(core.reduce(state, { type: "SEND_DRAFT", content: "Ещё одно" }), state);
   assert.equal(core.project(core.reduce(state, { type: "SIMULATED_ASSISTANT_RESPONSE" })).conversation.assistantStatus, "ready");
+});
+
+test("approved thinking and existing activity assets are selected by deterministic presentation state", () => {
+  const thinking = core.project(core.reduce(core.initialState(), { type: "SEND_DRAFT", content: "Подумай." }));
+  const activity = core.project(core.reduce(core.initialState(), { type: "OPEN_ACTIVITY" }));
+  assert.equal(thinking.sceneId, "scene.thinking");
+  assert.equal(activity.sceneId, "scene.activity");
+  assert.equal(thinking.identityId, activity.identityId);
+  assert.deepEqual(thinking.presence, { expression: "thoughtful", attention: "inward" });
+  assert.deepEqual(activity.presence, { expression: "focused", attention: "surface" });
+});
+
+test("presence axes are closed and safety does not delegate expression to a model", () => {
+  assert.deepEqual(core.presenceAxes.attention, ["none", "user", "surface", "inward"]);
+  assert.ok(core.presenceAxes.expressions.includes("firm"));
+  const stopped = core.project(core.reduce(core.initialState(), { type: "EMERGENCY_STOP" }));
+  assert.deepEqual(stopped.presence, { expression: "calm", attention: "none" });
 });
 
 test("confirmation is bounded to its preview and does not expose a domain mutation", () => {

@@ -58,6 +58,13 @@ class ConversationView(UiContract):
     messages: tuple[MessageView, ...]
 
 
+class ConversationSummaryView(UiContract):
+    conversation_id: str
+    created_at: datetime
+    last_interaction_at: datetime
+    preview: str = Field(min_length=1, max_length=160)
+
+
 class ConversationTurnResult(UiContract):
     conversation_id: str | None
     user_message: MessageView

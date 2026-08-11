@@ -18,6 +18,7 @@ from backend.application.contracts import ModelAvailabilityCode, ModelSwitchStat
 from backend.llm.fake_provider import FakeProvider
 from backend.llm.model_router import ModelRouter
 from backend.memory.sqlite_repository import MemorySqliteRepository
+from backend.presentation import PresenceActivity
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -239,6 +240,59 @@ def test_read_views_and_ordinary_chat_do_not_mutate_long_term_memory(tmp_path):
     application.send_message("Обычный разговор", project_id=PROJECT_ID)
 
     assert repository.read_document() == before
+
+
+def test_home_snapshot_is_a_read_only_application_owned_projection(tmp_path):
+    root, _, application = _application(tmp_path)
+    repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")
+    before = repository.read_document()
+
+    snapshot = application.home_snapshot()
+
+    assert snapshot.status.active_profile_id == "primary"
+    assert snapshot.active_model.profile_id == "primary"
+    assert snapshot.presentation.overlays.active_profile_id == "primary"
+    assert snapshot.presentation.presence.visual_identity.asset_ids == tuple(
+        asset.asset_id for asset in snapshot.visual_assets
+    )
+    assert snapshot.composition.source_revision == snapshot.presentation.revision
+    assert snapshot.composition.primary_surface_id is None
+    assert "sqlite" not in snapshot.model_dump_json().casefold()
+    assert repository.read_document() == before
+
+
+def test_home_presentation_session_is_deterministic_and_has_no_domain_mutation(tmp_path):
+    root, _, application = _application(tmp_path)
+    repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")
+    before = repository.read_document()
+    session = application.open_home_session()
+
+    opened = session.opened()
+    listening = session.user_sent()
+    thinking = session.assistant_thinking()
+    responded = session.assistant_responded()
+
+    assert opened.presentation.opened is True
+    assert opened.presentation.active_surface_id == "home.conversation"
+    assert listening.presentation.presence.activity is PresenceActivity.WAITING
+    assert thinking.presentation.presence.activity is PresenceActivity.PROCESSING
+    assert responded.presentation.presence.activity is PresenceActivity.SPEAKING
+    assert responded.composition.primary_surface_id == "home.conversation"
+    assert repository.read_document() == before
+
+
+def test_recent_conversation_summaries_use_existing_history_order(tmp_path):
+    _, _, application = _application(tmp_path)
+    first = application.send_message("Первый разговор", project_id=PROJECT_ID)
+    second = application.send_message("Второй разговор", project_id=PROJECT_ID)
+
+    recent = application.recent_conversations()
+
+    assert [item.conversation_id for item in recent[:2]] == [
+        second.conversation_id,
+        first.conversation_id,
+    ]
+    assert recent[0].preview == "Привет, Миша."
 
 
 def test_human_catalogs_do_not_replace_machine_codes():

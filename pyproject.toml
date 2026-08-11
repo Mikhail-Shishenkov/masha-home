@@ -17,10 +17,16 @@ dependencies = [
 dev = [
     "pytest>=8,<9",
 ]
+ui = [
+    "PySide6>=6.8,<6.9",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["backend*"]
+
+[tool.setuptools.package-data]
+"backend.ui" = ["frontend/*", "frontend/assets/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

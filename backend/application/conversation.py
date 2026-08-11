@@ -12,6 +12,7 @@ from .contracts import (
     ApplicationErrorCode,
     ConversationTurnResult,
     ConversationTurnStatus,
+    ConversationSummaryView,
     ConversationView,
     MessageView,
 )
@@ -34,6 +35,35 @@ class ConversationApplicationService:
             created_at=conversation.created_at,
             messages=tuple(self._message(item) for item in messages),
         )
+
+    def latest_conversation(self, *, limit: int = 16) -> ConversationView | None:
+        """Return the conversation owning the latest actual message, if any."""
+        latest_message = self._conversation.history.latest_message()
+        if latest_message is None:
+            return None
+        return self.conversation(latest_message.conversation_id, limit=limit)
+
+    def recent_conversations(self, *, limit: int = 8) -> tuple[ConversationSummaryView, ...]:
+        """Return short human-readable summaries without duplicating history."""
+        summaries: list[ConversationSummaryView] = []
+        for conversation in self._conversation.history.recent(limit=limit):
+            messages = self._conversation.history.messages(conversation.id, limit=1)
+            if messages:
+                latest = messages[-1]
+                preview = self._preview(latest.content)
+                last_interaction_at = latest.created_at
+            else:
+                preview = "Новый разговор"
+                last_interaction_at = conversation.created_at
+            summaries.append(
+                ConversationSummaryView(
+                    conversation_id=conversation.id,
+                    created_at=conversation.created_at,
+                    last_interaction_at=last_interaction_at,
+                    preview=preview,
+                )
+            )
+        return tuple(summaries)
 
     def send_message(
         self,
@@ -168,3 +198,8 @@ class ConversationApplicationService:
             created_at=message.created_at,
             persisted=True,
         )
+
+    @staticmethod
+    def _preview(content: str) -> str:
+        normalized = " ".join(content.split())
+        return normalized if len(normalized) <= 157 else f"{normalized[:156].rstrip()}…"

@@ -43,6 +43,28 @@ class ConversationStore:
             key=lambda message: (message.created_at, message.id),
         )
 
+    def recent(self, *, limit: int = 8) -> tuple[Conversation, ...]:
+        """Return conversations ordered by the latest actual interaction."""
+        if limit < 1:
+            return ()
+        latest_by_conversation: dict[str, datetime] = {}
+        for raw in self._data["messages"]:
+            message = ConversationMessage.model_validate(raw)
+            previous = latest_by_conversation.get(message.conversation_id)
+            if previous is None or message.created_at > previous:
+                latest_by_conversation[message.conversation_id] = message.created_at
+        conversations = [Conversation.model_validate(raw) for raw in self._data["conversations"]]
+        return tuple(
+            sorted(
+                conversations,
+                key=lambda conversation: (
+                    latest_by_conversation.get(conversation.id, conversation.created_at),
+                    conversation.id,
+                ),
+                reverse=True,
+            )[:limit]
+        )
+
     def append(self, conversation_id: str, role: ConversationRole, content: str) -> ConversationMessage:
         self.get(conversation_id)
         message = ConversationMessage(

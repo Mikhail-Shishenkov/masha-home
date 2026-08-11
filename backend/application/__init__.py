@@ -2,12 +2,14 @@
 
 from .application import MashaApplication
 from .composition import build_masha_application
+from .home_snapshot import HomeSnapshotView
 from .contracts import (
     ApplicationBoundaryError,
     ApplicationErrorCode,
     ConversationTurnResult,
     ConversationTurnStatus,
     ConversationView,
+    ConversationSummaryView,
     MashaStatusView,
     MessageView,
     ModelAvailabilityCode,
@@ -26,7 +28,9 @@ __all__ = (
     "ConversationTurnResult",
     "ConversationTurnStatus",
     "ConversationView",
+    "ConversationSummaryView",
     "MashaApplication",
+    "HomeSnapshotView",
     "MashaStatusView",
     "MessageView",
     "ModelAvailabilityCode",

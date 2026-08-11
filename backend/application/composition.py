@@ -34,6 +34,7 @@ from backend.temporal.proactive_interaction import ProactiveInteractionStore
 
 from .application import MashaApplication
 from .conversation import ConversationApplicationService
+from .home_snapshot import HomeSnapshotService
 from .model_settings import ModelSettingsService
 from .status import MashaStatusService
 from .visual_assets import VisualIdentityResolver
@@ -99,11 +100,13 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
         permissions=permissions_snapshot,
         proactive_interactions=interactions,
     )
+    visuals = VisualIdentityResolver(project_root=core.project_root, identity_kernel=core.identity)
     return MashaApplication(
         conversation=application_conversation,
         status=status,
-        visuals=VisualIdentityResolver(project_root=core.project_root, identity_kernel=core.identity),
+        visuals=visuals,
         models=models,
+        home_snapshot=HomeSnapshotService(status=status, models=models, visuals=visuals),
     )
 
 

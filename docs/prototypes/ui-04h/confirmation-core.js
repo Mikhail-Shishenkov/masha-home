@@ -9,6 +9,12 @@
     "masha.visual.identity": Object.freeze({ kind: "identity", version: "canonical-v4" }),
     "scene.conversation": Object.freeze({ kind: "scene", source: "../../assets/ui-04g/conversation-candidate.png" }),
     "scene.idle": Object.freeze({ kind: "scene", source: "../../assets/ui-04g/canonical-master.png" }),
+    "scene.thinking": Object.freeze({ kind: "scene", source: "../../assets/ui-04i/thinking-candidate.png" }),
+    "scene.activity": Object.freeze({ kind: "scene", source: "../../assets/ui-04g/activity-candidate.png" }),
+  });
+  const presenceAxes = Object.freeze({
+    expressions: Object.freeze(["calm", "warm", "attentive", "thoughtful", "focused", "amused", "tender", "skeptical", "firm", "concerned", "pleased"]),
+    attention: Object.freeze(["none", "user", "surface", "inward"]),
   });
 
   function initialState() {
@@ -110,15 +116,18 @@
     const proactiveVisible = state.safety === "normal" && state.proactiveStatus === "pending" && state.activeSurface === "checkin";
     const activityVisible = state.activityStatus !== "idle" && state.activeSurface === "activity";
     const conversationVisible = state.activeSurface === "conversation" || state.safety === "stopped";
+    const sceneId = sceneForState(state, activityVisible);
+    const presence = presenceForState(state, { decisionVisible, proactiveVisible, activityVisible });
     return freeze({
       identityId: "masha.visual.identity",
-      sceneId: "scene.conversation",
-      sceneSource: registry["scene.conversation"].source,
+      sceneId,
+      sceneSource: registry[sceneId].source,
       decisionVisible,
       activityVisible,
       proactiveVisible,
       conversationVisible,
       focus: conversationVisible ? "conversation" : state.activeSurface,
+      presence: freeze(presence),
       decisionState: state.phase,
       safety: state.safety,
       privacy: state.privacy,
@@ -147,6 +156,22 @@
     });
   }
 
+  function sceneForState(state, activityVisible) {
+    if (activityVisible) return "scene.activity";
+    if (state.assistantStatus === "thinking" && state.activeSurface === "conversation") return "scene.thinking";
+    if (state.activeSurface === "conversation") return "scene.conversation";
+    return "scene.idle";
+  }
+
+  function presenceForState(state, visible) {
+    if (state.safety === "stopped") return { expression: "calm", attention: "none" };
+    if (visible.activityVisible) return { expression: "focused", attention: "surface" };
+    if (visible.decisionVisible) return { expression: "attentive", attention: "surface" };
+    if (visible.proactiveVisible) return { expression: "warm", attention: "user" };
+    if (state.assistantStatus === "thinking" && state.activeSurface === "conversation") return { expression: "thoughtful", attention: "inward" };
+    return { expression: "warm", attention: "user" };
+  }
+
   function activityPresentation(status, step) {
     const steps = ["собираю контекст", "сверяю детали", "готовлю результат"];
     if (status === "completed") return { status, eyebrow: "готово", title: "Можно двигаться дальше.", detail: "Результат подготовлен. Он не был отправлен или сохранён.", actionLabel: "Вернуться к разговору", step: 3, steps };
@@ -155,5 +180,5 @@
   }
 
   function freeze(value) { return Object.freeze(value); }
-  return Object.freeze({ registry, initialState, reduce, project });
+  return Object.freeze({ registry, presenceAxes, initialState, reduce, project });
 });
