@@ -674,3 +674,21 @@ Project lifecycle не вызывает автоматически:
 - embedding и выбор vector storage;
 - реализация SQLite schema;
 - голосовые и визуальные генеративные модели.
+
+## Runtime note — Stage 15 Masha Reflection
+
+Stage 15 не меняет Memory v0.4 schema. Он активирует уже определённые
+`MashaReflection`, reflection `MemoryCandidate` и
+`reconsiders_reflection_id` через существующий SQLite repository.
+
+- Reflection — субъективный inference Маши, не Fact о пользователе.
+- Evidence текущего разговора и operating scope хранятся в candidate payload;
+  принятая reflection сохраняет ссылки на релевантные memory records.
+- Self-reflection может быть system-reviewed только после explicit intent,
+  deterministic validation, deduplication и confidence gate.
+- Shared reflection требует явного user review.
+- Reconsideration создаёт новую запись и не мутирует прежнюю.
+- General retrieval не обязан передавать reflections модели; production
+  conversation использует отдельный bounded perspective lens.
+- Help Offer является metadata принятого candidate и не создаёт новую Memory
+  entity, tool permission или persistent action.

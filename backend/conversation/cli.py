@@ -25,6 +25,7 @@ from backend.memory.confirmed_memory_service import ConfirmedMemoryService
 from backend.memory.memory_management import MemoryManagementService, MemoryMutationOperation
 from backend.memory.memory_presentation import detail, history, list_views, preview, summary
 from backend.memory.shared_continuity import SharedContinuityService
+from backend.memory.reflection import ReflectionService, ReflectionUnavailableError
 from backend.temporal.temporal_engine import MOSCOW, TemporalEngine
 from backend.temporal.temporal_runtime import TemporalRuntime
 from backend.temporal.proactive import ProactiveDecisionEngine, ProactivePolicy, ProactivePolicyStore
@@ -36,6 +37,7 @@ from backend.runtime.daily_runtime import DailyRuntime, DailyRuntimeJournal
 from .conversation_service import ConversationService, ConversationUnavailableError
 from .conversation_store import ConversationStore
 from .memory_intent import MemoryIntentHandler, MemoryProposalStore, ProposalStatus
+from .reflection_intent import ReflectionIntentHandler
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -53,11 +55,19 @@ def build_service(*, project_root: Path = PROJECT_ROOT) -> ConversationService:
     memory_management = MemoryManagementService(memory_store)
     shared_continuity = SharedContinuityService(memory_store)
     profiles = ModelProfileStore(project_root / "local-data" / "config" / "models.json")
+    router = ModelRouter([OllamaProvider()])
+    reflection_service = ReflectionService(
+        repository=memory_store,
+        identity_kernel=identity_kernel,
+        memory_retriever=MemoryRetriever(memory_store),
+        router=router,
+        model_profiles=profiles,
+    )
     return ConversationService(
         identity_kernel=identity_kernel,
         memory_retriever=MemoryRetriever(memory_store),
         working_memory=WorkingMemory(max_items=6),
-        router=ModelRouter([OllamaProvider()]),
+        router=router,
         history=ConversationStore(project_root / "local-data" / "conversations" / "history.json"),
         memory_intent_handler=MemoryIntentHandler(
             proposal_store=MemoryProposalStore(project_root / "local-data" / "memory-proposals.json"),
@@ -68,6 +78,8 @@ def build_service(*, project_root: Path = PROJECT_ROOT) -> ConversationService:
         model_profiles=profiles,
         proactive_interactions=ProactiveInteractionStore(memory_store),
         shared_continuity=shared_continuity,
+        reflection_intent_handler=ReflectionIntentHandler(reflection_service),
+        reflection_service=reflection_service,
     )
 
 
@@ -124,6 +136,24 @@ def run_cli(
                 output_fn=output_fn,
             )
             continue
+        if user_message.startswith("reflections"):
+            updated_id = _run_reflections_command(
+                user_message[11:].strip(),
+                service=service,
+                conversation_id=active_id,
+                project_id=project_id,
+                output_fn=output_fn,
+            )
+            if updated_id is not None:
+                active_id = updated_id
+            continue
+        if user_message.startswith("help"):
+            _run_help_command(
+                user_message[4:].strip(),
+                service=service,
+                output_fn=output_fn,
+            )
+            continue
         if user_message.startswith("memory ") and memory_management is not None and proposal_store is not None:
             _run_memory_command(
                 user_message[7:], memory_management=memory_management,
@@ -141,6 +171,162 @@ def run_cli(
             continue
         output_fn(f"Conversation id: {active_id}")
         output_fn(f"Masha> {response}")
+
+
+def _run_reflections_command(
+    command: str,
+    *,
+    service: ConversationService,
+    conversation_id: str | None,
+    project_id: str,
+    output_fn: Callable[[str], None],
+) -> str | None:
+    reflections = service.reflection_service
+    if reflections is None:
+        output_fn("Рефлексии сейчас недоступны.")
+        return None
+    raw = "--raw" in command
+    clean = command.replace("--raw", "").strip()
+    parts = clean.split(maxsplit=2)
+    action = parts[0] if parts else "list"
+    views = reflections.reflections()
+    if action in {"list", "show"}:
+        if raw:
+            output_fn(json.dumps([view.model_dump(mode="json") for view in views], ensure_ascii=False))
+            return None
+        if not views:
+            output_fn("У Маши пока нет сохранённых рефлексий.")
+            return None
+        if action == "show" and len(parts) > 1:
+            try:
+                view = views[int(parts[1]) - 1]
+            except (ValueError, IndexError):
+                output_fn("Выбери номер из reflections list.")
+                return None
+            reconsidered = "нет" if view.reflection.reconsiders_reflection_id is None else "да, это пересмотр прежней мысли"
+            output_fn(
+                "Рефлексия Маши\n"
+                f"«{view.reflection.text}»\n\n"
+                f"Смысл: {view.reflection.meaning}\n"
+                f"Область: {view.scope.value}\n"
+                f"Уверенность: {view.reflection.confidence:.0%}\n"
+                f"Пересмотр: {reconsidered}\n"
+                f"Оснований в памяти: {len(view.reflection.related_memory_ids)}"
+            )
+            return None
+        output_fn(
+            "Мысли Маши:\n\n"
+            + "\n\n".join(
+                f"{index}. {view.reflection.text}\n   {view.scope.value} · уверенность {view.reflection.confidence:.0%}"
+                for index, view in enumerate(views, 1)
+            )
+        )
+        return None
+    if action == "pending":
+        pending = reflections.pending()
+        if raw:
+            output_fn(json.dumps([item.model_dump(mode="json") for item in pending], ensure_ascii=False))
+        elif not pending:
+            output_fn("Непринятых рефлексий сейчас нет.")
+        else:
+            output_fn(
+                "Ожидают решения:\n\n"
+                + "\n\n".join(
+                    f"{index}. {item.proposed_payload['reflection']['text']}\n"
+                    f"   {item.proposed_payload['scope']} · уверенность {item.confidence:.0%}"
+                    for index, item in enumerate(pending, 1)
+                )
+            )
+        return None
+    if action in {"adopt", "reject"} and len(parts) > 1:
+        pending = reflections.pending()
+        try:
+            candidate = pending[int(parts[1]) - 1]
+        except (ValueError, IndexError):
+            output_fn("Выбери номер из reflections pending.")
+            return None
+        if action == "adopt":
+            reflection = reflections.adopt(candidate.id)
+            output_fn(f"Принято. Маша сохранила мысль:\n«{reflection.text}»")
+        else:
+            reflections.reject(candidate.id)
+            output_fn("Хорошо. Эта интерпретация не сохранена.")
+        return None
+    if action == "reconsider" and len(parts) > 2:
+        try:
+            view = views[int(parts[1]) - 1]
+        except (ValueError, IndexError):
+            output_fn("Выбери номер из reflections list.")
+            return None
+        prompt = f"Маша, пересмотри рефлексию о {view.reflection.id}: {parts[2]}"
+        try:
+            new_id, response = service.send(
+                prompt,
+                project_id=project_id,
+                conversation_id=conversation_id,
+            )
+        except ConversationUnavailableError:
+            output_fn("Локальная модель сейчас недоступна.")
+            return None
+        output_fn(response)
+        return new_id
+    output_fn(
+        "Команды: reflections list, pending, show <номер>, adopt <номер>, "
+        "reject <номер>, reconsider <номер> <новый контекст>. Добавь --raw для диагностики."
+    )
+    return None
+
+
+def _run_help_command(
+    command: str,
+    *,
+    service: ConversationService,
+    output_fn: Callable[[str], None],
+) -> None:
+    reflections = service.reflection_service
+    if reflections is None:
+        output_fn("Предложения помощи сейчас недоступны.")
+        return
+    raw = "--raw" in command
+    parts = command.replace("--raw", "").strip().split()
+    action = parts[0] if parts else "pending"
+    offers = reflections.pending_help()
+    if action == "pending":
+        if raw:
+            output_fn(json.dumps([item.model_dump(mode="json") for item in offers], ensure_ascii=False))
+        elif not offers:
+            output_fn("Ожидающих предложений помощи нет.")
+        else:
+            output_fn(
+                "Маша предлагает:\n\n"
+                + "\n\n".join(
+                    f"{index}. {item.proposed_payload['help_offer']['offer']}\n"
+                    f"   Зачем: {item.proposed_payload['help_offer']['expected_benefit']}"
+                    for index, item in enumerate(offers, 1)
+                )
+            )
+        return
+    if action in {"accept", "reject"} and len(parts) > 1:
+        try:
+            candidate = offers[int(parts[1]) - 1]
+        except (ValueError, IndexError):
+            output_fn("Выбери номер из help pending.")
+            return
+        if action == "reject":
+            reflections.reject_help(candidate.id)
+            output_fn("Хорошо, не навязываюсь.")
+            return
+        conversation_id = candidate.proposed_payload["conversation_id"]
+        try:
+            messages = service.history.messages(conversation_id, limit=service.history_limit)
+        except KeyError:
+            messages = ()
+        try:
+            output_fn(reflections.accept_help(candidate.id, conversation_messages=messages))
+        except ReflectionUnavailableError:
+            output_fn("Локальная модель сейчас недоступна. Предложение осталось принятым.")
+        return
+    output_fn("Команды: help pending, help accept <номер>, help reject <номер>. Добавь --raw для диагностики.")
 
 
 def _run_continuity_command(

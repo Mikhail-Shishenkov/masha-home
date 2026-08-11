@@ -231,6 +231,29 @@ In normal conversation use explicit phrases such as `Маша, сохрани к
 Normal chat never creates shared memory automatically. Add `--raw` only for
 local diagnostics; it may include internal IDs and quarantined legacy payloads.
 
+## Stage 15 Masha Perspective & Honest Help
+
+Use explicit conversation phrases:
+
+```text
+Маша, подумай о себе: <тема>
+Маша, подумай о нас: <тема>
+прими рефлексию
+отклони рефлексию
+Маша, пересмотри рефлексию о <тема>: <новый контекст>
+Маша, это помогло: <что именно>
+Маша, это не помогло: <что именно>
+давай, помоги
+не надо помогать
+```
+
+Inspection commands are `reflections list|pending|show|adopt|reject|reconsider`
+and `help pending|accept|reject`. Normal output hides internal IDs; use `--raw`
+only for local diagnostics. Reflection generation requires the active local
+profile to declare `structured_output`; `primary` supports it and no fallback
+to another profile occurs. Ordinary chat neither creates reflections nor
+injects them into general context.
+
 ## Конфигурация
 
 `.env.example` содержит только безопасные локальные значения и зарезервированные ключи. Текущий прототип ещё не загружает `.env` автоматически.

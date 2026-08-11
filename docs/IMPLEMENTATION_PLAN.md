@@ -477,3 +477,17 @@ to explicit proposals, confirmation, audit, bounded retrieval and a human-first
 open threads remain separate from Commitments and proactive permission. No new
 SQLite schema, second memory system, automatic extraction or model-owned
 relationship state was introduced.
+
+### STAGE-15. Masha Perspective & Honest Help
+
+Статус: **DONE (15.1, bounded 15.2, 15.3)**
+
+Explicit, evidence-linked `MashaReflection` generation is connected to the
+existing MemoryCandidate/SQLite/audit contracts. Self-reflections with
+sufficient confidence may be adopted as Masha's subjective perspective;
+shared interpretations require Misha's explicit confirmation. Reconsideration
+adds a linked immutable view instead of rewriting history. General conversation
+does not automatically create or receive reflections. An optional Help Offer
+can produce conversation-only help only after explicit acceptance. No tools,
+background diary, affective inference, Identity mutation, proactive influence,
+external API or model fallback was added.

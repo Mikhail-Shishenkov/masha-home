@@ -18,6 +18,7 @@ RetrievalRecordType = Literal[
     "decision",
     "commitment",
     "episode",
+    "reflection",
     "relationship_memory",
     "continuity_state",
 ]

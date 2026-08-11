@@ -448,6 +448,36 @@ cannot evolve Identity or become a second memory subsystem.
 является `Commitment`, а её наличие не разрешает proactive contact. Повреждённые
 legacy-фрагменты исключаются из обычного retrieval без изменения исходной БД.
 
+### DEC-060. Masha Reflection is subjective, evidence-linked perspective
+
+Статус: **Принято и реализовано (Stage 15.1)**
+
+`MashaReflection` не является Fact о Мише, диагнозом, выполненным действием или
+частью защищённой Identity. Она создаётся только явным reflection intent,
+содержит bounded provenance и confidence и проходит deterministic validation и
+deduplication. Достаточно уверенную self-reflection Маша может принять как свою;
+shared reflection требует подтверждения Миши. Органичный мат не фильтруется как
+ошибка сам по себе — живость не заменяется корпоративной стерильностью.
+
+### DEC-061. Reconsideration appends history; general context does not absorb it
+
+Статус: **Принято и реализовано частично (Stage 15.2)**
+
+Пересмотр создаёт новую immutable reflection с `reconsiders_reflection_id`, не
+переписывая прежнюю. Сохранённые рефлексии передаются модели только через
+bounded perspective lens при явном вопросе о мнении Маши. Они не подмешиваются
+автоматически в каждый общий ответ и не влияют на proactive policy.
+
+### DEC-062. Honest Help is an accepted offer, not autonomous action
+
+Статус: **Принято и реализовано (Stage 15.3)**
+
+Help Offer принадлежит принятой рефлексии и ограничен помощью внутри разговора.
+Только явное принятие пользователя разрешает одну локальную formulation через
+active ModelProfile. LLM не может превратить offer в tool call, persistent
+mutation или собственное разрешение действовать. Отклонение и доставка
+идемпотентно фиксируются существующим audit, без новой storage subsystem.
+
 ### DEC-047. Local model profiles are operating configuration
 
 Статус: **Принято и реализовано (LLM-03)**

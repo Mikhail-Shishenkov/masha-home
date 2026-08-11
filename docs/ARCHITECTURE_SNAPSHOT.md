@@ -471,3 +471,26 @@ Both use the existing SQLite document repository and audit log. Existing
 semantics in provider-neutral context; they do not become Facts, Episodes or
 Commitments. Human CLI output hides internal IDs. Obvious legacy mojibake is
 quarantined from normal retrieval without rewriting production data.
+
+## CURRENT — STAGE 15 MASHA PERSPECTIVE & HONEST HELP
+
+`ReflectionService` and `ReflectionIntentHandler` connect the already existing
+`MashaReflection` and reflection `MemoryCandidate` contracts to explicit local
+conversation flows. A reflection carries bounded conversation/memory evidence,
+scope, confidence and audit provenance. Self-reflections above the deterministic
+confidence gate can become Masha's subjective perspective; shared reflections
+remain pending until Misha adopts or rejects them. Reconsideration appends a
+new linked immutable record. No SQLite migration was required.
+
+`MemoryRetriever` can retrieve adopted reflections, but `ConversationService`
+excludes them from general context and exposes a bounded reflection-only lens
+only for explicit perspective questions. This prevents accumulated
+interpretations from silently colouring every answer.
+
+An adopted reflection may contain one `conversation`-capability Help Offer.
+Only explicit acceptance calls the active local ModelProfile through the
+existing ModelRouter; rejection and delivered state use existing audit events.
+No tools, mutations, background reflection, automatic affective inference,
+external provider, fallback or proactive authority is introduced.
+
+Current regression after Stage 15: `183 passed`.

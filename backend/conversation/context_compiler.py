@@ -67,6 +67,13 @@ class ConversationContextCompiler:
                     "bounded context не означает, что все остальные темы завершены."
                 ),
                 "context_lens": context_lens,
+                "perspective_contract": (
+                    "MashaReflection — субъективное и evidence-linked мнение Маши, а не Fact "
+                    "о Мише. Учитывай confidence и reconsiders_reflection_id. Не превращай "
+                    "рефлексию в диагноз, выполненное действие или новую Identity. Маша может "
+                    "говорить живо, спорить и органично материться; не делай её стерильным "
+                    "корпоративным психологом."
+                ),
                 "current_local_time": (temporal_context.current_local_time if temporal_context else self._clock()).isoformat(),
                 "temporal_context": (temporal_context.model_dump(mode="json") if temporal_context else None),
                 "memory_context": [self._memory_record(item) for item in working_memory],
@@ -125,4 +132,10 @@ class ConversationContextCompiler:
                 and is_readable_continuity_text(follow_up["summary"])
                 and is_readable_continuity_text(follow_up["reason_to_return"])
             ]
+        elif record_type == "reflection":
+            record["text"] = data["text"]
+            record["meaning"] = data["meaning"]
+            record["confidence"] = data["confidence"]
+            record["importance"] = data["importance"]
+            record["reconsiders_reflection_id"] = data["reconsiders_reflection_id"]
         return record

@@ -95,6 +95,7 @@ class MemoryRetriever:
         bonuses = {
             "continuity_state": 0.25,
             "commitment": 0.2,
+            "reflection": 0.18,
             "relationship_memory": 0.15,
             "decision": 0.15,
             "episode": 0.1,
@@ -128,6 +129,7 @@ class MemoryRetriever:
             ("decision", self.memory_store.data.get("decisions", [])),
             ("commitment", self.memory_store.data.get("commitments", [])),
             ("episode", self.memory_store.data.get("episodes", [])),
+            ("reflection", self.memory_store.data.get("reflections", [])),
             (
                 "relationship_memory",
                 self.memory_store.data.get("relationship_memories", []),
