@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 from backend.conversation.cli import PROJECT_ROOT
+from backend.runtime.safety import AutonomySafetyStore
 
 from .agent_loop import AgentRunStatus, AgentRunStore, BoundedAgentLoop
 from .autonomy import ActionAutonomyPolicyStore
@@ -22,6 +23,9 @@ def build_service(project_root: Path = PROJECT_ROOT) -> ProjectObserverService:
             registry=build_registry(root),
             policy_store=ActionAutonomyPolicyStore(
                 root / "local-data" / "config" / "action-autonomy.json"
+            ),
+            safety_store=AutonomySafetyStore(
+                root / "local-data" / "config" / "autonomy-safety.json"
             ),
             run_store=AgentRunStore(root / "local-data" / "runtime" / "agent-runs.json"),
             tools=(ProjectObserverTool(root),),

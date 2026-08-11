@@ -191,3 +191,11 @@ rejects it. Package bytes are never downloaded or executed during installation;
 confirmed packages are stored under ignored `local-data/skills/`, not written
 into repository source. Upgrades revoke old grants. UI convenience therefore does not become an
 alternate permission path.
+
+Stage 16.6 adds a single Permissions read model for CLI and the future local UI.
+It shows skill integrity, effective grants, pending install/agent decisions and
+runtime state without exposing technical IDs in normal UX. A separate
+persistent emergency-stop latch overrides both skill execution and proactive
+cycles without deleting their settings. Releasing it never resumes work or
+starts background activity automatically. This operating control remains
+outside Identity, Memory, commitments, conversation history and model profiles.

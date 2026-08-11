@@ -8,6 +8,7 @@ from backend.llm.model_profiles import ModelProfileStore
 from backend.runtime.daily_runtime import DailyCycleReceipt
 from backend.temporal.proactive import ProactivePolicy, ProactivePolicyStore
 from backend.temporal.proactive_daemon import ProactiveDaemon
+from backend.runtime.safety import AutonomySafetyService
 
 
 def test_background_and_manual_modes_are_persistent_and_deterministic(tmp_path, monkeypatch):
@@ -42,6 +43,22 @@ def test_daemon_lock_stop_and_status(tmp_path):
     daemon.request_stop()
     daemon.run(max_cycles=1)
     assert daemon.status()["daemon"] == "stopped"
+
+
+def test_emergency_stop_prevents_daemon_service_build_and_exits(tmp_path, monkeypatch):
+    daemon = ProactiveDaemon(tmp_path, sleep=lambda _: None)
+    AutonomySafetyService(store=daemon.safety_store).engage()
+    builds = []
+    monkeypatch.setattr(
+        "backend.conversation.cli.build_service",
+        lambda project_root: builds.append(project_root),
+    )
+
+    daemon.run(max_cycles=1)
+
+    assert builds == []
+    assert daemon.status()["daemon"] == "stopped"
+    assert daemon.status()["last_reason"] == "emergency_stop_engaged"
 
 
 def test_stale_lock_is_recovered_and_cycle_failure_is_recorded(tmp_path, monkeypatch):

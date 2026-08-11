@@ -7,7 +7,7 @@
 - `16.3 Bounded Agent Loop`: **IMPLEMENTED**
 - `16.4 First Local Skill`: **IMPLEMENTED**
 - `16.5 Skill Installation / Upgrade`: **IMPLEMENTED**
-- `16.6 Permissions UX & Emergency Stop`: **PLANNED**
+- `16.6 Permissions UX & Emergency Stop`: **IMPLEMENTED**
 
 Stage 16.1 создаёт только безопасный фундамент добавляемых навыков. Он не даёт
 Маше инструменты и не меняет действующий conversation contract, согласно
@@ -203,7 +203,7 @@ Human CLI:
 `check` только объясняет решение и всегда пишет, что действие не запускалось.
 В normal UX внутренние grant IDs скрыты.
 
-## Next safe step
+## Planned control surface (implemented in Stage 16.6)
 
 `Stage 16.6 — Permissions UX & Emergency Stop`: provide one clear human control
 surface for installed skills, effective permissions, active/running work and a
@@ -451,3 +451,65 @@ implement the visual UI itself.
 - smoke state was removed and no production install/registry/policy state was created;
 - production SQLite SHA-256 remained
   `55F0C17A3190C97C1FFC60EDF228AEBCE77793E3D08064455F87810181A7548E`.
+
+## Stage 16.6 — Unified Permissions UX and Emergency Stop
+
+Stage 16.6 adds one application-owned read model over the existing Skill
+Registry, Action Autonomy Policy, installation proposals, Agent Run receipts
+and Proactive Policy. It does not copy or replace those stores. This read model
+is suitable for both the current human CLI and a future local UI.
+
+```text
+existing local stores
+  → PermissionControlService.snapshot()
+  → installed skills + integrity
+  → effective / currently blocked grants
+  → pending install and agent confirmations
+  → active agent receipts
+  → proactive mode/runtime state
+  → human CLI or future UI
+```
+
+The separate `AutonomySafetyStore` persists one higher-priority local latch at
+`local-data/config/autonomy-safety.json`. Engaging it does not edit or delete
+grants, proactive settings, Memory, Identity, commitments or history. While it
+is engaged:
+
+- `BoundedAgentLoop` denies new work, rechecks before every step and refuses
+  confirmation as an override;
+- `DailyRuntime` returns a deterministic suppressed receipt without an LLM
+  call or domain mutation;
+- `ProactiveDaemon` wakes within its bounded wait, records the reason and exits;
+- effective grants remain visible but are reported as inactive.
+
+Release only opens the latch. It never enables action/proactive policy, restores
+revoked permissions, resumes a terminal run, starts the daemon or sends a
+queued message. A synchronous Tool Adapter already inside its call cannot be
+forcibly killed safely; the verified current call is the interruption boundary
+and no later step or result callback is allowed.
+
+Human commands:
+
+```powershell
+.\masha.ps1 permissions status
+.\masha.ps1 permissions skills
+.\masha.ps1 permissions grants
+.\masha.ps1 permissions pending
+.\masha.ps1 permissions stop [reason]
+.\masha.ps1 permissions resume
+```
+
+Normal UX hides grant/proposal/plan IDs. `--raw` exposes a deterministic
+UI/debug snapshot. The existing `masha.ps1 stop` remains the narrow daemon stop;
+the global agentic safety control is `permissions stop`.
+
+### Stage 16.6 verification
+
+- targeted safety, permission snapshot, Agent Loop and Daily Runtime regression:
+  `54 passed`;
+- full project regression: `279 passed`;
+- isolated Windows launcher smoke: stop → restart/status → resume → restart/raw;
+- restart persistence and idempotent stop/release;
+- no automatic policy changes or daemon restart;
+- no Identity, Memory, Commitment, Temporal, model-profile or SQLite schema change;
+- no UI, scheduler, new tool, LLM planner, network or external delivery.

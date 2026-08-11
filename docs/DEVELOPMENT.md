@@ -388,6 +388,44 @@ Targeted verification:
 python -m pytest tests/test_skill_installer.py tests/test_skill_registry.py tests/test_action_autonomy.py -q
 ```
 
+## Stage 16.6 Permissions and local emergency stop
+
+Use the unified human view:
+
+```powershell
+.\masha.ps1 permissions status
+.\masha.ps1 permissions skills
+.\masha.ps1 permissions grants
+.\masha.ps1 permissions pending
+```
+
+Engage or release the persistent local safety latch:
+
+```powershell
+.\masha.ps1 permissions stop
+.\masha.ps1 permissions stop "reason for the local stop"
+.\masha.ps1 permissions resume
+```
+
+`permissions stop` blocks new Agent Loop steps and proactive cycles. It does
+not remove grants, disable/edit policies, mutate domain data or stop ordinary
+chat. `permissions resume` only releases the latch; it does not restart the
+daemon, resume denied work or send queued messages. The narrower
+`.\masha.ps1 stop` command still requests only proactive-daemon termination.
+
+The future UI should consume `PermissionControlService.snapshot()` and call
+`AutonomySafetyService.engage()/release()`. UI code must not edit JSON policy
+files directly. Technical IDs remain in `--raw`; normal CLI uses numbered and
+human-readable views.
+
+Targeted verification:
+
+```powershell
+python -m pytest tests/test_permissions_control.py tests/test_agent_loop.py tests/test_daily_runtime.py tests/test_proactive_daemon.py -q
+```
+
+Stage 16.6 baseline: `279 passed` full regression.
+
 ## Конфигурация
 
 `.env.example` содержит только безопасные локальные значения и зарезервированные ключи. Текущий прототип ещё не загружает `.env` автоматически.

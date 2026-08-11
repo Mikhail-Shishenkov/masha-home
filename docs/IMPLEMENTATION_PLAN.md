@@ -548,8 +548,26 @@ types cannot be confirmed.
 
 ### STAGE-16.6. Permissions UX & Emergency Stop
 
-Статус: **NEXT — NOT IMPLEMENTED**
+Статус: **DONE**
 
-Unify the human control surface for installed skills, effective permissions,
-pending confirmations and currently running work. Add a deterministic local
-emergency stop without silently widening background autonomy.
+One local control surface now aggregates installed skills, effective standing
+permissions, pending installation/agent confirmations, active agent receipts
+and proactive runtime state. A persistent emergency-stop latch has priority
+over action grants and proactive policy. It is checked before every Agent Loop
+step and proactive cycle, survives restart and stops the proactive daemon. Its
+release does not enable a policy, restore a revoked grant, restart a daemon or
+resume denied work.
+
+Human commands:
+
+```powershell
+.\masha.ps1 permissions status
+.\masha.ps1 permissions skills
+.\masha.ps1 permissions grants
+.\masha.ps1 permissions pending
+.\masha.ps1 permissions stop [reason]
+.\masha.ps1 permissions resume
+```
+
+This is a backend/CLI contract ready for a future UI; Stage 16.6 adds no visual
+interface, scheduler, planner, tool or external channel.

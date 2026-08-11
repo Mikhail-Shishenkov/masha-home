@@ -33,6 +33,7 @@ from backend.temporal.proactive_interaction import ProactiveInteractionService, 
 from backend.temporal.proactive_daemon import ProactiveDaemon
 from backend.temporal.proactive_runtime import ControlledProactiveRuntime
 from backend.runtime.daily_runtime import DailyRuntime, DailyRuntimeJournal
+from backend.runtime.safety import AutonomySafetyStore
 
 from .conversation_service import ConversationService, ConversationUnavailableError
 from .conversation_store import ConversationStore
@@ -788,7 +789,7 @@ def _run_proactive_command(command: str, *, service: ConversationService, output
     if action in {"recover", "run"}:
         if "--remind" in parts:
             policy = policy.model_copy(update={"enabled": True, "proactive_level": max(1, policy.proactive_level), "allow_commitment_reminders": True, "maximum_reminders": max(1, policy.maximum_reminders), "daily_message_limit": max(1, policy.daily_message_limit)})
-        receipt = journal.append(DailyRuntime(history=service.history, temporal_engine=service.temporal_engine, repository=repository, identity_kernel=service.identity_kernel, router=service.router, model_profiles=service.model_profiles).run_cycle(policy))
+        receipt = journal.append(DailyRuntime(history=service.history, temporal_engine=service.temporal_engine, repository=repository, identity_kernel=service.identity_kernel, router=service.router, model_profiles=service.model_profiles, safety_store=AutonomySafetyStore(service.model_profiles.path.parent / "autonomy-safety.json")).run_cycle(policy))
         if raw:
             output_fn(json.dumps(receipt.model_dump(mode="json"), ensure_ascii=False))
             return

@@ -13,6 +13,7 @@ from backend.skills.observe_cli import run_command
 from backend.skills.project_observer import ProjectObserverTool
 from backend.skills.project_observer_service import ProjectObserverService
 from backend.skills.registry import SkillRegistry
+from backend.runtime.safety import AutonomySafetyStore
 
 
 NOW = datetime(2026, 8, 11, 21, 0, tzinfo=timezone.utc)
@@ -48,6 +49,9 @@ def _stack(tmp_path: Path, *, grant: bool = True):
     loop = BoundedAgentLoop(
         registry=registry,
         policy_store=policy_store,
+        safety_store=AutonomySafetyStore(
+            workspace / "local-data" / "config" / "autonomy-safety.json"
+        ),
         run_store=run_store,
         tools=(tool,),
         clock=lambda: NOW,

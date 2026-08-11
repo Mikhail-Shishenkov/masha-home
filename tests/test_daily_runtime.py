@@ -12,6 +12,7 @@ from backend.llm.model_router import ModelRouter
 from backend.memory.sqlite_repository import MemorySqliteRepository
 from backend.memory.memory_models import MemoryDocument
 from backend.runtime.daily_runtime import DailyRuntime, DailyRuntimeJournal
+from backend.runtime.safety import AutonomySafetyService, AutonomySafetyStore
 from backend.temporal.proactive import ProactivePolicy, ProactivePolicyStore
 from backend.temporal.proactive_daemon import ProactiveDaemon
 from backend.temporal.temporal_engine import FixedClock, TemporalEngine
@@ -49,6 +50,7 @@ def _runtime(tmp_path, canonical_memory, monkeypatch, *, overdue: bool):
         identity_kernel=IdentityKernel(IdentityStore(ROOT / "identity" / "masha.identity.json")),
         router=ModelRouter([provider]),
         model_profiles=profiles,
+        safety_store=AutonomySafetyStore(tmp_path / "safety.json"),
     )
     return runtime, repo, provider, profiles
 
@@ -108,6 +110,7 @@ def test_daily_cycle_restart_is_idempotent_and_does_not_call_model_twice(tmp_pat
         identity_kernel=runtime.controlled.interactions.identity_kernel,
         router=runtime.controlled.interactions.router,
         model_profiles=profiles,
+        safety_store=runtime.safety_store,
     )
     second = restarted.run_cycle(policy)
 
@@ -123,6 +126,27 @@ def test_disabled_policy_never_calls_model(tmp_path, canonical_memory, monkeypat
     assert receipt.delivered_count == 0
     assert all(item.decision == "suppress" for item in receipt.items)
     assert provider.calls == 0
+
+
+def test_emergency_stop_suppresses_whole_cycle_without_domain_mutation(tmp_path, canonical_memory, monkeypatch):
+    runtime, repo, provider, _ = _runtime(tmp_path, canonical_memory, monkeypatch, overdue=True)
+    before = repo.read_document().model_dump(mode="json")
+    AutonomySafetyService(store=runtime.safety_store, clock=lambda: NOW).engage()
+
+    receipt = runtime.run_cycle(
+        ProactivePolicy(
+            enabled=True,
+            proactive_level=2,
+            allow_commitment_reminders=True,
+            allow_checkins=True,
+        )
+    )
+
+    assert receipt.result == "suppress"
+    assert receipt.reason == "emergency_stop_engaged"
+    assert receipt.items == ()
+    assert provider.calls == 0
+    assert repo.read_document().model_dump(mode="json") == before
 
 
 def test_local_model_failure_keeps_explainable_checkin_candidate(tmp_path, canonical_memory, monkeypatch):

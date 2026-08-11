@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("chat", "status", "run", "receipts", "background", "stop", "skills", "agent", "observe")]
+    [ValidateSet("chat", "status", "run", "receipts", "background", "stop", "skills", "agent", "observe", "permissions")]
     [string]$Mode = "chat",
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$RemainingArgs
@@ -24,6 +24,7 @@ switch ($Mode) {
     "skills" { & $Python -m backend.skills.cli @RemainingArgs }
     "agent" { & $Python -m backend.skills.agent_cli @RemainingArgs }
     "observe" { & $Python -m backend.skills.observe_cli @RemainingArgs }
+    "permissions" { & $Python -m backend.skills.permissions_cli @RemainingArgs }
     "background" {
         Start-Process -FilePath $Python -ArgumentList @("-m", "backend.temporal.proactive_daemon", "--project-root", $ProjectRoot) -WorkingDirectory $ProjectRoot -WindowStyle Hidden
         Write-Output "Фоновый Daily Runtime Маши запускается."

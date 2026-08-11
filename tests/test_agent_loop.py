@@ -26,6 +26,7 @@ from backend.skills.autonomy import (
 from backend.skills.models import SkillCapability, SkillRisk
 from backend.skills.registry import SkillRegistry
 from backend.skills.tools import FakeTool, ToolAdapter
+from backend.runtime.safety import AutonomySafetyService, AutonomySafetyStore
 
 
 NOW = datetime(2026, 8, 11, 20, 0, tzinfo=timezone.utc)
@@ -83,6 +84,9 @@ def _stack(tmp_path: Path, *, grant: bool = True, tool=None, clock=lambda: NOW):
     loop = BoundedAgentLoop(
         registry=registry,
         policy_store=policy_store,
+        safety_store=AutonomySafetyStore(
+            tmp_path / "local-data" / "config" / "autonomy-safety.json"
+        ),
         run_store=run_store,
         tools=(fake,),
         clock=clock,
@@ -147,6 +151,7 @@ def test_completed_plan_is_idempotent_after_restart(tmp_path):
     restarted_loop = BoundedAgentLoop(
         registry=registry,
         policy_store=loop.policy_store,
+        safety_store=loop.safety_store,
         run_store=AgentRunStore(store.path),
         tools=(restarted_tool,),
         clock=lambda: NOW,
@@ -187,6 +192,49 @@ def test_confirmation_cannot_override_a_denied_run(tmp_path):
     assert fake.calls == []
     with pytest.raises(AgentRunError, match="not awaiting"):
         loop.confirm(receipt.plan_id, "step_one")
+
+
+def test_emergency_stop_blocks_allowed_plan_and_survives_restart(tmp_path):
+    _, _, _, _, store, fake, loop = _stack(tmp_path)
+    safety = AutonomySafetyService(store=loop.safety_store, clock=lambda: NOW)
+    safety.engage("user_pressed_stop")
+
+    receipt = loop.run(_plan())
+    restarted = AutonomySafetyStore(loop.safety_store.path).load()
+
+    assert receipt.status is AgentRunStatus.DENIED
+    assert receipt.terminal_reason == "emergency_stop_engaged"
+    assert fake.calls == []
+    assert restarted.emergency_stop_engaged is True
+    assert AgentRunStore(store.path).get(receipt.plan_id) == receipt
+
+
+def test_emergency_stop_cannot_be_bypassed_by_step_confirmation(tmp_path):
+    _, _, _, _, _, fake, loop = _stack(tmp_path, grant=False)
+    waiting = loop.run(_plan())
+    AutonomySafetyService(store=loop.safety_store, clock=lambda: NOW).engage()
+
+    with pytest.raises(AgentRunError, match="emergency stop"):
+        loop.confirm(waiting.plan_id, "step_one")
+
+    assert fake.calls == []
+
+
+def test_emergency_stop_between_steps_prevents_remaining_work(tmp_path):
+    holder = {}
+
+    def stop_after_first(_operation):
+        holder["safety"].engage("stop_during_plan")
+
+    fake = FakeTool(on_execute=stop_after_first)
+    _, _, _, _, _, _, loop = _stack(tmp_path, tool=fake)
+    holder["safety"] = AutonomySafetyService(store=loop.safety_store, clock=lambda: NOW)
+
+    receipt = loop.run(_plan(_step("step_one"), _step("step_two")))
+
+    assert receipt.status is AgentRunStatus.DENIED
+    assert receipt.terminal_reason == "emergency_stop_engaged"
+    assert fake.calls == ["echo"]
 
 
 def test_step_budget_stops_before_extra_execution(tmp_path):
@@ -261,6 +309,7 @@ def test_missing_tool_fails_without_execution(tmp_path):
     loop = BoundedAgentLoop(
         registry=registry,
         policy_store=policy,
+        safety_store=AutonomySafetyStore(tmp_path / "safety.json"),
         run_store=AgentRunStore(tmp_path / "runs.json"),
         tools=(),
         clock=lambda: NOW,

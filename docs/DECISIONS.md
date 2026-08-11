@@ -581,6 +581,35 @@ Package без заранее подключённого application-owned safe 
 новых исполняемых skill-типов требует отдельного sandbox/declarative-runtime
 решения, а не ослабления Registry.
 
+### DEC-074. Emergency stop is a persistent higher-priority operating latch
+
+Статус: **Принято и реализовано (Stage 16.6)**
+
+`AutonomySafetyStore` хранится отдельно от Identity, Memory, conversation
+history, commitments, model profiles и обеих autonomy policy. Включённый latch
+перекрывает Action grants и Proactive Policy: Agent Loop не начинает следующий
+tool-step, Daily Runtime не вызывает LLM, а proactive daemon завершает работу.
+Это overlay, поэтому grants и настройки остаются видимыми, но неэффективными.
+
+### DEC-075. Releasing emergency stop never resumes activity
+
+Статус: **Принято и реализовано (Stage 16.6)**
+
+`resume` снимает только safety latch. Он не включает policy, не восстанавливает
+отозванные grants, не продолжает terminal AgentRun, не запускает daemon и не
+доставляет ожидающее сообщение. Уже выполняющийся синхронный Tool Adapter нельзя
+безопасно убить посередине вызова; граница остановки — до вызова и между шагами.
+
+### DEC-076. Permissions UX is a derived view, not another authority
+
+Статус: **Принято и реализовано (Stage 16.6)**
+
+`PermissionControlService` агрегирует существующие Registry, policy, proposals
+и receipts. Он вычисляет текущую эффективность grants с учётом safety latch и
+целостности package, но не копирует permissions в новый store. CLI и будущий UI
+должны использовать этот контракт; normal UX скрывает IDs, `--raw` сохраняет
+технический UI/debug payload.
+
 ### DEC-047. Local model profiles are operating configuration
 
 Статус: **Принято и реализовано (LLM-03)**

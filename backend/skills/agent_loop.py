@@ -11,6 +11,8 @@ from typing import Callable, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, model_validator
 
+from backend.runtime.safety import AutonomySafetyStore
+
 from .autonomy import (
     ActionAutonomyEngine,
     ActionAutonomyPolicyStore,
@@ -190,12 +192,14 @@ class BoundedAgentLoop:
         *,
         registry: SkillRegistry,
         policy_store: ActionAutonomyPolicyStore,
+        safety_store: AutonomySafetyStore,
         run_store: AgentRunStore,
         tools: tuple[ToolAdapter, ...],
         clock: Callable[[], datetime] = utc_now,
     ):
         self.registry = registry
         self.policy_store = policy_store
+        self.safety_store = safety_store
         self.run_store = run_store
         self.tools = {tool.tool_id: tool for tool in tools}
         if len(self.tools) != len(tools):
@@ -228,6 +232,13 @@ class BoundedAgentLoop:
                 )
             )
 
+        if self.safety_store.is_engaged():
+            return self._terminal(
+                receipt,
+                AgentRunStatus.DENIED,
+                "emergency_stop_engaged",
+            )
+
         existing = {item.step_id: item for item in receipt.steps}
         interrupted = next(
             (item for item in receipt.steps if item.status is AgentStepStatus.EXECUTING),
@@ -244,6 +255,12 @@ class BoundedAgentLoop:
             previous = existing.get(step.step_id)
             if previous is not None and previous.status is AgentStepStatus.VERIFIED:
                 continue
+            if self.safety_store.is_engaged():
+                return self._terminal(
+                    receipt,
+                    AgentRunStatus.DENIED,
+                    "emergency_stop_engaged",
+                )
             if self._executed_count(receipt) >= plan.max_steps:
                 return self._terminal(receipt, AgentRunStatus.BUDGET_EXHAUSTED, "step_budget_exhausted")
             if (self._now() - receipt.started_at).total_seconds() >= plan.max_duration_seconds:
@@ -322,6 +339,21 @@ class BoundedAgentLoop:
                 None,
                 terminal=False,
             )
+            if self.safety_store.is_engaged():
+                stopped = executing.model_copy(
+                    update={
+                        "status": AgentStepStatus.DENIED,
+                        "finished_at": self._now(),
+                        "result_summary": "Execution blocked by the local emergency stop.",
+                        "verification_code": "emergency_stop_engaged",
+                    }
+                )
+                return self._with_step(
+                    receipt,
+                    stopped,
+                    AgentRunStatus.DENIED,
+                    "emergency_stop_engaged",
+                )
             try:
                 result = tool.execute(step.operation, step.inputs)
             except Exception as error:
@@ -370,6 +402,12 @@ class BoundedAgentLoop:
                 None,
                 terminal=False,
             )
+            if self.safety_store.is_engaged():
+                return self._terminal(
+                    receipt,
+                    AgentRunStatus.DENIED,
+                    "emergency_stop_engaged",
+                )
             if on_verified_result is not None:
                 on_verified_result(step, result)
             existing[step.step_id] = verified
@@ -377,6 +415,8 @@ class BoundedAgentLoop:
         return self._terminal(receipt, AgentRunStatus.COMPLETED, "all_steps_verified")
 
     def confirm(self, plan_id: str, step_id: str) -> AgentRunReceipt:
+        if self.safety_store.is_engaged():
+            raise AgentRunError("emergency stop is engaged")
         receipt = self.run_store.get(plan_id)
         if receipt is None:
             raise AgentRunError("agent run not found")

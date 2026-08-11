@@ -588,3 +588,25 @@ exists. The UI itself remains planned; its picker/preview/buttons will call this
 same service rather than write project code directly.
 
 Current regression after Stage 16.5: `270 passed`.
+
+## CURRENT — STAGE 16.6 PERMISSIONS UX / EMERGENCY STOP
+
+`PermissionControlService` provides one local read model for a future UI and
+the human `permissions` CLI. It aggregates existing skill integrity, action
+policy, effective grants, installation proposals, Agent Run receipts and
+proactive runtime state; it is not a second policy or persistence subsystem.
+
+`AutonomySafetyStore` is ignored local operating configuration at
+`local-data/config/autonomy-safety.json`. Its persistent emergency latch has
+priority over both Action Autonomy grants and Proactive Policy. The Agent Loop
+checks it before work, before every tool call and between verified steps. Daily
+Runtime suppresses the complete cycle without calling the LLM, and the
+Proactive Daemon exits deterministically.
+
+Releasing the latch changes no policy/grant/domain state and starts nothing.
+Ordinary conversation, explicit memory controls and configuration inspection
+remain available. No Identity, Memory, Commitment, Temporal, Conversation,
+ModelProfile, Router, provider or SQLite schema contract changed. No UI was
+implemented.
+
+Current regression after Stage 16.6: `279 passed`.

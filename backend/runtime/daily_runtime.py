@@ -16,6 +16,7 @@ from backend.temporal.proactive_events import ProactiveEventState
 from backend.temporal.proactive_runtime import ControlledProactiveRuntime
 from backend.temporal.temporal_models import ProactiveDecision
 from backend.temporal.temporal_runtime import TemporalRuntime
+from backend.runtime.safety import AutonomySafetyStore
 
 
 class DailyCycleItem(BaseModel):
@@ -39,6 +40,7 @@ class DailyCycleReceipt(BaseModel):
     model_profile: str
     items: tuple[DailyCycleItem, ...] = ()
     error: str | None = None
+    halted_reason: str | None = None
 
     @property
     def delivered_count(self) -> int:
@@ -58,6 +60,8 @@ class DailyCycleReceipt(BaseModel):
 
     @property
     def reason(self) -> str:
+        if self.halted_reason is not None:
+            return self.halted_reason
         delivered = next((item for item in self.items if item.state == "delivered"), None)
         if delivered is not None:
             return delivered.reason
@@ -99,10 +103,11 @@ class DailyRuntimeJournal:
 class DailyRuntime:
     """Orchestrates REMIND before CHECK_IN without owning either domain."""
 
-    def __init__(self, *, history, temporal_engine, repository, identity_kernel, router, model_profiles):
+    def __init__(self, *, history, temporal_engine, repository, identity_kernel, router, model_profiles, safety_store: AutonomySafetyStore):
         self.temporal_engine = temporal_engine
         self.repository = repository
         self.model_profiles = model_profiles
+        self.safety_store = safety_store
         self.controlled = ControlledProactiveRuntime(
             history=history,
             temporal_engine=temporal_engine,
@@ -116,6 +121,14 @@ class DailyRuntime:
     def run_cycle(self, policy: ProactivePolicy) -> DailyCycleReceipt:
         started_at = self.temporal_engine.clock.now_utc()
         profile = self.model_profiles.get_active_profile()
+        if self.safety_store.is_engaged():
+            return DailyCycleReceipt(
+                cycle_id=f"dcy1_{uuid4().hex}",
+                started_at=started_at,
+                finished_at=self.temporal_engine.clock.now_utc(),
+                model_profile=profile.profile_id,
+                halted_reason="emergency_stop_engaged",
+            )
         items: list[DailyCycleItem] = []
         document = self.repository.read_document()
         commitments = {} if document is None else {item.id: item for item in document.commitments}
@@ -126,6 +139,9 @@ class DailyRuntime:
         awaiting_response = any(item["state"] == "delivered" for item in self.controlled.interaction_store.list())
 
         for event in temporal_context.events:
+            if self.safety_store.is_engaged():
+                items.append(DailyCycleItem(kind="reminder", event_id=event.event_id, decision="suppress", state="suppressed", reason="emergency_stop_engaged"))
+                break
             interaction = self.controlled.interaction_store.get(event.event_id)
             if interaction is not None and interaction["state"] in {"delivered", "acknowledged", "dismissed", "resolved", "expired"}:
                 if interaction["state"] == "delivered":
@@ -164,6 +180,9 @@ class DailyRuntime:
                 decision=evaluation.decision,
                 generated_at=started_at,
             )
+            if self.safety_store.is_engaged():
+                items.append(DailyCycleItem(kind="reminder", event_id=event.event_id, decision="suppress", state="suppressed", reason="emergency_stop_engaged"))
+                break
             try:
                 interaction = self.controlled.interactions.formulate(candidate)
                 state = interaction["state"]
@@ -177,7 +196,11 @@ class DailyRuntime:
                 items.append(DailyCycleItem(kind="reminder", event_id=event.event_id, decision=evaluation.decision.value, state="candidate", reason="local_model_unavailable"))
 
         try:
-            checkin = self.controlled.run_checkin_cycle(policy, reminder_pending=reminder_blocks_checkin)
+            if self.safety_store.is_engaged():
+                checkin = None
+                items.append(DailyCycleItem(kind="check_in", decision="suppress", state="suppressed", reason="emergency_stop_engaged"))
+            else:
+                checkin = self.controlled.run_checkin_cycle(policy, reminder_pending=reminder_blocks_checkin)
         except ProactiveInteractionUnavailableError:
             candidates = self.controlled.event_store.find_by_state(ProactiveEventState.CANDIDATE)
             event_id = candidates[-1].event_id if candidates else None

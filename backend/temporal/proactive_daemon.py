@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from backend.runtime.daily_runtime import DailyCycleReceipt, DailyRuntime, DailyRuntimeJournal
+from backend.runtime.safety import AutonomySafetyStore
 
 from .proactive import ProactivePolicyStore
 
@@ -23,6 +24,9 @@ class ProactiveDaemon:
         self.stop_path = self.runtime_dir / "proactive-daemon.stop"
         self.status_path = self.runtime_dir / "proactive-daemon-status.json"
         self.journal = DailyRuntimeJournal(self.runtime_dir / "daily-runtime-receipts.json")
+        self.safety_store = AutonomySafetyStore(
+            self.project_root / "local-data" / "config" / "autonomy-safety.json"
+        )
         self.sleep = sleep
 
     def run(self, *, max_cycles: int | None = None):
@@ -32,6 +36,9 @@ class ProactiveDaemon:
             os.write(descriptor, str(os.getpid()).encode("ascii"))
             cycles = 0
             while not self.stop_path.exists() and (max_cycles is None or cycles < max_cycles):
+                if self.safety_store.is_engaged():
+                    self._status("stopped", result="suppress", reason="emergency_stop_engaged", error=None, interval=None)
+                    break
                 interval = 300
                 try:
                     from backend.conversation.cli import build_service
@@ -39,7 +46,7 @@ class ProactiveDaemon:
                     policy = ProactivePolicyStore(service.model_profiles.path.parent / "proactive-policy.json").load()
                     interval = policy.cycle_interval_seconds
                     if policy.runtime_mode == "background":
-                        receipt = DailyRuntime(history=service.history, temporal_engine=service.temporal_engine, repository=service.memory_retriever.memory_store, identity_kernel=service.identity_kernel, router=service.router, model_profiles=service.model_profiles).run_cycle(policy)
+                        receipt = DailyRuntime(history=service.history, temporal_engine=service.temporal_engine, repository=service.memory_retriever.memory_store, identity_kernel=service.identity_kernel, router=service.router, model_profiles=service.model_profiles, safety_store=self.safety_store).run_cycle(policy)
                         self.journal.append(receipt)
                         self._status("running", result=receipt.result, reason=receipt.reason, error=None, interval=interval)
                     else:
@@ -90,7 +97,7 @@ class ProactiveDaemon:
 
     def _wait(self, seconds):
         remaining = seconds
-        while remaining > 0 and not self.stop_path.exists():
+        while remaining > 0 and not self.stop_path.exists() and not self.safety_store.is_engaged():
             step = min(1, remaining)
             self.sleep(step)
             remaining -= step

@@ -12,6 +12,7 @@ from backend.temporal.proactive_daemon import ProactiveDaemon
 
 from .daily_runtime import DailyRuntime, DailyRuntimeJournal
 from .health import RuntimeHealthService
+from .safety import AutonomySafetyStore
 
 
 def _runtime(service):
@@ -22,6 +23,9 @@ def _runtime(service):
         identity_kernel=service.identity_kernel,
         router=service.router,
         model_profiles=service.model_profiles,
+        safety_store=AutonomySafetyStore(
+            service.model_profiles.path.parent / "autonomy-safety.json"
+        ),
     )
 
 

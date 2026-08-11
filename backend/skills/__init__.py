@@ -28,6 +28,7 @@ from .installer import (
     SkillInstallStatus,
     SkillInstallerService,
 )
+from .permissions import PermissionControlService, PermissionsSnapshot
 
 __all__ = [
     "RegisteredSkill",
@@ -59,4 +60,6 @@ __all__ = [
     "SkillInstallProposalStore",
     "SkillInstallStatus",
     "SkillInstallerService",
+    "PermissionControlService",
+    "PermissionsSnapshot",
 ]
