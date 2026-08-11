@@ -638,3 +638,77 @@ permissions, Agent Loop and SQLite schema semantics are unchanged. UI-01 adds
 no frontend, HTTP, streaming, scheduler or agent capability.
 
 Current regression after UI-01: `290 passed`.
+
+## DESIGN ONLY — UI-02 / UI-02.5 INTERACTION AND PRESENTATION CONTRACT
+
+`docs/UI-02_INTERACTION_PRESENCE_DESIGN.md` defines Masha-centred interaction,
+deterministic presentation states, independent safety/proactive/model/runtime
+overlays and the Shared Room direction. `docs/UI-02_5_PRESENTATION_MODEL.md`
+refines that direction into a framework-independent `HomePresentationModel`,
+composable `MashaPresence`, declarative `InteractionSurface`, observable
+`ActivityPresentation` and presentation-preference contract.
+
+The UI-02/UI-02.5 documents themselves add no runtime or domain authority. UI-03
+implements the framework-independent foundation described below, but no
+production frontend, event stream, rich asset pack, preference store or
+HTTP/WebSocket boundary exists. UI-01 remains the application boundary;
+Identity, Memory, Commitment, Temporal, Proactive, Agent Loop, Permissions,
+Safety, model routing and SQLite semantics remain unchanged.
+
+## CURRENT — UI-03 PRESENTATION RUNTIME FOUNDATION
+
+`backend.presentation` now implements immutable compositional Home/Presence,
+overlay, `InteractionSurface` and `ActivityPresentation` models plus a pure
+deterministic reducer. A read-only adapter projects UI-01 status, active model
+and opaque canonical visual asset IDs into the presentation model. The layer has
+no repository, provider, LLM, persistence or frontend callback dependency.
+
+The disposable Tier 0 Tk adapter renders one Shared Room scene and drives local
+scenario events for conversation, Activity, proactive attention, emergency
+stop, model/runtime state and privacy masking without Ollama. Tk is not a
+production-framework decision. No domain or SQLite schema semantics changed.
+
+Current regression after UI-03: `307 passed`.
+
+## DESIGN ONLY — UI-04A HOME COMPOSITION CONTRACT
+
+`docs/UI-04_HOME_COMPOSITION_CONTRACT.md` audits the disposable Tier 0 visual
+metaphor and defines the target spatial semantics of one presence-first Home.
+The room and Masha are persistent; Conversation, Activity, Confirmation,
+Proactive and future capability Surfaces are bounded contextual objects that
+appear around a shared attention anchor rather than permanent dashboard panels.
+
+The existing UI-03 Surface contract is sufficient for semantic lifecycle but
+does not yet carry renderer-neutral spatial intent. UI-04A therefore specifies,
+without implementing, `SurfaceCompositionIntent` (anchor, allowed placement,
+size, priority, interaction mode and relation to Presence) and a future pure
+`CompositionResolver` producing a `CompositionPlan` from composable state and
+viewport/privacy/accessibility constraints.
+
+The recommended first real visual tier is layered/composited Tier 1: a warm
+realistic or semi-realistic room with a restrained cinematic near-future layer.
+Tk layout, permanent status header/panels, abstract Masha figure, palette and
+prototype controls remain disposable. No production code, framework, renderer,
+domain contract or SQLite schema was changed by UI-04A.
+
+## CURRENT — UI-04B COMPOSITION RUNTIME FOUNDATION
+
+`backend.presentation.composition` now turns `HomePresentationModel`, viewport
+characteristics and one selected semantic variant into an immutable
+`CompositionPlan`. `SurfaceCompositionIntent` adds renderer-neutral anchor,
+placement, size, priority, interaction, transform, Presence-relation and
+occlusion constraints to an `InteractionSurface` without changing its lifecycle.
+
+The pure `CompositionResolver` produces the ambient room, Masha composition,
+bounded primary/supporting/decision regions, privacy/safety/model/runtime
+overlays, focus ownership and suppressed Surface IDs. It has no pixel
+coordinates, framework callbacks, LLM, application service, repository or
+persistence dependency.
+
+Layout stability is deterministic: an explicitly supplied previous plan may
+retain a still-allowed placement; text, progress and expression-only changes do
+not force spatial recomposition. Privacy and viewport changes override
+hysteresis. Implemented variants are `presence_first`, `conversation_first` and
+`adaptive_cinematic`; they are plans from one resolver, not separate frontends.
+
+Current regression after UI-04B: `334 passed`.

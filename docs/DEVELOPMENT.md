@@ -462,6 +462,84 @@ python -m pytest tests/test_application_boundary.py -q
 
 UI-01 baseline: `290 passed` full regression.
 
+## UI-03 Presentation Runtime and Tier 0 prototype
+
+Open the local structural Home prototype:
+
+```powershell
+.\masha.ps1 home
+```
+
+It uses only `backend.presentation` and standard-library Tk. Keys `1` through
+`6` cycle conversation, Activity, proactive, safety, model and runtime
+presentation scenarios. Clicking the corresponding room areas performs the same
+local transitions. No Ollama or domain persistence is used.
+
+Targeted verification:
+
+```powershell
+python -m pytest tests/test_presentation_runtime.py tests/test_tier0_prototype.py tests/test_application_boundary.py -q
+```
+
+UI-03 baseline: `307 passed` full regression.
+
+## UI-04A Home Composition audit
+
+UI-04A is documentation-only. The formal contract is:
+
+```text
+HomePresentationModel
++ SurfaceCompositionIntent
++ viewport/privacy/accessibility constraints
+→ pure CompositionResolver
+→ CompositionPlan
+→ replaceable renderer
+```
+
+See `docs/UI-04_HOME_COMPOSITION_CONTRACT.md`.
+
+Do not implement a production renderer directly from the current Tk geometry.
+The persistent target scene is the room plus Masha; Conversation, Activity,
+Confirmation and Proactive Surfaces are adaptive contextual objects. The status
+header, fixed left/right/bottom panels, abstract figure and prototype controls
+are disposable.
+
+UI-04A itself added no executable code. UI-04B implements the spatial contracts
+and resolver below. A disposable visual comparison and user review still precede
+the production frontend decision.
+
+## UI-04B Composition Runtime Foundation
+
+Resolve a renderer-neutral room plan without UI-01, Ollama or persistence:
+
+```python
+from backend.presentation import (
+    CompositionResolver,
+    CompositionVariant,
+    ViewportCharacteristics,
+    ViewportClass,
+)
+
+plan = CompositionResolver().resolve(
+    presentation_model,
+    viewport=ViewportCharacteristics(size_class=ViewportClass.WIDE),
+    variant=CompositionVariant.PRESENCE_FIRST,
+    previous_plan=None,
+)
+```
+
+`previous_plan` is optional and explicit. Passing it enables deterministic
+placement hysteresis; the resolver stores no state. The plan contains semantic
+placements and priorities, never pixels, filesystem paths or renderer commands.
+
+Targeted verification:
+
+```powershell
+python -m pytest tests/test_composition_runtime.py tests/test_presentation_runtime.py tests/test_tier0_prototype.py tests/test_application_boundary.py -q
+```
+
+UI-04B baseline: `55 passed` targeted; `334 passed` full regression.
+
 ## Конфигурация
 
 `.env.example` содержит только безопасные локальные значения и зарезервированные ключи. Текущий прототип ещё не загружает `.env` автоматически.

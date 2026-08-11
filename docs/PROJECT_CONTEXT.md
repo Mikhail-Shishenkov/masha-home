@@ -215,3 +215,16 @@ ModelRouter, ModelProfileStore, Skill Registry, permission gates, emergency
 stop and Agent Loop retain their existing authority and semantics. No visual UI,
 HTTP API, streaming, scheduler, fallback or new autonomous capability exists in
 UI-01.
+
+## 13. Presentation Runtime and Shared Room prototype
+
+UI-03 adds `backend.presentation` above the UI-01 boundary. Application facts
+are projected into immutable compositional Presence, independent overlays,
+generic Interaction Surfaces and observable Activities, then reduced
+deterministically. The layer cannot access or mutate Identity, Memory,
+Commitments, Temporal state, permissions or persistence and cannot receive UI
+commands from an LLM.
+
+`masha.ps1 home` opens a disposable no-LLM Tier 0 desktop prototype. It proves a
+single Shared Room composition and local state transitions; it does not select
+the production frontend framework, visual style or avatar asset pipeline.

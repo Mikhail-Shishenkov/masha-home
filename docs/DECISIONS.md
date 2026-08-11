@@ -650,6 +650,108 @@ bytes. `VisualIdentityResolver` alone reads manifest paths and validates the
 approved SHA-256. The Identity manifest remains unchanged and is not a frontend
 configuration file.
 
+### DEC-080. Home is a composable Shared Room, not a dashboard
+
+Статус: **Принято; semantic foundation реализован UI-03, target composition не реализована**
+
+Masha is the persistent visual presence of one primary desktop space. Contextual
+Conversation, Activity, Memory, Commitment, Proactive, Media, Permission and
+other Surfaces transform around her according to direct intent and application
+state. At most one Surface is primary; conversation and global safety control
+remain reachable. This decision does not select a frontend framework or renderer.
+
+### DEC-081. Presentation state is composable and has no domain authority
+
+Статус: **Принято и реализовано в Presentation Runtime (UI-03)**
+
+`MashaPresence` composes pose, expression, attention, activity, safety, ambient
+and model availability instead of enumerating every combination. Emergency stop,
+proactive off, model availability, runtime mode and daemon state remain
+independent overlays. A deterministic reducer maps UI-safe application facts to
+the scene; LLM text cannot select layout, animation, permission or safety state.
+
+### DEC-082. Capabilities enter Home through declarative application-owned Surfaces
+
+Статус: **Принято; generic Surface/Activity foundation реализован UI-03**
+
+Future skills and runtimes may expose bounded UI-safe data through an
+application-owned `InteractionSurface` / `ActivityPresentation` adapter. They
+cannot inject arbitrary markup, scripts, renderer components or animation. An
+unknown capability uses a safe generic Surface and receives no execution or UI
+authority from presentation visibility.
+
+### DEC-083. Presentation reduction is pure and compositional
+
+Статус: **Принято и реализовано (UI-03)**
+
+Immutable Home, Presence, overlay, Surface and Activity models are reduced only
+from immutable presentation events. The reducer has no LLM, repository,
+persistence, provider or renderer callback. Pose, expression, attention,
+activity, ambient and operating overlays remain independent axes, preventing a
+combinatorial global state machine.
+
+### DEC-084. Tier 0 is a disposable renderer, not a frontend commitment
+
+Статус: **Принято и реализовано (UI-03)**
+
+The first interactive Shared Room uses a standard-library Tk adapter solely to
+validate composition and deterministic state changes without GPU-specific
+rendering or Ollama. It consumes the same Presentation Model expected by a
+future renderer. Tk, its structural figure, placeholder palette and layout are
+not the selected production framework, final appearance or visual identity.
+
+### DEC-085. Home composition is presence-first and spatially adaptive
+
+Статус: **Принято UI-04A и реализовано UI-04B**
+
+The persistent room and Masha form the scene; contextual Surfaces appear around
+the current shared-attention anchor. Conversation is recommended near/right of
+Masha in the initial wide composition, but placement remains adaptive within a
+closed allowed set. Ordinary Surfaces preserve a readable face and Presence
+silhouette. A primary Surface is selected deterministically from explicit user
+focus and application state, never from LLM output.
+
+### DEC-086. Spatial intent is renderer-neutral and application-owned
+
+Статус: **Принято UI-04A и реализовано UI-04B**
+
+`SurfaceCompositionIntent` describes semantic anchor, preferred and
+allowed positions, size class, priority, interaction mode, transform targets
+and relation to Masha. A pure `CompositionResolver` produces a bounded
+`CompositionPlan` under viewport, privacy and accessibility constraints. Skills,
+models and capability runtimes cannot provide coordinates, markup, callbacks or
+layout code.
+
+### DEC-087. The first real Home should target layered Tier 1
+
+Статус: **Рекомендация UI-04A, требует визуального согласования**
+
+The preferred direction is a warm realistic/semi-realistic room with a restrained
+cinematic near-future layer for Surfaces and operating truth. Layered/composited
+2D provides canonical visual continuity, authored bounded transitions and a
+low-cost static fallback. Tier 2 rich/GPU rendering remains optional and must
+consume the same Presentation Model and composition contract.
+
+### DEC-088. Composition hysteresis is explicit and pure
+
+Статус: **Принято и реализовано (UI-04B)**
+
+`CompositionResolver` owns no mutable layout history. A caller may supply the
+previous immutable `CompositionPlan`; a continuing Surface retains its previous
+placement only when it remains allowed under the same variant, viewport and
+privacy constraints. Spatial stability signatures exclude conversational text,
+Activity progress and expression changes. Privacy, safety and viewport changes
+remain explicit deterministic overrides.
+
+### DEC-089. Composition variants share one contract and resolver
+
+Статус: **Принято и реализовано (UI-04B)**
+
+Presence-first, conversation-first and adaptive-cinematic are bounded semantic
+policies producing the same `CompositionPlan` type. They are not separate
+frontends and cannot change Identity, authority, Surface lifecycle or domain
+state. Visual comparison and final default selection remain a user decision.
+
 ## 6. Открытые вопросы ближайших этапов
 
 - Формат identity manifest.

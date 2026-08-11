@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("chat", "status", "run", "receipts", "background", "stop", "skills", "agent", "observe", "permissions")]
+    [ValidateSet("chat", "home", "status", "run", "receipts", "background", "stop", "skills", "agent", "observe", "permissions")]
     [string]$Mode = "chat",
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$RemainingArgs
@@ -18,6 +18,7 @@ $env:PYTHONUTF8 = "1"
 
 switch ($Mode) {
     "chat" { & $Python -m backend.conversation.cli }
+    "home" { & $Python -m backend.presentation.prototype }
     "status" { & $Python -m backend.runtime.cli status }
     "run" { & $Python -m backend.runtime.cli run }
     "receipts" { & $Python -m backend.runtime.cli receipts }

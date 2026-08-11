@@ -589,3 +589,85 @@ job framework, scheduler, fallback, schema migration or new agent capability is
 part of UI-01.
 
 Full regression: `290 passed`.
+
+### UI-02. Interaction & Presence Design
+
+Статус: **DESIGN COMPLETE / NOT IMPLEMENTED**
+
+Defined Masha-centred Shared Room principles, deterministic interaction states,
+independent operating overlays, controlled expression vocabulary, procedural
+animation, activity/proactive/safety language, presentation tiers,
+accessibility, privacy and voice readiness. No frontend or production runtime
+was added.
+
+### UI-02.5. Presentation Model & Home Interaction Contract
+
+Статус: **DESIGN COMPLETE; FOUNDATION IMPLEMENTED BY UI-03**
+
+Defined a framework-independent `HomePresentationModel`, composable
+`MashaPresence`, declarative `InteractionSurface`, observable long-running
+`ActivityPresentation`, independent operating overlays and future presentation
+preferences. New capabilities must enter Home through application-owned
+Surface/Activity adapters; skills cannot inject arbitrary frontend code.
+
+Next: UI-03 Presentation Runtime Foundation — pure presentation models,
+deterministic reducer and Tier 0 adapter over existing UI-01 facts. Frontend
+framework and production rendering remain undecided.
+
+### UI-03. Presentation Runtime Foundation + Tier 0 Prototype
+
+Статус: **DONE**
+
+Implemented immutable compositional presentation models, independent operating
+overlays, generic `InteractionSurface`, observable Activity lifecycle and a pure
+event reducer. The UI-01 adapter consumes only UI-safe views and opaque visual
+asset IDs. A disposable standard-library Tk renderer provides one interactive
+Shared Room prototype with local no-LLM scenarios.
+
+No production frontend framework was selected. No new model call, autonomous
+capability, scheduler, persistence, domain mutation or SQLite migration was
+added. Full regression: `307 passed`.
+
+The earlier direct jump to a live UI-04 shell is superseded by the composition
+audit below. Live UI-01 wiring remains deferred until spatial semantics and the
+first composition are approved.
+
+### UI-04A. Home Composition / Interaction Surface Audit
+
+Статус: **DESIGN COMPLETE / NOT IMPLEMENTED**
+
+Defined the formal spatial contract for one presence-first Home. Masha and the
+recognisable room remain persistent; contextual Surfaces use application-owned
+semantic roles, spatial intent and deterministic layout recipes rather than
+permanent dashboard panels or LLM-selected placement.
+
+The audit keeps the UI-03 immutable model, reducer, lifecycle, overlays,
+activities, privacy semantics and opaque asset IDs. It marks the Tk geometry,
+status header, left conversation panel, right avatar card, bottom Activity panel
+and prototype controls as disposable.
+
+The bounded spatial intent and pure resolver are implemented by UI-04B below.
+Production frontend selection and live domain wiring remain deferred until a
+disposable composition comparison is reviewed with the user.
+
+### UI-04B. Composition Runtime Foundation
+
+Статус: **DONE**
+
+Added immutable renderer-neutral spatial contracts, optional bounded
+`SurfaceCompositionIntent`, semantic viewport classes and a pure deterministic
+`CompositionResolver`. Its `CompositionPlan` contains the ambient room, Masha,
+primary/supporting/decision regions, operating overlays, focus ownership,
+privacy masking and bounded suppressed Surfaces without pixels or frontend code.
+
+Placement integrates Surface lifecycle and deterministic priority. Explicit
+`previous_plan` hysteresis retains a valid placement across small presentation
+changes, while privacy and viewport constraints override stability. The same
+resolver provides presence-first, conversation-first and adaptive-cinematic
+variants.
+
+Targeted regression: `55 passed`. Full regression: `334 passed`.
+
+Next: **UI-04C — Visual Composition Workshop**. Render disposable comparisons
+of the three semantic plans for joint UX selection before choosing a production
+frontend or connecting live UI-01 operations.
