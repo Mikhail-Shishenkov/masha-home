@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("chat", "status", "run", "receipts", "background", "stop")]
-    [string]$Mode = "chat"
+    [ValidateSet("chat", "status", "run", "receipts", "background", "stop", "skills")]
+    [string]$Mode = "chat",
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$RemainingArgs
 )
 
 $ProjectRoot = $PSScriptRoot
@@ -19,6 +21,7 @@ switch ($Mode) {
     "status" { & $Python -m backend.runtime.cli status }
     "run" { & $Python -m backend.runtime.cli run }
     "receipts" { & $Python -m backend.runtime.cli receipts }
+    "skills" { & $Python -m backend.skills.cli @RemainingArgs }
     "background" {
         Start-Process -FilePath $Python -ArgumentList @("-m", "backend.temporal.proactive_daemon", "--project-root", $ProjectRoot) -WorkingDirectory $ProjectRoot -WindowStyle Hidden
         Write-Output "Фоновый Daily Runtime Маши запускается."

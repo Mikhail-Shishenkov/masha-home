@@ -494,3 +494,20 @@ No tools, mutations, background reflection, automatic affective inference,
 external provider, fallback or proactive authority is introduced.
 
 Current regression after Stage 15: `183 passed`.
+
+## CURRENT — STAGE 16.1 SKILL CONTRACT & REGISTRY
+
+`backend.skills` provides strict Skill Manifest v1 validation, local package
+discovery, whole-package SHA-256 pinning and persistent registration state at
+`local-data/config/skills.json`. This is operating configuration, not Identity,
+Memory, conversation history, proactive policy or model configuration.
+
+The registry does not import or execute an entrypoint. Registration grants no
+capability or autonomy. Package tampering, disappearance, invalid manifests,
+unsafe instruction paths and understated risk are deterministic failures.
+Human CLI is available through `masha.ps1 skills ...`; hashes and technical
+payloads remain `--raw` diagnostics.
+
+Action permissions, tools, agent planning and execution remain not implemented.
+
+Current regression after Stage 16.1: `198 passed`.

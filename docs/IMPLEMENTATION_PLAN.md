@@ -491,3 +491,23 @@ does not automatically create or receive reflections. An optional Help Offer
 can produce conversation-only help only after explicit acceptance. No tools,
 background diary, affective inference, Identity mutation, proactive influence,
 external API or model fallback was added.
+
+### STAGE-16.1. Skill Contract & Registry
+
+Статус: **DONE**
+
+Strict local skill manifests, package discovery, risk declarations, whole-package
+SHA-256 registration and restart integrity checks are implemented. Registry
+state is local operating configuration and does not grant execution permission.
+Entrypoints are never imported, modified packages are blocked, human CLI hides
+technical hashes by default, and no Identity/Memory/SQLite/Temporal/LLM contract
+was changed.
+
+### STAGE-16.2. Action Autonomy Policy
+
+Статус: **NEXT — NOT IMPLEMENTED**
+
+Define explicit standing grants by skill, capability, scope and risk. The
+deterministic policy must return `ALLOW`, `REQUIRE_CONFIRMATION` or `DENY` and
+remain separate from proactive contact policy. This stage must not execute a
+tool or introduce an agent loop.

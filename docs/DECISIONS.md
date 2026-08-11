@@ -478,6 +478,24 @@ active ModelProfile. LLM не может превратить offer в tool call
 mutation или собственное разрешение действовать. Отклонение и доставка
 идемпотентно фиксируются существующим audit, без новой storage subsystem.
 
+### DEC-063. A skill declaration never grants execution permission
+
+Статус: **Принято и реализовано (Stage 16.1)**
+
+Skill manifest описывает procedure, requested capabilities, scopes, risk и
+maximum autonomy ceiling, но не может включить себя, разрешить tool или изменить
+policy. Registration означает только явное признание локального package Мишей.
+Skill, Tool и Action Autonomy Policy остаются разными слоями.
+
+### DEC-064. Registered skill packages are integrity-pinned and inert
+
+Статус: **Принято и реализовано (Stage 16.1)**
+
+Registry фиксирует SHA-256 всего пакета и после restart различает verified,
+modified, missing и invalid. Discovery и registration не импортируют entrypoint
+и не исполняют package code. Изменение пакета требует отдельного будущего
+upgrade flow; оно не наследует прежнее доверие автоматически.
+
 ### DEC-047. Local model profiles are operating configuration
 
 Статус: **Принято и реализовано (LLM-03)**

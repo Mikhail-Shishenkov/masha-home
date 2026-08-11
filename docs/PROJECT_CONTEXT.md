@@ -73,6 +73,11 @@ Masha Home — некоммерческий персональный проек�
 - **Skill and Action Gateway** — будущий контролируемый доступ к навыкам, приложениям и локальным ресурсам.
 - **Local UI** — общее локальное пространство с чатом, памятью, задачами, настройками и визуальным образом.
 
+Stage 16.1 начинает Skill and Action Gateway только с inert registry. Локальный
+skill package может задекларировать capabilities, scope, risk и потолок
+автономности, но registration не выдаёт permission и не запускает entrypoint.
+Исполнение, standing grants и agent loop вводятся отдельными этапами.
+
 ## 6. Память
 
 Базовые типы памяти:

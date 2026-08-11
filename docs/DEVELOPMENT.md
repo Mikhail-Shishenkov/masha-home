@@ -254,6 +254,29 @@ profile to declare `structured_output`; `primary` supports it and no fallback
 to another profile occurs. Ordinary chat neither creates reflections nor
 injects them into general context.
 
+## Stage 16.1 Skill Registry
+
+Place a local package under `skills/<skill_id>/` with `skill.json` and the
+declared instructions file, then use:
+
+```powershell
+.\masha.ps1 skills list
+.\masha.ps1 skills show <skill_id>
+.\masha.ps1 skills verify <skill_id>
+.\masha.ps1 skills register <skill_id>
+```
+
+Add `--raw` only for the package digest and full technical descriptor. Listing
+and verification are read-only. Registration writes only
+`local-data/config/skills.json`; it does not import code or grant execution.
+Changed registered packages are reported as `modified` and must remain blocked.
+
+Run targeted tests with:
+
+```powershell
+python -m pytest tests/test_skill_registry.py -q
+```
+
 ## Конфигурация
 
 `.env.example` содержит только безопасные локальные значения и зарезервированные ключи. Текущий прототип ещё не загружает `.env` автоматически.
