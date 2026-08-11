@@ -395,3 +395,16 @@ The event-origin boundary is explicit: `LOCAL_TEMPORAL_EVENT` may proceed to
 the existing policy engine, while `EXTERNAL_EVENT` always returns
 `SUPPRESS / external_event_not_implemented`. There is no web lookup, trusted
 external source, OS autostart or external notification channel in MEM-12.9.
+
+## 22. Stage 13 unified Daily Runtime
+
+Stage 13 adds orchestration, not a new temporal domain. `DailyRuntime` invokes
+the existing Commitment recovery, deterministic policy, interaction service
+and check-in lifecycle in one order: REMIND before CHECK_IN. One cycle may
+reserve only one new contact, and a delivered interaction awaiting the user
+blocks another contact. The same path is used by manual execution and the local
+daemon.
+
+The bounded runtime receipt is operational evidence only. It contains no
+generated message text and cannot mutate or become Identity, Memory,
+Commitment, conversation history or Temporal truth.

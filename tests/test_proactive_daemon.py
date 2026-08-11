@@ -1,9 +1,11 @@
 import os
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
 
 from backend.llm.model_profiles import ModelProfileStore
+from backend.runtime.daily_runtime import DailyCycleReceipt
 from backend.temporal.proactive import ProactivePolicy, ProactivePolicyStore
 from backend.temporal.proactive_daemon import ProactiveDaemon
 
@@ -16,8 +18,11 @@ def test_background_and_manual_modes_are_persistent_and_deterministic(tmp_path, 
     calls = []
     class Runtime:
         def __init__(self, **kwargs): pass
-        def run_checkin_cycle(self, policy): calls.append(policy.runtime_mode); return SimpleNamespace(decision="suppress", reason="absence_threshold_not_reached")
-    monkeypatch.setattr("backend.temporal.proactive_daemon.ControlledProactiveRuntime", Runtime)
+        def run_cycle(self, policy):
+            calls.append(policy.runtime_mode)
+            now = datetime.now(timezone.utc)
+            return DailyCycleReceipt(cycle_id="test", started_at=now, finished_at=now, model_profile="primary")
+    monkeypatch.setattr("backend.temporal.proactive_daemon.DailyRuntime", Runtime)
 
     policy_store.save(ProactivePolicy(runtime_mode="manual"))
     ProactiveDaemon(tmp_path).run(max_cycles=1)
@@ -56,9 +61,9 @@ def test_stale_lock_is_recovered_and_cycle_failure_is_recorded(tmp_path, monkeyp
 
     class FailingRuntime:
         def __init__(self, **kwargs): pass
-        def run_checkin_cycle(self, policy): raise RuntimeError("isolated cycle failure")
+        def run_cycle(self, policy): raise RuntimeError("isolated cycle failure")
 
-    monkeypatch.setattr("backend.temporal.proactive_daemon.ControlledProactiveRuntime", FailingRuntime)
+    monkeypatch.setattr("backend.temporal.proactive_daemon.DailyRuntime", FailingRuntime)
     daemon = ProactiveDaemon(tmp_path)
     daemon.lock_path.write_text("stale", encoding="utf-8")
     daemon.run(max_cycles=1)
@@ -79,13 +84,14 @@ def test_cycle_failure_does_not_prevent_next_background_cycle(tmp_path, monkeypa
 
     class RecoveringRuntime:
         def __init__(self, **kwargs): pass
-        def run_checkin_cycle(self, policy):
+        def run_cycle(self, policy):
             calls.append(1)
             if len(calls) == 1:
                 raise RuntimeError("first cycle failed")
-            return SimpleNamespace(decision="suppress", reason="absence_threshold_not_reached")
+            now = datetime.now(timezone.utc)
+            return DailyCycleReceipt(cycle_id="recovered", started_at=now, finished_at=now, model_profile="primary")
 
-    monkeypatch.setattr("backend.temporal.proactive_daemon.ControlledProactiveRuntime", RecoveringRuntime)
+    monkeypatch.setattr("backend.temporal.proactive_daemon.DailyRuntime", RecoveringRuntime)
     daemon = ProactiveDaemon(tmp_path, sleep=lambda _: None)
     daemon.run(max_cycles=2)
 

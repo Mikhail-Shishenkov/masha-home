@@ -194,6 +194,26 @@ switch. The daemon recovers stale locks and records cycle failures without
 gaining decision authority. External events are not implemented and are always
 suppressed at the explicit origin boundary.
 
+## Stage 13 Daily Runtime
+
+Use one of the human entry points:
+
+```powershell
+.\masha.ps1 chat
+.\masha.ps1 status
+.\masha.ps1 run
+.\masha.ps1 receipts
+.\masha.ps1 background
+.\masha.ps1 stop
+```
+
+The equivalent technical commands are `python -m backend.runtime.cli
+status|run|receipts`. Both daemon and manual execution use `DailyRuntime`.
+Receipts live in ignored `local-data/runtime/daily-runtime-receipts.json`, are
+bounded to 100 entries and contain no generated message text. Health checks are
+read-only. Missing backups and a stopped daemon are warnings; the runtime does
+not silently repair or mutate persistent domain state.
+
 ## Конфигурация
 
 `.env.example` содержит только безопасные локальные значения и зарезервированные ключи. Текущий прототип ещё не загружает `.env` автоматически.

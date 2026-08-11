@@ -9,8 +9,9 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from backend.runtime.daily_runtime import DailyCycleReceipt, DailyRuntime, DailyRuntimeJournal
+
 from .proactive import ProactivePolicyStore
-from .proactive_runtime import ControlledProactiveRuntime
 
 
 class ProactiveDaemon:
@@ -21,6 +22,7 @@ class ProactiveDaemon:
         self.lock_path = self.runtime_dir / "proactive-daemon.lock"
         self.stop_path = self.runtime_dir / "proactive-daemon.stop"
         self.status_path = self.runtime_dir / "proactive-daemon-status.json"
+        self.journal = DailyRuntimeJournal(self.runtime_dir / "daily-runtime-receipts.json")
         self.sleep = sleep
 
     def run(self, *, max_cycles: int | None = None):
@@ -37,11 +39,14 @@ class ProactiveDaemon:
                     policy = ProactivePolicyStore(service.model_profiles.path.parent / "proactive-policy.json").load()
                     interval = policy.cycle_interval_seconds
                     if policy.runtime_mode == "background":
-                        result = ControlledProactiveRuntime(history=service.history, temporal_engine=service.temporal_engine, repository=service.memory_retriever.memory_store, identity_kernel=service.identity_kernel, router=service.router, model_profiles=service.model_profiles).run_checkin_cycle(policy)
-                        self._status("running", result=result.decision, reason=result.reason, error=None, interval=interval)
+                        receipt = DailyRuntime(history=service.history, temporal_engine=service.temporal_engine, repository=service.memory_retriever.memory_store, identity_kernel=service.identity_kernel, router=service.router, model_profiles=service.model_profiles).run_cycle(policy)
+                        self.journal.append(receipt)
+                        self._status("running", result=receipt.result, reason=receipt.reason, error=None, interval=interval)
                     else:
                         self._status("running", result="manual_mode", reason="background_disabled", error=None, interval=interval)
                 except Exception as error:
+                    now = datetime.now(timezone.utc)
+                    self.journal.append(DailyCycleReceipt(cycle_id=f"error_{time.time_ns()}", started_at=now, finished_at=now, model_profile="unavailable", error=str(error)))
                     self._status("running", result="error", reason="cycle_error", error=str(error), interval=interval)
                 cycles += 1
                 if max_cycles is None or cycles < max_cycles:

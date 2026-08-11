@@ -57,3 +57,17 @@ def test_delivery_stats_are_local_and_restart_safe(tmp_path, canonical_memory):
 
     assert count == 1
     assert latest == NOW
+
+
+def test_daily_limit_uses_moscow_calendar_day(tmp_path, canonical_memory):
+    repo, candidate = _candidate(tmp_path, canonical_memory)
+    store = ProactiveInteractionStore(repo)
+    store.ensure_candidate(candidate)
+    previous_moscow_day = datetime(2026, 8, 10, 20, 30, tzinfo=timezone.utc)
+    current_moscow_day = datetime(2026, 8, 10, 22, 30, tzinfo=timezone.utc)
+    store.mark_delivered(candidate.event.event_id, "local reminder", previous_moscow_day)
+
+    count, latest = store.delivery_stats(current_moscow_day)
+
+    assert count == 0
+    assert latest == previous_moscow_day

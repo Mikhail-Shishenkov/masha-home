@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import datetime, time
 from enum import Enum
 from pathlib import Path
@@ -18,6 +19,12 @@ class ProactiveEventOrigin(str, Enum):
 
     LOCAL_TEMPORAL_EVENT = "local_temporal_event"
     EXTERNAL_EVENT = "external_event"
+
+
+@dataclass(frozen=True)
+class ProactiveEvaluation:
+    decision: ProactiveDecision
+    reason: str
 
 
 class ProactivePolicy(BaseModel):
@@ -64,19 +71,39 @@ class ProactiveDecisionEngine:
         reminders_sent: int = 0,
         mutation_requested: bool = False,
     ) -> ProactiveDecision:
+        return self.evaluate_reminder(
+            policy,
+            now=now,
+            last_reminder_at=last_reminder_at,
+            reminders_sent=reminders_sent,
+            mutation_requested=mutation_requested,
+        ).decision
+
+    def evaluate_reminder(
+        self,
+        policy: ProactivePolicy,
+        *,
+        now: datetime,
+        last_reminder_at: datetime | None = None,
+        reminders_sent: int = 0,
+        mutation_requested: bool = False,
+    ) -> ProactiveEvaluation:
+        """Return a deterministic permission and an application-owned reason."""
         if mutation_requested:
-            return ProactiveDecision.REQUIRE_CONFIRMATION
-        if not policy.enabled or policy.proactive_level < 1 or not policy.allow_commitment_reminders:
-            return ProactiveDecision.SUPPRESS
+            return ProactiveEvaluation(ProactiveDecision.REQUIRE_CONFIRMATION, "mutation_requires_confirmation")
+        if not policy.enabled:
+            return ProactiveEvaluation(ProactiveDecision.SUPPRESS, "proactive_disabled")
+        if policy.proactive_level < 1:
+            return ProactiveEvaluation(ProactiveDecision.SUPPRESS, "level_below_reminder")
+        if not policy.allow_commitment_reminders:
+            return ProactiveEvaluation(ProactiveDecision.SUPPRESS, "reminders_disabled")
         if self._in_quiet_hours(now, policy):
-            return ProactiveDecision.SUPPRESS
+            return ProactiveEvaluation(ProactiveDecision.SUPPRESS, "quiet_hours")
         if reminders_sent >= min(policy.maximum_reminders, policy.daily_message_limit):
-            return ProactiveDecision.SUPPRESS
-        if last_reminder_at is not None:
-            elapsed = (now - last_reminder_at).total_seconds()
-            if elapsed < policy.cooldown_seconds:
-                return ProactiveDecision.SUPPRESS
-        return ProactiveDecision.REMIND
+            return ProactiveEvaluation(ProactiveDecision.SUPPRESS, "daily_limit")
+        if last_reminder_at is not None and (now - last_reminder_at).total_seconds() < policy.cooldown_seconds:
+            return ProactiveEvaluation(ProactiveDecision.SUPPRESS, "cooldown")
+        return ProactiveEvaluation(ProactiveDecision.REMIND, "authorised")
 
     def decide_checkin(self, policy: ProactivePolicy, *, absence_seconds: int | None, now: datetime, last_reminder_at: datetime | None = None, reminders_sent: int = 0) -> ProactiveDecision:
         if not policy.enabled or policy.proactive_level < 2 or not policy.allow_checkins: return ProactiveDecision.SUPPRESS

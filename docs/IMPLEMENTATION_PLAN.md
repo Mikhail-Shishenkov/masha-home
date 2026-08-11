@@ -455,3 +455,14 @@ Availability is checked before persistence and no automatic fallback exists.
 Changing a profile changes only the LLM execution target; it does not mutate
 Identity, SQLite memory, proposals/audit, conversation history/ID, or
 TemporalContext.
+
+### STAGE-13. Daily Runtime Hardening
+
+Статус: **DONE**
+
+One `DailyRuntime` now orchestrates Commitment reminders and CHECK_IN in a
+single deterministic heartbeat. Reminder priority, one-contact-per-cycle and
+waiting-for-user suppression protect attention without LLM discretion. Manual
+and background execution share the same path. A bounded receipt journal,
+read-only runtime health and `masha.ps1` human entry point are implemented.
+SQLite schema, Identity, Memory and Commitment contracts were not changed.

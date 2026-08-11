@@ -413,6 +413,23 @@ human language. The trust boundary currently admits only deterministic local
 temporal events. External events are `SUPPRESS / NOT_IMPLEMENTED` until a
 separately approved trusted-source and verification contract exists.
 
+### DEC-056. One heartbeat permits at most one proactive contact
+
+Статус: **Принято и реализовано (Stage 13)**
+
+REMIND and CHECK_IN share one Daily Runtime orchestration path. Commitment
+reminders have priority, only one new proactive contact may be formulated per
+cycle, and an already delivered interaction waiting for the user suppresses a
+new contact. These are deterministic application rules, not LLM choices.
+
+### DEC-057. Runtime receipts are operating evidence, not Memory
+
+Статус: **Принято и реализовано (Stage 13)**
+
+The bounded local receipt journal records decisions and runtime outcomes but
+does not copy generated messages, conversation content or Memory payloads. It
+cannot evolve Identity or become a second memory subsystem.
+
 ### DEC-047. Local model profiles are operating configuration
 
 Статус: **Принято и реализовано (LLM-03)**

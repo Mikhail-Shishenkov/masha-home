@@ -30,6 +30,7 @@ from backend.temporal.proactive import ProactiveDecisionEngine, ProactivePolicy,
 from backend.temporal.proactive_interaction import ProactiveInteractionService, ProactiveInteractionStore, ProactiveInteractionUnavailableError
 from backend.temporal.proactive_daemon import ProactiveDaemon
 from backend.temporal.proactive_runtime import ControlledProactiveRuntime
+from backend.runtime.daily_runtime import DailyRuntime, DailyRuntimeJournal
 
 from .conversation_service import ConversationService, ConversationUnavailableError
 from .conversation_store import ConversationStore
@@ -263,6 +264,11 @@ _PROACTIVE_REASONS = {
     "cycle_error": "цикл завершился ошибкой",
     "policy_suppressed": "настройки не разрешили сообщение",
     "external_event_not_implemented": "внешние события не подключены и всегда блокируются",
+    "awaiting_user_response": "предыдущее сообщение ещё ждёт реакции",
+    "cycle_delivery_limit": "за один цикл допускается только одно обращение",
+    "reminders_disabled": "напоминания выключены",
+    "local_model_unavailable": "локальная модель временно недоступна",
+    "no_events": "значимых событий нет",
 }
 
 
@@ -299,6 +305,18 @@ def _run_proactive_command_legacy(command: str, *, service: ConversationService,
     daemon = ProactiveDaemon(project_root)
     if action in {"status", "settings"}:
         state = daemon.status()
+        latest_receipt = journal.latest()
+        if latest_receipt is not None and (
+            not state.get("last_cycle")
+            or latest_receipt.started_at > datetime.fromisoformat(state["last_cycle"])
+        ):
+            state = {
+                **state,
+                "last_cycle": latest_receipt.started_at.isoformat(),
+                "last_result": latest_receipt.result,
+                "last_reason": latest_receipt.reason,
+                "last_error": latest_receipt.error,
+            }
         output_fn(f"Daemon: {state.get('daemon', 'stopped')}\nРежим: {policy.runtime_mode}\nИнициативность: {'включена' if policy.enabled else 'выключена'}\nУровень: {policy.proactive_level}\nНапоминания: {'включены' if policy.allow_commitment_reminders else 'выключены'}\nCheck-in: {'включён' if policy.allow_checkins else 'выключен'}\nQuiet hours: {policy.quiet_hours_start or 'нет'}–{policy.quiet_hours_end or 'нет'}\nCooldown: {policy.cooldown_seconds // 3600} ч\nЛимит: {policy.daily_message_limit} в день\nПоследний цикл: {state.get('last_cycle', 'нет')}\nРезультат: {state.get('last_result', 'нет')}\nОшибка: {state.get('last_error') or 'нет'}\nСледующий цикл: {state.get('next_cycle', 'нет')}")
         return
     if action == "mode" and len(parts) == 2 and parts[1] in {"manual", "background"}:
@@ -413,6 +431,7 @@ def _run_proactive_command(command: str, *, service: ConversationService, output
     store = ProactiveInteractionStore(repository)
     policy = ProactivePolicyStore(service.model_profiles.path.parent / "proactive-policy.json").load()
     daemon = ProactiveDaemon(service.model_profiles.path.parents[2])
+    journal = DailyRuntimeJournal(service.model_profiles.path.parents[2] / "local-data" / "runtime" / "daily-runtime-receipts.json")
 
     if action in {"status", "settings"}:
         state = daemon.status()
@@ -489,6 +508,17 @@ def _run_proactive_command(command: str, *, service: ConversationService, output
         now = service.temporal_engine.clock.now_utc()
         result = store.acknowledge(row["event_id"], now) if action == "acknowledge" else store.dismiss(row["event_id"], now)
         output_fn("Поняла, отметила." if result["state"] == "acknowledged" else "Хорошо, больше не буду повторять это сообщение.")
+        return
+
+    if action in {"recover", "run"}:
+        if "--remind" in parts:
+            policy = policy.model_copy(update={"enabled": True, "proactive_level": max(1, policy.proactive_level), "allow_commitment_reminders": True, "maximum_reminders": max(1, policy.maximum_reminders), "daily_message_limit": max(1, policy.daily_message_limit)})
+        receipt = journal.append(DailyRuntime(history=service.history, temporal_engine=service.temporal_engine, repository=repository, identity_kernel=service.identity_kernel, router=service.router, model_profiles=service.model_profiles).run_cycle(policy))
+        if raw:
+            output_fn(json.dumps(receipt.model_dump(mode="json"), ensure_ascii=False))
+            return
+        messages = [store.get(item.event_id).get("message_text") for item in receipt.items if item.event_id and item.state == "delivered" and store.get(item.event_id)]
+        output_fn("\n".join(message for message in messages if message) if messages else f"Новых сообщений нет. Причина: {_PROACTIVE_REASONS.get(receipt.reason, receipt.reason)}.")
         return
 
     _run_proactive_command_legacy(command, service=service, output_fn=output_fn)

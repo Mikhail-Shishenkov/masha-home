@@ -11,6 +11,7 @@ from backend.llm.model_router import ModelRouter
 from backend.llm.model_profiles import ModelProfileStore
 
 from .proactive_events import ProactiveEventState, ProactiveEventStore
+from .temporal_engine import MOSCOW
 from .temporal_models import CheckInCandidate, ProactiveCandidate, ProactiveDecision
 
 
@@ -81,7 +82,7 @@ class ProactiveInteractionStore:
 
     def delivery_stats(self, now: datetime) -> tuple[int, datetime | None]:
         """Return today's delivered count and latest local delivery timestamp."""
-        start = now.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        start = now.astimezone(MOSCOW).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
         with self.repository._connection() as c:
             rows = c.execute(
                 "SELECT delivered_at FROM proactive_interactions WHERE delivered_at IS NOT NULL"

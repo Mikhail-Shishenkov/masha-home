@@ -447,3 +447,16 @@ daemon detects a live duplicate process, recovers stale locks, records cycle
 errors and continues with later cycles. Only `LOCAL_TEMPORAL_EVENT` is within
 the runtime trust boundary; `EXTERNAL_EVENT` is explicitly suppressed as not
 implemented. No external source or delivery channel exists.
+
+## CURRENT — STAGE 13 DAILY RUNTIME
+
+`backend.runtime.daily_runtime.DailyRuntime` is the single manual/background
+orchestration path over the existing temporal and proactive subsystems. It
+processes REMIND before CHECK_IN, permits at most one new contact per heartbeat
+and suppresses new contact while a delivered interaction awaits the user.
+Deterministic bounded receipts are stored outside Memory and conversation
+history. `RuntimeHealthService` performs read-only Identity, SQLite, history,
+model, policy, backup and daemon checks. `masha.ps1` is the Windows-local human
+entry point; it does not install autostart or an external channel.
+
+Current regression: `160 passed`.
