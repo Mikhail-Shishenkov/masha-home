@@ -39,12 +39,28 @@ class LocalConversationBridge(QObject):
         conversation = self._application.latest_conversation(limit=16)
         if conversation is not None:
             self._conversation_id = conversation.conversation_id
+        pending = (
+            None
+            if conversation is None
+            else self._application.pending_confirmation(conversation.conversation_id)
+        )
+        if pending is not None:
+            snapshot = self._session_snapshot(
+                "confirmation_requested",
+                title=pending.title,
+                summary=pending.subject,
+            )
         self._emit(
             {
                 "kind": "home_initial",
                 "snapshot": snapshot.model_dump(mode="json"),
                 "conversation": None if conversation is None else conversation.model_dump(mode="json"),
                 "recent": self._recent_payload(),
+                "commitments_count": sum(
+                    item.can_propose_completion
+                    for item in self._application.commitments(limit=12).items
+                ),
+                "pending_confirmation": None if pending is None else pending.model_dump(mode="json"),
             }
         )
 
@@ -72,6 +88,28 @@ class LocalConversationBridge(QObject):
                 "attention": self._application.home_attention(
                     conversation_id=self._conversation_id
                 ).model_dump(mode="json"),
+            }
+        )
+
+    @Slot()
+    def loadCommitments(self):  # noqa: N802 - Qt slot name is part of the JS contract
+        if self._application is None or self._turn_in_flight:
+            self._emit({"kind": "commitments_unavailable"})
+            return
+        commitments = self._application.commitments(limit=12)
+        if self._session is None:
+            self._session = self._application.open_home_session()
+        summary = (
+            "Открытых дел нет"
+            if not commitments.items
+            else f"Дел рядом: {len(commitments.items)}"
+        )
+        snapshot = self._session_snapshot("commitments_opened", summary=summary)
+        self._emit(
+            {
+                "kind": "commitments_loaded",
+                "commitments": commitments.model_dump(mode="json"),
+                "snapshot": snapshot.model_dump(mode="json"),
             }
         )
 
@@ -123,12 +161,21 @@ class LocalConversationBridge(QObject):
             return
         self._conversation_id = conversation.conversation_id
         self._session = self._application.open_home_session()
+        pending = self._application.pending_confirmation(conversation.conversation_id)
+        snapshot = self._session_snapshot("opened")
+        if pending is not None:
+            snapshot = self._session_snapshot(
+                "confirmation_requested",
+                title=pending.title,
+                summary=pending.subject,
+            )
         self._emit(
             {
                 "kind": "conversation_opened",
-                "snapshot": self._session_snapshot("opened").model_dump(mode="json"),
+                "snapshot": snapshot.model_dump(mode="json"),
                 "conversation": conversation.model_dump(mode="json"),
                 "recent": self._recent_payload(),
+                "pending_confirmation": None if pending is None else pending.model_dump(mode="json"),
             }
         )
 
@@ -180,6 +227,92 @@ class LocalConversationBridge(QObject):
         )
         future.add_done_callback(self._finish_turn)
 
+    @Slot(str)
+    def proposeCommitmentCompletion(self, commitment_id: str):  # noqa: N802
+        if self._application is None or self._session is None:
+            self._emit({"kind": "home_unavailable"})
+            return
+        if self._turn_in_flight:
+            self._emit({"kind": "commitment_operation_rejected", "reason": "turn_in_flight"})
+            return
+        visible = {
+            item.commitment_id: item
+            for item in self._application.commitments(limit=12).items
+        }
+        selected = visible.get(commitment_id)
+        if selected is None or not selected.can_propose_completion:
+            self._emit({"kind": "commitment_operation_rejected", "reason": "stale_or_invalid"})
+            return
+        try:
+            result = self._application.propose_commitment_completion(
+                commitment_id=commitment_id,
+                conversation_id=self._conversation_id,
+                project_id=HOME_PROJECT_ID,
+            )
+        except Exception:
+            self._emit({"kind": "commitment_operation_rejected", "reason": "proposal_failed"})
+            return
+        self._conversation_id = result.conversation_id
+        snapshot = self._session_snapshot(
+            "confirmation_requested",
+            title=result.pending_confirmation.title,
+            summary=result.pending_confirmation.subject,
+        )
+        self._emit(
+            {
+                "kind": "commitment_completion_proposed",
+                "result": result.model_dump(mode="json"),
+                "snapshot": snapshot.model_dump(mode="json"),
+            }
+        )
+
+    @Slot(str, str)
+    def resolveConfirmation(self, proposal_id: str, decision: str):  # noqa: N802
+        if self._application is None or self._session is None or self._conversation_id is None:
+            self._emit({"kind": "home_unavailable"})
+            return
+        if self._turn_in_flight:
+            self._emit({"kind": "turn_rejected", "reason": "turn_in_flight"})
+            return
+        if self._application.status().emergency_stop_engaged:
+            self._emit({"kind": "confirmation_rejected", "reason": "safety_stop"})
+            return
+        pending = self._application.pending_confirmation(self._conversation_id)
+        if (
+            pending is None
+            or pending.proposal_id != proposal_id
+            or decision not in {"confirm", "reject"}
+        ):
+            self._emit({"kind": "confirmation_rejected", "reason": "stale_or_invalid"})
+            return
+        self._turn_in_flight = True
+        snapshot = self._session_snapshot(
+            "confirmation_resolving",
+            title=(
+                "Оставляю без изменений"
+                if decision == "reject"
+                else "Сохраняю обязательство"
+                if pending.confirmation_type == "commitment_create"
+                else "Завершаю обязательство"
+            ),
+        )
+        self._emit(
+            {
+                "kind": "confirmation_started",
+                "proposal_id": proposal_id,
+                "decision": decision,
+                "snapshot": snapshot.model_dump(mode="json"),
+            }
+        )
+        future = self._executor.submit(
+            self._application.resolve_confirmation,
+            conversation_id=self._conversation_id,
+            proposal_id=proposal_id,
+            decision=decision,
+            project_id=HOME_PROJECT_ID,
+        )
+        future.add_done_callback(self._finish_confirmation)
+
     def _send_turn(self, content: str):
         """Publish the deterministic thinking phase before local model execution."""
         if self._application.status().model_available:
@@ -212,7 +345,14 @@ class LocalConversationBridge(QObject):
             self._conversation_id = result.conversation_id or self._conversation_id
             result_payload = result.model_dump(mode="json")
             if result.status is ConversationTurnStatus.COMPLETED:
-                snapshot = self._session_snapshot("assistant_responded")
+                if result.pending_confirmation is not None:
+                    snapshot = self._session_snapshot(
+                        "confirmation_requested",
+                        title=result.pending_confirmation.title,
+                        summary=result.pending_confirmation.subject,
+                    )
+                else:
+                    snapshot = self._session_snapshot("assistant_responded")
             else:
                 snapshot = self._session_snapshot(
                     "model_unavailable",
@@ -225,6 +365,47 @@ class LocalConversationBridge(QObject):
                 "kind": "turn_result",
                 "result": result_payload,
                 "snapshot": snapshot.model_dump(mode="json"),
+            }
+        )
+
+    def _finish_confirmation(self, future) -> None:
+        try:
+            result = future.result()
+        except Exception:
+            result_payload = None
+            snapshot = self._session_snapshot(
+                "confirmation_failed",
+                summary="Изменение не применено",
+            )
+        else:
+            result_payload = result.model_dump(mode="json")
+            summary = (
+                "Изменение подтверждено"
+                if result.status.value == "confirmed"
+                else "Ничего не изменено"
+                if result.status.value == "rejected"
+                else "Изменение не применено"
+            )
+            snapshot = self._session_snapshot(
+                "confirmation_resolved"
+                if result.status.value != "failed"
+                else "confirmation_failed",
+                summary=summary,
+            )
+        self._turn_in_flight = False
+        self._emit(
+            {
+                "kind": "confirmation_result",
+                "result": result_payload,
+                "snapshot": snapshot.model_dump(mode="json"),
+                "commitments_count": (
+                    0
+                    if self._application is None
+                    else sum(
+                        item.can_propose_completion
+                        for item in self._application.commitments(limit=12).items
+                    )
+                ),
             }
         )
 

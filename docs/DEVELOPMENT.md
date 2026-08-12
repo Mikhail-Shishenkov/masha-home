@@ -571,6 +571,45 @@ python -m pytest tests/test_composition_runtime.py tests/test_presentation_runti
 
 UI-04B baseline: `55 passed` targeted; `334 passed` full regression.
 
+## UI-06D typed commitment confirmation
+
+Start the normal desktop Home and write an explicit Commitment request, for
+example:
+
+```text
+Маша, запомни, что завтра в 18:00 нужно отправить отчёт
+```
+
+The production Home presents a human confirmation surface with
+`Подтверждаю` and `Не сейчас`. Both operations use the existing deterministic
+proposal path. The UI never needs a proposal UUID and no LLM call is made to
+resolve the choice.
+
+Targeted verification:
+
+```powershell
+python -m pytest tests/test_application_boundary.py tests/test_desktop_host.py tests/test_conversation_service.py tests/test_memory_intent.py tests/test_commitment_completion.py -q
+node --test frontend/scenes/scene-map.test.cjs
+```
+
+## UI-06E Commitment work objects
+
+Use the small `Дела` object at the bottom of the production Home. The list is
+read-only until an open item is explicitly selected with `Готово`. Selection
+creates a proposal; `Подтверждаю` or `Не сейчас` then use the same UI-06D
+confirmation and Activity flow.
+
+The displayed statuses are deterministic Temporal Engine projections. In
+particular, `due_at == now` is still open. Listing does not invoke Ollama or
+write Memory.
+
+Targeted verification:
+
+```powershell
+python -m pytest tests/test_application_boundary.py tests/test_desktop_host.py -q
+node --test frontend/scenes/scene-map.test.cjs
+```
+
 ## Конфигурация
 
 `.env.example` содержит только безопасные локальные значения и зарезервированные ключи. Текущий прототип ещё не загружает `.env` автоматически.

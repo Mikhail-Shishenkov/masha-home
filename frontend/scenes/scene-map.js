@@ -63,6 +63,7 @@
         return SCENES.conversation;
       case "listening":
       case "waiting":
+      case "confirmation":
         return SCENES.listening;
       case "processing":
         return SCENES.thinking;

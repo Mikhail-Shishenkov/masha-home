@@ -7,6 +7,9 @@ from datetime import datetime, timezone
 from backend.presentation import (
     AssistantResponded,
     AssistantStartedThinking,
+    ActivityCompleted,
+    ActivityFailed,
+    ActivityStarted,
     AutonomyResumed,
     CompositionPlan,
     CompositionResolver,
@@ -14,6 +17,14 @@ from backend.presentation import (
     HomePresentationModel,
     EmergencyStopEngaged,
     ModelUnavailable,
+    InteractionSurface,
+    SurfaceCapability,
+    SurfaceCompleted,
+    SurfaceCreated,
+    SurfaceFocused,
+    SurfaceKind,
+    SurfaceLifecycle,
+    SurfaceRole,
     PresentationRuntime,
     UserOpenedApplication,
     UserSentMessage,
@@ -109,6 +120,79 @@ class HomePresentationSession:
 
     def assistant_responded(self) -> HomeSnapshotView:
         return self._dispatch(AssistantResponded(occurred_at=datetime.now(timezone.utc)))
+
+    def confirmation_requested(self, *, title: str, summary: str) -> HomeSnapshotView:
+        now = datetime.now(timezone.utc)
+        self._dispatch(
+            SurfaceCreated(
+                occurred_at=now,
+                surface=InteractionSurface(
+                    surface_id="confirmation.commitment",
+                    kind=SurfaceKind.CONFIRMATION,
+                    lifecycle=SurfaceLifecycle.ACTIVE,
+                    role=SurfaceRole.DECISION,
+                    title=title,
+                    summary=summary,
+                    sensitive=True,
+                    capabilities=(SurfaceCapability.CONFIRM, SurfaceCapability.REJECT),
+                ),
+            )
+        )
+        return self._dispatch(
+            SurfaceFocused(occurred_at=now, surface_id="confirmation.commitment")
+        )
+
+    def commitments_opened(self, *, summary: str) -> HomeSnapshotView:
+        now = datetime.now(timezone.utc)
+        self._dispatch(
+            SurfaceCreated(
+                occurred_at=now,
+                surface=InteractionSurface(
+                    surface_id="home.commitments",
+                    kind=SurfaceKind.COMMITMENT,
+                    lifecycle=SurfaceLifecycle.ACTIVE,
+                    role=SurfaceRole.SUPPORTING,
+                    title="Наши дела",
+                    summary=summary,
+                    capabilities=(SurfaceCapability.INSPECT,),
+                ),
+            )
+        )
+        return self._dispatch(SurfaceFocused(occurred_at=now, surface_id="home.commitments"))
+
+    def confirmation_resolving(self, *, title: str) -> HomeSnapshotView:
+        now = datetime.now(timezone.utc)
+        self._dispatch(
+            SurfaceCompleted(occurred_at=now, surface_id="confirmation.commitment")
+        )
+        return self._dispatch(
+            ActivityStarted(
+                occurred_at=now,
+                activity_id="activity.confirmation",
+                surface_id="activity.confirmation",
+                title=title,
+                summary="Применяю только подтверждённое изменение локально",
+            )
+        )
+
+    def confirmation_resolved(self, *, summary: str) -> HomeSnapshotView:
+        return self._dispatch(
+            ActivityCompleted(
+                occurred_at=datetime.now(timezone.utc),
+                activity_id="activity.confirmation",
+                summary=summary,
+            )
+        )
+
+    def confirmation_failed(self, *, summary: str) -> HomeSnapshotView:
+        return self._dispatch(
+            ActivityFailed(
+                occurred_at=datetime.now(timezone.utc),
+                activity_id="activity.confirmation",
+                summary=summary,
+                reason_code="confirmation_failed",
+            )
+        )
 
     def model_unavailable(self, *, profile_id: str, display_name: str) -> HomeSnapshotView:
         return self._dispatch(

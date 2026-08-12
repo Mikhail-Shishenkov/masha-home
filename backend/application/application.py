@@ -6,12 +6,16 @@ from datetime import datetime, timezone
 
 from .contracts import (
     ConversationTurnResult,
+    CommitmentListView,
+    CommitmentProposalResult,
+    ConfirmationResolutionResult,
     ConversationView,
     ConversationSummaryView,
     HomeAttentionView,
     MashaStatusView,
     ModelProfileView,
     ModelSwitchResult,
+    PendingConfirmationView,
     ResolvedVisualAsset,
     SafetyView,
     VisualAssetView,
@@ -34,12 +38,14 @@ class MashaApplication:
         visuals: VisualIdentityResolver,
         models: ModelSettingsService,
         home_snapshot: HomeSnapshotService,
+        commitments,
     ):
         self._conversation = conversation
         self._status = status
         self._visuals = visuals
         self._models = models
         self._home_snapshot = home_snapshot
+        self._commitments = commitments
 
     def send_message(self, content: str, *, project_id: str, conversation_id: str | None = None) -> ConversationTurnResult:
         return self._conversation.send_message(content, project_id=project_id, conversation_id=conversation_id)
@@ -53,6 +59,40 @@ class MashaApplication:
 
     def recent_conversations(self, *, limit: int = 8) -> tuple[ConversationSummaryView, ...]:
         return self._conversation.recent_conversations(limit=limit)
+
+    def commitments(self, *, limit: int = 12) -> CommitmentListView:
+        return self._commitments.list(limit=limit)
+
+    def propose_commitment_completion(
+        self,
+        *,
+        commitment_id: str,
+        conversation_id: str | None,
+        project_id: str,
+    ) -> CommitmentProposalResult:
+        return self._commitments.propose_completion(
+            commitment_id=commitment_id,
+            conversation_id=conversation_id,
+            project_id=project_id,
+        )
+
+    def pending_confirmation(self, conversation_id: str) -> PendingConfirmationView | None:
+        return self._conversation.pending_confirmation(conversation_id)
+
+    def resolve_confirmation(
+        self,
+        *,
+        conversation_id: str,
+        proposal_id: str,
+        decision: str,
+        project_id: str,
+    ) -> ConfirmationResolutionResult:
+        return self._conversation.resolve_confirmation(
+            conversation_id=conversation_id,
+            proposal_id=proposal_id,
+            decision=decision,
+            project_id=project_id,
+        )
 
     def status(self) -> MashaStatusView:
         return self._status.snapshot()
@@ -77,6 +117,9 @@ class MashaApplication:
             model_label=status.model_label,
             emergency_stop_engaged=status.emergency_stop_engaged,
             safety_label=status.safety_label,
+            commitments_count=sum(
+                item.can_propose_completion for item in self._commitments.list().items
+            ),
         )
 
     def emergency_stop(self, reason: str = "manual_emergency_stop") -> SafetyView:

@@ -153,9 +153,21 @@ class PresentationReducer:
             )
 
         if isinstance(event, SurfaceCreated):
-            return model.model_copy(
-                update={"surfaces": self._upsert_surface(model.surfaces, event.surface)}
-            )
+            update = {"surfaces": self._upsert_surface(model.surfaces, event.surface)}
+            if event.surface.kind in {SurfaceKind.CONFIRMATION, SurfaceKind.COMMITMENT}:
+                update["presence"] = model.presence.model_copy(
+                    update={
+                        "pose": BasePose.ATTENTIVE,
+                        "expression": self._expression(ExpressionCode.ATTENTIVE, 0.38),
+                        "attention": AttentionState.TOWARD_SURFACE,
+                        "activity": (
+                            PresenceActivity.CONFIRMATION
+                            if event.surface.kind is SurfaceKind.CONFIRMATION
+                            else PresenceActivity.WAITING
+                        ),
+                    }
+                )
+            return model.model_copy(update=update)
         if isinstance(event, SurfaceFocused):
             return self._focus(model, event.surface_id)
         if isinstance(event, SurfaceMinimized):
@@ -562,7 +574,14 @@ class PresentationReducer:
             if surface.surface_id == surface_id:
                 rows.append(
                     surface.model_copy(
-                        update={"lifecycle": SurfaceLifecycle.ACTIVE, "role": SurfaceRole.PRIMARY}
+                        update={
+                            "lifecycle": SurfaceLifecycle.ACTIVE,
+                            "role": (
+                                SurfaceRole.DECISION
+                                if surface.role is SurfaceRole.DECISION
+                                else SurfaceRole.PRIMARY
+                            ),
+                        }
                     )
                 )
             elif surface.role is SurfaceRole.PRIMARY:

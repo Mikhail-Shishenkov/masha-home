@@ -23,6 +23,21 @@ const safetyTrigger = document.getElementById("safety-trigger");
 const safetyOverlay = document.getElementById("safety-overlay");
 const resumeAction = document.getElementById("resume-action");
 const sceneLayers = [...document.querySelectorAll(".scene")];
+const operationSurface = document.getElementById("operation-surface");
+const operationEyebrow = document.getElementById("operation-eyebrow");
+const operationTitle = document.getElementById("operation-title");
+const operationSubject = document.getElementById("operation-subject");
+const operationDue = document.getElementById("operation-due");
+const operationSteps = document.getElementById("operation-steps");
+const operationActions = document.getElementById("operation-actions");
+const confirmOperation = document.getElementById("confirm-operation");
+const rejectOperation = document.getElementById("reject-operation");
+const closeOperation = document.getElementById("close-operation");
+const commitmentsTrigger = document.getElementById("commitments-trigger");
+const commitmentsCount = document.getElementById("commitments-count");
+const commitmentsSurface = document.getElementById("commitments-surface");
+const commitmentsList = document.getElementById("commitments-list");
+const closeCommitments = document.getElementById("close-commitments");
 
 let bridge = null;
 let ready = false;
@@ -33,6 +48,7 @@ let activeSceneLayer = 0;
 let activeConversationId = null;
 let sceneTransitionRevision = 0;
 let sceneTransitionTimer = null;
+let pendingConfirmation = null;
 const COMPOSER_MIN_HEIGHT = 44;
 const COMPOSER_MAX_HEIGHT = 112;
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -106,14 +122,134 @@ function setComposerState({ enabled, waiting = false }) {
   newConversationButton.disabled = !enabled || waiting;
   recentToggle.disabled = !enabled || waiting;
   homeAttentionTrigger.disabled = !enabled || waiting;
+  commitmentsTrigger.disabled = !enabled || waiting || Boolean(pendingConfirmation);
   safetyTrigger.disabled = !enabled;
 }
 
 function closeTemporarySurfaces() {
   recentPanel.hidden = true;
   homeAttention.hidden = true;
+  commitmentsSurface.hidden = true;
+  document.documentElement.dataset.commitments = "closed";
   document.documentElement.dataset.homeAttention = "closed";
   homeAttentionTrigger.setAttribute("aria-expanded", "false");
+  commitmentsTrigger.setAttribute("aria-expanded", "false");
+}
+
+function formatDueAt(value) {
+  if (!value) return "";
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "numeric",
+    month: "long",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+const commitmentStatusLabels = {
+  open: "открыто",
+  upcoming: "впереди",
+  overdue: "просрочено",
+  completed: "выполнено",
+  cancelled: "отменено",
+};
+
+function renderCommitments(view) {
+  const items = view?.items || [];
+  commitmentsCount.textContent = String(items.filter((item) => item.can_propose_completion).length);
+  commitmentsList.replaceChildren();
+  if (!items.length) {
+    const empty = document.createElement("li");
+    empty.className = "commitment-empty";
+    empty.textContent = "Сейчас здесь спокойно — открытых обязательств нет.";
+    commitmentsList.append(empty);
+    return;
+  }
+  for (const item of items) {
+    const row = document.createElement("li");
+    row.className = "commitment-item";
+    row.dataset.status = item.status;
+    const copy = document.createElement("div");
+    copy.className = "commitment-copy";
+    const text = document.createElement("p");
+    text.className = "commitment-text";
+    text.textContent = item.text;
+    const meta = document.createElement("p");
+    meta.className = "commitment-meta";
+    const due = item.due_at ? ` · до ${formatDueAt(item.due_at)}` : "";
+    meta.textContent = `${commitmentStatusLabels[item.status] || item.status}${due}`;
+    copy.append(text, meta);
+    row.append(copy);
+    if (item.can_propose_completion) {
+      const complete = document.createElement("button");
+      complete.type = "button";
+      complete.className = "commitment-complete";
+      complete.textContent = "Готово";
+      complete.addEventListener("click", () => {
+        if (!ready || inFlight || pendingConfirmation) return;
+        complete.disabled = true;
+        bridge.proposeCommitmentCompletion(item.commitment_id);
+      });
+      row.append(complete);
+    }
+    commitmentsList.append(row);
+  }
+}
+
+function hideOperationSurface() {
+  operationSurface.hidden = true;
+  document.documentElement.dataset.operation = "none";
+}
+
+function renderPendingConfirmation(confirmation) {
+  pendingConfirmation = confirmation;
+  if (!confirmation) {
+    hideOperationSurface();
+    setComposerState({ enabled: ready, waiting: inFlight });
+    return;
+  }
+  operationEyebrow.textContent = "нужно твоё решение";
+  operationTitle.textContent = confirmation.title;
+  operationSubject.textContent = confirmation.subject;
+  operationDue.textContent = confirmation.due_at ? `До: ${formatDueAt(confirmation.due_at)}` : "";
+  operationDue.hidden = !confirmation.due_at;
+  operationSteps.hidden = true;
+  operationActions.hidden = false;
+  closeOperation.hidden = true;
+  confirmOperation.disabled = false;
+  rejectOperation.disabled = false;
+  operationSurface.hidden = false;
+  document.documentElement.dataset.operation = "confirmation";
+  setComposerState({ enabled: ready, waiting: inFlight });
+}
+
+function renderConfirmationActivity(decision) {
+  operationEyebrow.textContent = "локальная операция";
+  operationTitle.textContent = decision === "confirm" ? "Применяю подтверждение" : "Оставляю без изменений";
+  operationSubject.textContent = pendingConfirmation?.subject || "Проверяю выбранное действие";
+  operationDue.hidden = true;
+  operationActions.hidden = true;
+  closeOperation.hidden = true;
+  operationSteps.hidden = false;
+  for (const step of operationSteps.children) step.dataset.state = "waiting";
+  operationSteps.children[0].dataset.state = "done";
+  operationSteps.children[1].dataset.state = "active";
+  operationSurface.hidden = false;
+  document.documentElement.dataset.operation = "activity";
+}
+
+function renderConfirmationResult(result) {
+  const confirmed = result?.status === "confirmed";
+  const rejected = result?.status === "rejected";
+  operationEyebrow.textContent = confirmed ? "готово" : rejected ? "без изменений" : "не получилось";
+  operationTitle.textContent = confirmed ? "Обязательство обновлено" : rejected ? "Ничего не меняла" : "Изменение не применено";
+  operationSubject.textContent = result?.assistant_message?.content || "Предложение осталось без изменений.";
+  operationSteps.hidden = false;
+  for (const step of operationSteps.children) step.dataset.state = confirmed || rejected ? "done" : "waiting";
+  operationActions.hidden = true;
+  closeOperation.hidden = false;
+  pendingConfirmation = result?.pending_confirmation || null;
+  document.documentElement.dataset.operation = "result";
 }
 
 function renderHomeAttention(attention) {
@@ -129,6 +265,9 @@ function renderHomeAttention(attention) {
     lines.push(`Продолжается разговор: ${attention.active_conversation.preview}`);
   } else {
     lines.push("Наша первая беседа ещё впереди.");
+  }
+  if (attention.commitments_count) {
+    lines.push(`Рядом ${attention.commitments_count} ${attention.commitments_count === 1 ? "дело" : "дел"}.`);
   }
   for (const content of lines) {
     const paragraph = document.createElement("p");
@@ -255,9 +394,44 @@ function handleBridgeEvent(encoded) {
     renderConversation(payload.conversation);
     activeConversationId = payload.conversation?.conversation_id || null;
     renderRecent(payload.recent, activeConversationId);
+    commitmentsCount.textContent = String(payload.commitments_count || 0);
     ready = true;
     clearLocalFailure();
     setComposerState({ enabled: true });
+    renderPendingConfirmation(payload.pending_confirmation);
+    return;
+  }
+  if (payload.kind === "commitments_loaded") {
+    applySnapshot(payload.snapshot);
+    renderCommitments(payload.commitments);
+    recentPanel.hidden = true;
+    homeAttention.hidden = true;
+    commitmentsSurface.hidden = false;
+    document.documentElement.dataset.commitments = "active";
+    commitmentsTrigger.setAttribute("aria-expanded", "true");
+    return;
+  }
+  if (payload.kind === "commitment_completion_proposed") {
+    applySnapshot(payload.snapshot);
+    const result = payload.result;
+    activeConversationId = result.conversation_id;
+    renderMessage(result.user_message);
+    renderMessage(result.assistant_message);
+    surface.classList.add("has-history");
+    title.textContent = "Я рядом.";
+    commitmentsSurface.hidden = true;
+    document.documentElement.dataset.commitments = "closed";
+    commitmentsTrigger.setAttribute("aria-expanded", "false");
+    renderPendingConfirmation(result.pending_confirmation);
+    bridge.loadRecentConversations();
+    scrollToLatestIfAppropriate(true);
+    return;
+  }
+  if (payload.kind === "commitment_operation_rejected" || payload.kind === "commitments_unavailable") {
+    showLocalFailure("Не получилось открыть это действие. Обнови список дел и попробуй ещё раз.");
+    commitmentsSurface.hidden = true;
+    document.documentElement.dataset.commitments = "closed";
+    commitmentsTrigger.setAttribute("aria-expanded", "false");
     return;
   }
   if (payload.kind === "conversation_started") {
@@ -269,6 +443,8 @@ function handleBridgeEvent(encoded) {
     bridge.loadRecentConversations();
     setComposerState({ enabled: ready });
     input.focus();
+    pendingConfirmation = null;
+    hideOperationSurface();
     return;
   }
   if (payload.kind === "recent_conversations") {
@@ -296,6 +472,7 @@ function handleBridgeEvent(encoded) {
     recentPanel.hidden = true;
     clearLocalFailure();
     setComposerState({ enabled: ready });
+    renderPendingConfirmation(payload.pending_confirmation);
     return;
   }
   if (payload.kind === "turn_started") {
@@ -332,7 +509,36 @@ function handleBridgeEvent(encoded) {
     activeConversationId = result?.conversation_id || activeConversationId;
     bridge.loadRecentConversations();
     setComposerState({ enabled: ready });
+    renderPendingConfirmation(result?.pending_confirmation);
     scrollToLatestIfAppropriate(true);
+    return;
+  }
+  if (payload.kind === "confirmation_started") {
+    applySnapshot(payload.snapshot);
+    renderConfirmationActivity(payload.decision);
+    setComposerState({ enabled: true, waiting: true });
+    return;
+  }
+  if (payload.kind === "confirmation_result") {
+    applySnapshot(payload.snapshot);
+    const result = payload.result;
+    if (result?.user_message) renderMessage(result.user_message);
+    if (result?.assistant_message) renderMessage(result.assistant_message);
+    renderConfirmationResult(result);
+    commitmentsCount.textContent = String(payload.commitments_count || 0);
+    bridge.loadRecentConversations();
+    setComposerState({ enabled: ready });
+    scrollToLatestIfAppropriate(true);
+    return;
+  }
+  if (payload.kind === "confirmation_rejected") {
+    if (payload.reason === "safety_stop") {
+      showLocalFailure("Сначала верни возможность действовать: предложение осталось без изменений.");
+      renderPendingConfirmation(pendingConfirmation);
+    } else {
+      renderConfirmationResult(null);
+    }
+    setComposerState({ enabled: ready });
     return;
   }
   if (payload.kind === "input_rejected") {
@@ -370,6 +576,9 @@ recentToggle.addEventListener("click", () => {
   homeAttention.hidden = true;
   document.documentElement.dataset.homeAttention = "closed";
   homeAttentionTrigger.setAttribute("aria-expanded", "false");
+  commitmentsSurface.hidden = true;
+  document.documentElement.dataset.commitments = "closed";
+  commitmentsTrigger.setAttribute("aria-expanded", "false");
   recentPanel.hidden = !recentPanel.hidden;
   if (!recentPanel.hidden) bridge.loadRecentConversations();
 });
@@ -377,6 +586,9 @@ recentToggle.addEventListener("click", () => {
 homeAttentionTrigger.addEventListener("click", () => {
   if (!ready || inFlight) return;
   recentPanel.hidden = true;
+  commitmentsSurface.hidden = true;
+  document.documentElement.dataset.commitments = "closed";
+  commitmentsTrigger.setAttribute("aria-expanded", "false");
   if (homeAttention.hidden) {
     bridge.loadHomeAttention();
   } else {
@@ -384,6 +596,27 @@ homeAttentionTrigger.addEventListener("click", () => {
     document.documentElement.dataset.homeAttention = "closed";
     homeAttentionTrigger.setAttribute("aria-expanded", "false");
   }
+});
+
+commitmentsTrigger.addEventListener("click", () => {
+  if (!ready || inFlight || pendingConfirmation) return;
+  recentPanel.hidden = true;
+  homeAttention.hidden = true;
+  document.documentElement.dataset.homeAttention = "closed";
+  if (commitmentsSurface.hidden) {
+    bridge.loadCommitments();
+  } else {
+    commitmentsSurface.hidden = true;
+    document.documentElement.dataset.commitments = "closed";
+    commitmentsTrigger.setAttribute("aria-expanded", "false");
+  }
+});
+
+closeCommitments.addEventListener("click", () => {
+  commitmentsSurface.hidden = true;
+  document.documentElement.dataset.commitments = "closed";
+  commitmentsTrigger.setAttribute("aria-expanded", "false");
+  input.focus();
 });
 
 safetyTrigger.addEventListener("click", () => {
@@ -394,6 +627,25 @@ safetyTrigger.addEventListener("click", () => {
 resumeAction.addEventListener("click", () => {
   if (!ready) return;
   bridge.resumeAutonomy();
+});
+
+confirmOperation.addEventListener("click", () => {
+  if (!ready || inFlight || !pendingConfirmation) return;
+  confirmOperation.disabled = true;
+  rejectOperation.disabled = true;
+  bridge.resolveConfirmation(pendingConfirmation.proposal_id, "confirm");
+});
+
+rejectOperation.addEventListener("click", () => {
+  if (!ready || inFlight || !pendingConfirmation) return;
+  confirmOperation.disabled = true;
+  rejectOperation.disabled = true;
+  bridge.resolveConfirmation(pendingConfirmation.proposal_id, "reject");
+});
+
+closeOperation.addEventListener("click", () => {
+  hideOperationSurface();
+  input.focus();
 });
 
 document.addEventListener("keydown", (event) => {
@@ -428,6 +680,7 @@ input.addEventListener("input", () => {
 });
 fitComposer();
 document.documentElement.dataset.homeAttention = "closed";
+document.documentElement.dataset.commitments = "closed";
 
 if (typeof QWebChannel === "function" && window.qt?.webChannelTransport) {
   window.MashaSceneMap.preload();

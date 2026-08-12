@@ -155,3 +155,74 @@ class ConversationService:
             raise ConversationUnavailableError("Локальная модель сейчас недоступна.") from error
         self.history.append(conversation.id, ConversationRole.ASSISTANT, response.text)
         return conversation.id, response.text
+
+    def resolve_memory_proposal(
+        self,
+        *,
+        conversation_id: str,
+        proposal_id: str,
+        confirm: bool,
+        project_id: str,
+    ) -> tuple[str, str]:
+        """Resolve one explicit proposal without exposing its ID in human history."""
+        if self.memory_intent_handler is None:
+            raise RuntimeError("memory intent handler is unavailable")
+        self.history.get(conversation_id)
+        user_text = "Подтверждаю." if confirm else "Не сейчас."
+        command = f"{'да' if confirm else 'нет'} {proposal_id}"
+        self.history.append(conversation_id, ConversationRole.USER, user_text)
+        result = self.memory_intent_handler.handle(
+            command,
+            conversation_id=conversation_id,
+            project_id=project_id,
+        )
+        if not result.handled or result.response is None:
+            raise RuntimeError("proposal resolution was not handled")
+        assistant = self.history.append(
+            conversation_id,
+            ConversationRole.ASSISTANT,
+            result.response,
+        )
+        proposal = self.memory_intent_handler.proposal_store.get(proposal_id)
+        status = "missing" if proposal is None else proposal.status.value
+        return assistant.content, status
+
+    def propose_commitment_completion(
+        self,
+        *,
+        commitment_id: str,
+        conversation_id: str | None,
+        project_id: str,
+    ):
+        if self.memory_intent_handler is None:
+            raise RuntimeError("memory intent handler is unavailable")
+        conversation = self.history.create() if conversation_id is None else self.history.get(conversation_id)
+        pending = tuple(
+            item
+            for item in self.memory_intent_handler.proposal_store.pending_for_conversation(conversation.id)
+            if item.record_type == "commitment"
+        )
+        if pending:
+            raise ValueError("a commitment confirmation is already pending")
+        view = self.memory_intent_handler.memory_management.get(commitment_id)
+        if view is None or view.record_type != "commitment":
+            raise KeyError("commitment not found")
+        if view.payload.get("status") != "open":
+            raise ValueError("commitment is not open")
+        user = self.history.append(
+            conversation.id,
+            ConversationRole.USER,
+            f"Маша, отметь «{view.payload['text']}» выполненным.",
+        )
+        result = self.memory_intent_handler.propose_completion_by_id(
+            commitment_id,
+            conversation.id,
+        )
+        if not result.handled or result.response is None:
+            raise RuntimeError("completion proposal was not created")
+        assistant = self.history.append(
+            conversation.id,
+            ConversationRole.ASSISTANT,
+            result.response,
+        )
+        return conversation.id, user, assistant

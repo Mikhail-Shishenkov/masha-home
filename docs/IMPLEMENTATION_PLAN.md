@@ -690,3 +690,38 @@ stage.
 Next after acceptance: **UI-06C — Conversation Resilience**, limited to
 pagination/retrieval, retry/cancel semantics and long-thread UX after their
 application contracts are reviewed. Do not use UI-06C to expose other domains.
+
+### UI-06D. Typed Commitment Confirmation & Activity
+
+Статус: **IMPLEMENTED**
+
+The first real capability beyond Conversation is connected to the production
+Home. Existing Commitment proposals are projected through a bounded
+`PendingConfirmationView`; confirm/reject are explicit allowlisted bridge
+operations and still resolve through the existing `MemoryIntentHandler`,
+`ConfirmedMemoryService`, SQLite transaction and audit path.
+
+The deterministic Presentation Runtime owns the focused Confirmation and short
+local Activity/result lifecycle. The renderer never parses dates, proposal
+types or raw payloads and does not receive technical IDs as visible content.
+
+Next: **UI-06E — Commitments as Work Objects**: a calm read-only projection of
+open/upcoming/overdue/completed commitments plus explicit entry into the already
+implemented completion proposal flow.
+
+### UI-06E. Commitments as Work Objects
+
+Статус: **IMPLEMENTED**
+
+The production Home now exposes a small spatial `Дела` object. It opens a
+bounded human-readable projection of existing Commitments. SQLite remains the
+source of truth and the existing Temporal Engine computes `open`, `upcoming`,
+`overdue`, `completed` and `cancelled` presentation statuses. The exact due
+boundary is unchanged: equality stays open.
+
+Selecting an actionable item creates the existing completion proposal; only
+explicit confirmation may mutate the Commitment. The renderer receives no
+repository handle, raw MemoryDocument, temporal calculation or mutation API.
+
+Next: **UI-06F — Activity & Agent Run Truth**: project the existing execution
+lifecycle and already-supported controls into one calm spatial work surface.

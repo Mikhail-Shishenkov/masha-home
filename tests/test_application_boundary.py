@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import shutil
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -18,7 +19,9 @@ from backend.application.contracts import ModelAvailabilityCode, ModelSwitchStat
 from backend.llm.fake_provider import FakeProvider
 from backend.llm.model_router import ModelRouter
 from backend.memory.sqlite_repository import MemorySqliteRepository
+from backend.memory.memory_models import CommitmentStatus
 from backend.presentation import PresenceActivity
+from backend.temporal.temporal_engine import FixedClock, TemporalEngine
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -242,6 +245,152 @@ def test_read_views_and_ordinary_chat_do_not_mutate_long_term_memory(tmp_path):
     assert repository.read_document() == before
 
 
+def test_commitment_projection_uses_temporal_engine_and_keeps_exact_due_open(tmp_path):
+    root, _, application = _application(tmp_path)
+    repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")
+    document = repository.read_document()
+    now = datetime(2026, 8, 12, 9, 0, tzinfo=timezone.utc)
+    template = document.commitments[0]
+    commitments = [
+        template.model_copy(update={"text": "Сдать макет", "due_at": now}),
+        template.model_copy(update={"id": "commitment_future", "text": "Проверить интерфейс", "due_at": now + timedelta(hours=2)}),
+        template.model_copy(update={"id": "commitment_overdue", "text": "Ответить на письмо", "due_at": now - timedelta(seconds=1)}),
+        template.model_copy(
+            update={
+                "id": "commitment_done",
+                "text": "Подготовить основу",
+                "status": CommitmentStatus.COMPLETED,
+                "due_at": now - timedelta(days=1),
+                "completed_at": now - timedelta(hours=1),
+                "updated_at": now - timedelta(hours=1),
+            }
+        ),
+    ]
+    repository.replace_document(
+        document.model_copy(update={"commitments": commitments}),
+        action="test_commitment_projection",
+    )
+    application._commitments._conversation.temporal_engine = TemporalEngine(FixedClock(now))
+    before = repository.read_document()
+
+    view = application.commitments()
+
+    by_id = {item.commitment_id: item for item in view.items}
+    assert by_id[template.id].status == "open"
+    assert by_id["commitment_future"].status == "upcoming"
+    assert by_id["commitment_overdue"].status == "overdue"
+    assert by_id["commitment_done"].status == "completed"
+    assert by_id["commitment_done"].can_propose_completion is False
+    assert repository.read_document() == before
+
+
+def test_selected_commitment_enters_existing_confirmation_flow_and_survives_restart(tmp_path):
+    root, provider, application = _application(tmp_path)
+    repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")
+    before = repository.read_document()
+    commitment = before.commitments[0]
+
+    proposed = application.propose_commitment_completion(
+        commitment_id=commitment.id,
+        conversation_id=None,
+        project_id=PROJECT_ID,
+    )
+
+    assert proposed.pending_confirmation.confirmation_type == "commitment_complete"
+    assert proposed.pending_confirmation.subject == commitment.text
+    assert proposed.pending_confirmation.proposal_id not in proposed.assistant_message.content
+    assert provider.last_request is None
+    assert repository.read_document() == before
+
+    restarted = build_masha_application(project_root=root, router=ModelRouter([provider]))
+    assert restarted.pending_confirmation(proposed.conversation_id) == proposed.pending_confirmation
+    resolved = restarted.resolve_confirmation(
+        conversation_id=proposed.conversation_id,
+        proposal_id=proposed.pending_confirmation.proposal_id,
+        decision="confirm",
+        project_id=PROJECT_ID,
+    )
+
+    assert resolved.status.value == "confirmed"
+    stored = repository.read_document()
+    updated = next(item for item in stored.commitments if item.id == commitment.id)
+    assert updated.status is CommitmentStatus.COMPLETED
+    assert updated.completed_at is not None
+    with pytest.raises(ValueError, match="not open"):
+        restarted.propose_commitment_completion(
+            commitment_id=commitment.id,
+            conversation_id=proposed.conversation_id,
+            project_id=PROJECT_ID,
+        )
+
+
+def test_commitment_confirmation_projection_uses_existing_proposal_flow(tmp_path):
+    root, provider, application = _application(tmp_path)
+    repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")
+    before = repository.read_document()
+
+    proposal_turn = application.send_message(
+        "Маша, запомни, что завтра в 18:00 нужно отправить отчёт",
+        project_id=PROJECT_ID,
+    )
+
+    assert proposal_turn.status is ConversationTurnStatus.COMPLETED
+    assert proposal_turn.pending_confirmation is not None
+    pending = proposal_turn.pending_confirmation
+    assert pending.confirmation_type == "commitment_create"
+    assert pending.subject == "отправить отчёт"
+    assert pending.due_at is not None
+    assert pending.allowed_actions == ("confirm", "reject")
+    assert pending.proposal_id not in proposal_turn.assistant_message.content
+    assert repository.read_document() == before
+    assert provider.last_request is None
+
+    resolved = application.resolve_confirmation(
+        conversation_id=proposal_turn.conversation_id,
+        proposal_id=pending.proposal_id,
+        decision="confirm",
+        project_id=PROJECT_ID,
+    )
+
+    assert resolved.status.value == "confirmed"
+    assert resolved.pending_confirmation is None
+    assert resolved.user_message.content == "Подтверждаю."
+    assert resolved.assistant_message.content == "Готово, сохранила."
+    document = repository.read_document()
+    assert len(document.commitments) == len(before.commitments) + 1
+    assert any(item.text == "отправить отчёт" for item in document.commitments)
+
+
+def test_commitment_confirmation_reject_and_restart_are_honest(tmp_path):
+    root, provider, application = _application(tmp_path)
+    repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")
+    before = repository.read_document()
+    turn = application.send_message(
+        "Маша, запомни как обязательство отправить письмо",
+        project_id=PROJECT_ID,
+    )
+    pending = turn.pending_confirmation
+    assert pending is not None
+
+    restarted = build_masha_application(
+        project_root=root,
+        router=ModelRouter([provider]),
+    )
+    assert restarted.pending_confirmation(turn.conversation_id) == pending
+
+    resolved = restarted.resolve_confirmation(
+        conversation_id=turn.conversation_id,
+        proposal_id=pending.proposal_id,
+        decision="reject",
+        project_id=PROJECT_ID,
+    )
+
+    assert resolved.status.value == "rejected"
+    assert resolved.user_message.content == "Не сейчас."
+    assert resolved.assistant_message.content == "Хорошо, не сохраняю."
+    assert repository.read_document() == before
+
+
 def test_home_snapshot_is_a_read_only_application_owned_projection(tmp_path):
     root, _, application = _application(tmp_path)
     repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")
@@ -299,7 +448,9 @@ def test_home_attention_exposes_only_active_conversation_model_and_safety(tmp_pa
         "model_label",
         "emergency_stop_engaged",
         "safety_label",
+        "commitments_count",
     }
+    assert attention.commitments_count == 1
     assert application.home_attention(conversation_id=None).active_conversation is None
     assert second.conversation_id != first.conversation_id
 

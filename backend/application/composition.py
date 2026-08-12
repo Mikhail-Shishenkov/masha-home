@@ -34,6 +34,7 @@ from backend.temporal.proactive_interaction import ProactiveInteractionStore
 
 from .application import MashaApplication
 from .conversation import ConversationApplicationService
+from .commitments import CommitmentApplicationService
 from .home_snapshot import HomeSnapshotService
 from .model_settings import ModelSettingsService
 from .status import MashaStatusService
@@ -107,6 +108,7 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
         visuals=visuals,
         models=models,
         home_snapshot=HomeSnapshotService(status=status, models=models, visuals=visuals),
+        commitments=CommitmentApplicationService(conversation=core.conversation),
     )
 
 

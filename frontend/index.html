@@ -20,6 +20,9 @@
     <button class="safety-trigger" id="safety-trigger" type="button" disabled>
       <span class="safety-mark" aria-hidden="true"></span><span>Стоп</span>
     </button>
+    <button class="commitments-trigger" id="commitments-trigger" type="button" aria-expanded="false" aria-controls="commitments-surface" disabled>
+      <span>Дела</span><span class="commitments-count" id="commitments-count" aria-label="Количество дел">0</span>
+    </button>
     <section class="conversation-surface" id="conversation-surface" aria-label="Разговор с Машей">
       <header class="surface-header">
         <p class="eyebrow">между нами</p>
@@ -43,6 +46,30 @@
         <ol class="recent-list" id="recent-list"></ol>
       </aside>
     </section>
+    <aside class="commitments-surface" id="commitments-surface" aria-label="Наши дела" hidden>
+      <header class="commitments-header">
+        <div><p class="eyebrow">рядом с нами</p><h2>Наши дела</h2></div>
+        <button class="surface-close" id="close-commitments" type="button" aria-label="Закрыть список дел">Закрыть</button>
+      </header>
+      <p class="commitments-intro">Не отчёт и не контрольная панель — только то, что мы решили не потерять.</p>
+      <ol class="commitments-list" id="commitments-list"></ol>
+    </aside>
+    <aside class="operation-surface" id="operation-surface" aria-live="polite" hidden>
+      <p class="eyebrow" id="operation-eyebrow">нужно твоё решение</p>
+      <h2 id="operation-title">Сохранить обязательство?</h2>
+      <p class="operation-subject" id="operation-subject"></p>
+      <p class="operation-due" id="operation-due" hidden></p>
+      <ol class="operation-steps" id="operation-steps" hidden>
+        <li data-step="prepared">Предложение проверено</li>
+        <li data-step="applying">Применяю подтверждение локально</li>
+        <li data-step="done">Фиксирую результат</li>
+      </ol>
+      <div class="operation-actions" id="operation-actions">
+        <button class="operation-action is-primary" id="confirm-operation" type="button">Подтверждаю</button>
+        <button class="operation-action" id="reject-operation" type="button">Не сейчас</button>
+      </div>
+      <button class="operation-close" id="close-operation" type="button" hidden>Вернуться к разговору</button>
+    </aside>
     <aside class="home-attention" id="home-attention" aria-label="Что сейчас живо в Доме" hidden>
       <p class="eyebrow">дом сейчас</p>
       <h2>Здесь всё спокойно.</h2>

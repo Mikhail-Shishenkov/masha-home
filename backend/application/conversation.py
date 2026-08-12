@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from backend.conversation.conversation_models import ConversationMessage, ConversationRole
 from backend.conversation.conversation_service import ConversationService, ConversationUnavailableError
 from backend.llm.model_provider import ModelProviderUnavailableError, ModelTimeoutError
@@ -12,14 +14,21 @@ from .contracts import (
     ApplicationErrorCode,
     ConversationTurnResult,
     ConversationTurnStatus,
+    ConfirmationResolutionResult,
+    ConfirmationResolutionStatus,
     ConversationSummaryView,
     ConversationView,
     MessageView,
+    PendingConfirmationView,
 )
 from .model_settings import ModelSettingsService
 
 
 class ConversationApplicationService:
+    _PROPOSAL_ID = re.compile(
+        r"(?:ID предложения:\s*|Подтверди:\s*да\s+)[0-9a-f-]{36}",
+        re.IGNORECASE,
+    )
     def __init__(self, *, conversation: ConversationService, models: ModelSettingsService):
         self._conversation = conversation
         self._models = models
@@ -50,7 +59,7 @@ class ConversationApplicationService:
             messages = self._conversation.history.messages(conversation.id, limit=1)
             if messages:
                 latest = messages[-1]
-                preview = self._preview(latest.content)
+                preview = self._preview(self._human_content(latest.content))
                 last_interaction_at = latest.created_at
             else:
                 preview = "Новый разговор"
@@ -64,6 +73,68 @@ class ConversationApplicationService:
                 )
             )
         return tuple(summaries)
+
+    def pending_confirmation(self, conversation_id: str) -> PendingConfirmationView | None:
+        handler = self._conversation.memory_intent_handler
+        if handler is None:
+            return None
+        proposals = tuple(
+            proposal
+            for proposal in handler.proposal_store.pending_for_conversation(conversation_id)
+            if proposal.record_type == "commitment"
+        )
+        if len(proposals) != 1:
+            return None
+        proposal = proposals[0]
+        payload = proposal.record_payload
+        completion = proposal.operation != "create"
+        return PendingConfirmationView(
+            proposal_id=proposal.id,
+            conversation_id=proposal.conversation_id,
+            confirmation_type="commitment_complete" if completion else "commitment_create",
+            title=(
+                "Отметить обязательство выполненным?"
+                if completion
+                else "Сохранить обязательство?"
+            ),
+            subject=str(payload.get("text") or "Обязательство"),
+            due_at=payload.get("due_at"),
+            created_at=proposal.created_at,
+        )
+
+    def resolve_confirmation(
+        self,
+        *,
+        conversation_id: str,
+        proposal_id: str,
+        decision: str,
+        project_id: str,
+    ) -> ConfirmationResolutionResult:
+        if decision not in {"confirm", "reject"}:
+            raise ValueError("unsupported confirmation decision")
+        response, proposal_status = self._conversation.resolve_memory_proposal(
+            conversation_id=conversation_id,
+            proposal_id=proposal_id,
+            confirm=decision == "confirm",
+            project_id=project_id,
+        )
+        messages = self._conversation.history.messages(conversation_id, limit=2)
+        user = next(item for item in messages if item.role is ConversationRole.USER)
+        assistant = next(item for item in messages if item.role is ConversationRole.ASSISTANT)
+        if proposal_status == "confirmed":
+            status = ConfirmationResolutionStatus.CONFIRMED
+        elif proposal_status == "cancelled":
+            status = ConfirmationResolutionStatus.REJECTED
+        else:
+            status = ConfirmationResolutionStatus.FAILED
+        return ConfirmationResolutionResult(
+            proposal_id=proposal_id,
+            conversation_id=conversation_id,
+            status=status,
+            user_message=self._message(user),
+            assistant_message=self._message(assistant),
+            pending_confirmation=self.pending_confirmation(conversation_id),
+        )
 
     def send_message(
         self,
@@ -180,6 +251,11 @@ class ConversationApplicationService:
             active_profile_id=profile_id,
             error_code=error_code,
             error_label=None if error_code is None else error_label(error_code),
+            pending_confirmation=(
+                None
+                if conversation_id is None
+                else self.pending_confirmation(conversation_id)
+            ),
         )
 
     def _resolved_conversation_id(self, conversation_id: str | None) -> str | None:
@@ -194,10 +270,14 @@ class ConversationApplicationService:
             message_id=message.id,
             conversation_id=message.conversation_id,
             role=message.role.value,
-            content=message.content,
+            content=ConversationApplicationService._human_content(message.content),
             created_at=message.created_at,
             persisted=True,
         )
+
+    @classmethod
+    def _human_content(cls, content: str) -> str:
+        return cls._PROPOSAL_ID.sub("Подтверди или выбери «не сейчас»", content)
 
     @staticmethod
     def _preview(content: str) -> str:

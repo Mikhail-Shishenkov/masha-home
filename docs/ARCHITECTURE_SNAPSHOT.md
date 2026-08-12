@@ -733,3 +733,29 @@ Only application-owned UI-safe projections cross the bridge. Memory,
 Commitments, Activities, Proactive/Check-in, Skills, Permissions, model
 switching, Voice, Media, Devices and automatic privacy have no production UI in
 this stage. No domain semantics or SQLite schema changed.
+
+## CURRENT — UI-06D TYPED COMMITMENT CONFIRMATION
+
+Commitment creation and completion proposals can now appear as a focused,
+typed production Home surface. The application exposes only a bounded
+`PendingConfirmationView`; proposal IDs are opaque bridge tokens and are
+removed from normal transcript content. Confirm/reject call the existing
+proposal flow and the short persistence operation is represented by the
+deterministic Activity lifecycle before its truthful result.
+
+No second proposal store, Commitment state machine, date parser, persistence
+layer or frontend mutation logic was introduced. A pending confirmation is
+restored after restart from the existing local proposal store.
+
+## CURRENT — UI-06E COMMITMENTS AS WORK OBJECTS
+
+Existing Commitments are now projected through `CommitmentApplicationService`
+as bounded immutable UI contracts. The service reads the active SQLite-backed
+Memory document and delegates deadline semantics to the existing Temporal
+Engine; it does not own a clock, repository or status state machine.
+
+The production renderer opens the projection from the small spatial `Дела`
+object. An explicitly selected actionable Commitment enters the existing
+completion proposal, confirmation, persistence and audit flow. Listing and
+selection do not invoke the LLM, and no Commitment changes before explicit
+confirmation. Technical record and proposal IDs remain opaque bridge values.

@@ -303,7 +303,17 @@ class MemoryIntentHandler:
             return MemoryIntentResult(handled=True, response="Не нашла открытое обязательство с таким текстом.")
         if len(matches) != 1:
             return MemoryIntentResult(handled=True, response="Нашла несколько обязательств; уточни текст точнее.")
-        view = matches[0]
+        return self.propose_completion_by_id(matches[0].record_id, conversation_id)
+
+    def propose_completion_by_id(self, record_id: str, conversation_id: str) -> MemoryIntentResult:
+        """Create the existing completion proposal for one explicitly selected Commitment."""
+        if self.memory_management is None:
+            return MemoryIntentResult(handled=True, response="Завершение обязательств сейчас недоступно.")
+        view = self.memory_management.get(record_id)
+        if view is None or view.record_type != "commitment":
+            return MemoryIntentResult(handled=True, response="Не нашла такое обязательство.")
+        if view.payload.get("status") != "open":
+            return MemoryIntentResult(handled=True, response="Это обязательство уже не открыто.")
         payload = dict(view.payload)
         now = self.temporal_engine.clock.now_utc()
         payload.update(status="completed", completed_at=now.isoformat(), updated_at=now.isoformat())

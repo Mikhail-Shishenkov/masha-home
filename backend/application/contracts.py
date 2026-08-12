@@ -65,6 +65,55 @@ class ConversationSummaryView(UiContract):
     preview: str = Field(min_length=1, max_length=160)
 
 
+class CommitmentView(UiContract):
+    commitment_id: str = Field(min_length=1)
+    text: str = Field(min_length=1, max_length=500)
+    status: Literal["open", "upcoming", "overdue", "completed", "cancelled"]
+    due_at: datetime | None
+    completed_at: datetime | None
+    can_propose_completion: bool
+
+
+class CommitmentListView(UiContract):
+    observed_at: datetime
+    items: tuple[CommitmentView, ...]
+
+
+class PendingConfirmationView(UiContract):
+    """Bounded human-facing projection of one existing memory proposal."""
+
+    proposal_id: str = Field(min_length=1)
+    conversation_id: str = Field(min_length=1)
+    confirmation_type: Literal["commitment_create", "commitment_complete"]
+    title: str = Field(min_length=1, max_length=160)
+    subject: str = Field(min_length=1, max_length=500)
+    due_at: datetime | None
+    created_at: datetime
+    allowed_actions: tuple[Literal["confirm", "reject"], ...] = ("confirm", "reject")
+
+
+class CommitmentProposalResult(UiContract):
+    conversation_id: str
+    user_message: MessageView
+    assistant_message: MessageView
+    pending_confirmation: PendingConfirmationView
+
+
+class ConfirmationResolutionStatus(str, Enum):
+    CONFIRMED = "confirmed"
+    REJECTED = "rejected"
+    FAILED = "failed"
+
+
+class ConfirmationResolutionResult(UiContract):
+    proposal_id: str
+    conversation_id: str
+    status: ConfirmationResolutionStatus
+    user_message: MessageView
+    assistant_message: MessageView
+    pending_confirmation: PendingConfirmationView | None = None
+
+
 class HomeAttentionView(UiContract):
     """Bounded truth for the temporary 'what is alive now' Home surface."""
 
@@ -74,6 +123,7 @@ class HomeAttentionView(UiContract):
     model_label: str
     emergency_stop_engaged: bool
     safety_label: str
+    commitments_count: int = Field(ge=0)
 
 
 class ConversationTurnResult(UiContract):
@@ -84,6 +134,7 @@ class ConversationTurnResult(UiContract):
     active_profile_id: str
     error_code: ApplicationErrorCode | None = None
     error_label: str | None = None
+    pending_confirmation: PendingConfirmationView | None = None
 
 
 class ModelAvailabilityCode(str, Enum):
