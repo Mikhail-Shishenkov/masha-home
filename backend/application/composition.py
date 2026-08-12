@@ -23,6 +23,7 @@ from backend.memory.shared_continuity import SharedContinuityService
 from backend.memory.sqlite_repository import MemorySqliteRepository
 from backend.memory.working_memory import WorkingMemory
 from backend.runtime.health import RuntimeHealthService
+from backend.runtime.daily_runtime import DailyRuntime
 from backend.runtime.safety import AutonomySafetyService, AutonomySafetyStore
 from backend.skills.agent_loop import AgentRunStore
 from backend.skills.autonomy import ActionAutonomyPolicyStore, ActionAutonomyService
@@ -131,6 +132,16 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
         proactive=ProactiveApplicationService(
             store=interactions,
             clock=core.conversation.temporal_engine.clock,
+            policy_store=proactive_policy,
+            runtime=DailyRuntime(
+                history=core.conversation.history,
+                temporal_engine=core.conversation.temporal_engine,
+                repository=core.repository,
+                identity_kernel=core.identity,
+                router=core.router,
+                model_profiles=core.profiles,
+                safety_store=safety.store,
+            ),
         ),
         continuity=ContinuityApplicationService(
             continuity=core.conversation.shared_continuity,

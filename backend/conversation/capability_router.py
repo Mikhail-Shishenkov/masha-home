@@ -22,6 +22,7 @@ from backend.llm.model_models import (
     ModelRequest,
     PrivacyScope,
 )
+from backend.llm.model_provider import ModelProviderUnavailableError, ModelTimeoutError
 
 
 class CapabilityIntent(str, Enum):
@@ -82,22 +83,41 @@ class NaturalLanguageCapabilityRouter:
             return deterministic
         if self.classifier is None or not self._has_capability_signal(text):
             return None
-        classified = self.classifier.classify(message)
+        try:
+            classified = self.classifier.classify(message)
+        except (ModelProviderUnavailableError, ModelTimeoutError):
+            # Semantic routing is an optional local hint.  If its selected
+            # model is unavailable, the utterance remains an ordinary turn.
+            return None
         if classified is None or classified.confidence < self.CONFIDENCE_THRESHOLD:
             return None
         return classified
 
     @staticmethod
     def _deterministic(text: str) -> ParsedCapabilityIntent | None:
+        # Explicit shared-continuity language wins over task-like nouns.  It
+        # still creates only a proposal in MemoryIntentHandler.
+        thread = re.match(
+            r"^(?:давай\s+)?(?:"
+            r"(?:к|к этому)\s+(?P<return>.+?)\s+потом\s+вернемся|"
+            r"не\s+потеряй(?:\s+эту|\s+этот)?(?:\s+(?:нить|тему|вопрос))?\s*(?P<lost>.*)|"
+            r"(?:оставь|сохрани)\s+(?:эту\s+)?(?:нить|тему|вопрос)\s*(?P<keep>.*)|"
+            r"вернемся\s+потом\s+к\s+(?P<later>.+)"
+            r")$",
+            text,
+        )
+        if thread:
+            entity = next((value for value in thread.groupdict().values() if value), None)
+            if entity in {None, "этому вопросу", "эту тему", "этому", "теме", "вопросу"}:
+                entity = None
+            return ParsedCapabilityIntent(intent=CapabilityIntent.OPEN_CONTINUITY, confidence=0.98, entity=entity)
+
         # Read routes.
-        if re.search(r"\b(?:к чему|что)\b.*\b(?:вернут|продолжа|не закончил|нить|тема)\w*\b", text):
+        if re.search(r"\b(?:к чему|что|какие)\b.*\b(?:вернут|продолжа|не закончил|нить|тем|наш(?:а|ей) истор)\w*\b", text):
             return ParsedCapabilityIntent(intent=CapabilityIntent.QUERY_CONTINUITY, confidence=0.97)
         if re.search(r"\b(?:какие|что|покажи)\b.*\b(?:дел|задач|план|запланир|обязательств)\w*\b", text):
             scope = "today" if "сегодня" in text else None
             return ParsedCapabilityIntent(intent=CapabilityIntent.QUERY_COMMITMENTS, confidence=0.96, temporal_scope=scope)
-        if re.search(r"\bчто\b.*\bс\b\s+.+", text) and not re.search(r"\b(?:помн|зна)\w*\b", text):
-            entity = re.sub(r"^.*?\bс\b\s+", "", text).strip()
-            return ParsedCapabilityIntent(intent=CapabilityIntent.QUERY_COMMITMENTS, confidence=0.86, entity=entity)
         if re.search(r"\bчто\b.*\b(?:сегодня|запланир)\w*\b", text):
             return ParsedCapabilityIntent(intent=CapabilityIntent.QUERY_COMMITMENTS, confidence=0.91, temporal_scope="today" if "сегодня" in text else None)
         if re.search(r"\b(?:что|покажи)\b.*\b(?:помн|памят|зна)\w*\b", text):
@@ -120,13 +140,6 @@ class NaturalLanguageCapabilityRouter:
         complete = re.match(r"^(?P<body>.+?)\s+(?:купил|купила|сделал|сделала|выполнил|выполнила|отправил|отправила)$", text)
         if complete:
             return ParsedCapabilityIntent(intent=CapabilityIntent.COMPLETE_COMMITMENT, confidence=0.91, entity=complete.group("body"))
-        thread = re.match(r"^(?:давай\s+)?(?:(?:к|к этому)\s+(?P<return>.+?)\s+потом\s+вернемся|не\s+потеряй\s+(?P<lost>.+)|вернемся\s+потом\s+к\s+(?P<later>.+))$", text)
-        if thread:
-            entity = thread.groupdict().get("return") or thread.groupdict().get("lost") or thread.groupdict().get("later")
-            # Deictic references must not be reconstructed from chat history.
-            if entity in {None, "этому вопросу", "эту тему", "этому", "теме", "вопросу"}:
-                entity = None
-            return ParsedCapabilityIntent(intent=CapabilityIntent.OPEN_CONTINUITY, confidence=0.90, entity=entity)
         return None
 
     @staticmethod

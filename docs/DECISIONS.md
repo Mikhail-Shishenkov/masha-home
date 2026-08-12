@@ -825,6 +825,22 @@ Queries resolve against current backend records. Completion, forgetting,
 Commitment creation and Continuity changes always enter the existing
 proposal/confirmation contracts. Conversation history is not a record source.
 
+### DEC-096. Natural routing is record-aware and live delivery remains application-owned
+
+Статус: **Принято и реализовано**
+
+Generic conversational references such as `что с X` are not capability
+intents by syntax alone. They become Commitment queries only when bounded
+resolution finds a real open record. Explicit shared-continuity language has
+higher deterministic priority than semantic classification. Semantic provider
+unavailability or timeout falls through to the ordinary conversation path.
+
+The local proactive runtime remains the only owner of event detection,
+permission and formulation. An open Home may periodically ask the application
+boundary to advance the existing background-policy cycle and project newly
+delivered interactions. Stable event IDs and interaction state prevent repeat
+delivery; the renderer receives no runtime or persistence authority.
+
 ## 6. Открытые вопросы ближайших этапов
 
 - Формат identity manifest.

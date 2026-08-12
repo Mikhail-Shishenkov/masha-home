@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .memory_models import Decision, DecisionStatus, Fact, FactStatus, MemoryDocument, Visibility
 
 
-ManagedRecordType = Literal["fact", "decision", "commitment", "episode"]
+ManagedRecordType = Literal["fact", "decision", "commitment", "episode", "relationship_memory"]
 RetrievalRecordType = Literal[
     "fact",
     "decision",
@@ -109,7 +109,8 @@ class MemoryManagementService:
         document = self._document()
         payload = document.model_dump(mode="json")
         record_type, index = self._find(payload, record_id)
-        old = dict(payload[f"{record_type}s"][index])
+        collection = self._collection_name(record_type)
+        old = dict(payload[collection][index])
         old_state = dict(old)
         now = datetime.now(timezone.utc).isoformat()
 
@@ -117,7 +118,7 @@ class MemoryManagementService:
             new = {**old, "visibility": "hidden"}
             if "updated_at" in new:
                 new["updated_at"] = now
-            payload[f"{record_type}s"][index] = new
+            payload[collection][index] = new
         elif operation == MemoryMutationOperation.EDIT:
             if replacement_payload is None:
                 raise ValueError("edit requires replacement_payload")
@@ -126,7 +127,7 @@ class MemoryManagementService:
                 raise ValueError("edit must retain the existing record id")
             if "updated_at" in new:
                 new["updated_at"] = now
-            payload[f"{record_type}s"][index] = new
+            payload[collection][index] = new
         elif operation == MemoryMutationOperation.SUPERSEDE:
             if record_type not in ("fact", "decision") or replacement_payload is None:
                 raise ValueError("supersession requires a replacement Fact or Decision")
@@ -139,8 +140,8 @@ class MemoryManagementService:
                 old.update(status=FactStatus.SUPERSEDED.value, superseded_by=replacement["id"], updated_at=now)
             else:
                 old.update(status=DecisionStatus.SUPERSEDED.value, superseded_by=replacement["id"], updated_at=now)
-            payload[f"{record_type}s"][index] = old
-            payload[f"{record_type}s"].append(replacement)
+            payload[collection][index] = old
+            payload[collection].append(replacement)
             new = replacement
         else:  # pragma: no cover - enum guards this branch
             raise ValueError(f"unsupported operation: {operation}")
@@ -215,9 +216,9 @@ class MemoryManagementService:
     @staticmethod
     def _records(document: MemoryDocument, only: ManagedRecordType | None = None):
         data = document.model_dump(mode="json")
-        for record_type in ("fact", "decision", "commitment", "episode"):
+        for record_type in ("fact", "decision", "commitment", "episode", "relationship_memory"):
             if only is None or only == record_type:
-                yield from ((record_type, item) for item in data[f"{record_type}s"])
+                yield from ((record_type, item) for item in data[MemoryManagementService._collection_name(record_type)])
 
     def _view(self, document: MemoryDocument, record_type: ManagedRecordType, item: dict[str, Any]) -> MemoryRecordView:
         return MemoryRecordView(record_id=item["id"], record_type=record_type,
@@ -237,8 +238,12 @@ class MemoryManagementService:
 
     @staticmethod
     def _find(payload: dict[str, Any], record_id: str) -> tuple[ManagedRecordType, int]:
-        for record_type in ("fact", "decision", "commitment", "episode"):
-            for index, item in enumerate(payload[f"{record_type}s"]):
+        for record_type in ("fact", "decision", "commitment", "episode", "relationship_memory"):
+            for index, item in enumerate(payload[MemoryManagementService._collection_name(record_type)]):
                 if item["id"] == record_id:
                     return record_type, index
         raise KeyError(f"memory record not found: {record_id}")
+
+    @staticmethod
+    def _collection_name(record_type: ManagedRecordType) -> str:
+        return "relationship_memories" if record_type == "relationship_memory" else f"{record_type}s"

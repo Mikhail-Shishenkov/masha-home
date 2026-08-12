@@ -141,7 +141,8 @@ def test_webchannel_bridge_exposes_only_typed_allowlisted_slots():
         "loadHomeAttention",
         "loadCommitments",
         "loadAgentRuns",
-        "loadProactiveInteractions",
+            "loadProactiveInteractions",
+            "refreshProactiveInteractions",
         "resolveProactiveInteraction",
             "loadSharedContinuity",
             "continueContinuityThread",
@@ -648,6 +649,85 @@ def test_desktop_bridge_projects_agent_receipts_and_delivered_checkin(tmp_path):
     assert resolved["interaction"]["state"] == "dismissed"
     assert repository.read_document() == memory_before
     assert ProactiveInteractionStore(repository).get(event_id)["state"] == "dismissed"
+    bridge.close()
+
+
+def test_open_home_refresh_projects_new_live_reminder_once(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    from backend.application import build_masha_application
+    from backend.llm.model_router import ModelRouter
+    from backend.memory.sqlite_repository import MemorySqliteRepository
+    from backend.temporal.proactive import ProactivePolicy, ProactivePolicyStore
+    from backend.temporal.proactive_interaction import ProactiveInteractionStore
+    from backend.temporal.temporal_engine import FixedClock, TemporalEngine
+    from backend.ui.conversation_bridge import LocalConversationBridge
+    from tests.test_application_boundary import LocalProfileProvider, _isolated_root
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    root = _isolated_root(tmp_path)
+    provider = LocalProfileProvider(response_text="Миша, пора сказать мяу.")
+    application = build_masha_application(
+        project_root=root,
+        router=ModelRouter([provider]),
+    )
+    repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")
+    now = datetime(2026, 8, 12, 8, 0, tzinfo=timezone.utc)
+    clock = FixedClock(now)
+    engine = TemporalEngine(clock)
+    conversation_service = application._conversation._conversation
+    conversation_service.temporal_engine = engine
+    conversation_service.memory_intent_handler.temporal_engine = engine
+    application._proactive._clock = clock
+    application._proactive._runtime.temporal_engine = engine
+    application._proactive._runtime.controlled.temporal_engine = engine
+    ProactivePolicyStore(root / "local-data" / "config" / "proactive-policy.json").save(
+        ProactivePolicy(
+            enabled=True,
+            proactive_level=1,
+            allow_commitment_reminders=True,
+            maximum_reminders=2,
+            daily_message_limit=2,
+            cooldown_seconds=0,
+            runtime_mode="background",
+        )
+    )
+    bridge = LocalConversationBridge(application)
+    emitted: list[dict] = []
+    bridge.event.connect(lambda encoded: emitted.append(json.loads(encoded)))
+    bridge.loadInitialState()
+
+    proposed = application.send_message(
+        "Напомни через две минуты сказать мяу",
+        project_id="project_masha_home",
+    )
+    assert proposed.pending_confirmation is not None
+    application.resolve_confirmation(
+        conversation_id=proposed.conversation_id,
+        proposal_id=proposed.pending_confirmation.proposal_id,
+        decision="confirm",
+        project_id="project_masha_home",
+    )
+    commitment = next(item for item in repository.read_document().commitments if "мяу" in item.text)
+    assert commitment.due_at == now + timedelta(minutes=2)
+    clock.value = now + timedelta(minutes=3)
+
+    bridge.refreshProactiveInteractions()
+    deadline = time.monotonic() + 3
+    while len([item for item in emitted if item["kind"] == "proactive_interactions_loaded"]) < 1 and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    bridge.refreshProactiveInteractions()
+    deadline = time.monotonic() + 1
+    while bridge._proactive_refresh_in_flight and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+
+    live = [item for item in emitted if item["kind"] == "proactive_interactions_loaded"]
+    assert len(live) == 1
+    assert live[0]["delivery_origin"] == "local_runtime"
+    assert live[0]["interactions"]["items"][0]["message"] == "Миша, пора сказать мяу."
+    assert ProactiveInteractionStore(repository).list()[0]["state"] == "delivered"
     bridge.close()
 
 

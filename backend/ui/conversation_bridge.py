@@ -28,6 +28,8 @@ class LocalConversationBridge(QObject):
         self._session_lock = Lock()
         self._conversation_id: str | None = None
         self._turn_in_flight = False
+        self._proactive_refresh_in_flight = False
+        self._visible_proactive_ids: set[str] = set()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="masha-conversation")
 
     @Slot()
@@ -51,6 +53,8 @@ class LocalConversationBridge(QObject):
                 title=pending.title,
                 summary=pending.subject,
             )
+        proactive = self._application.proactive_interactions(limit=6)
+        self._visible_proactive_ids = {item.interaction_id for item in proactive.items}
         self._emit(
             {
                 "kind": "home_initial",
@@ -62,9 +66,7 @@ class LocalConversationBridge(QObject):
                     for item in self._application.commitments(limit=12).items
                 ),
                 "agent_runs_count": len(self._application.agent_runs(limit=8).items),
-                "proactive_interactions_count": len(
-                    self._application.proactive_interactions(limit=6).items
-                ),
+                "proactive_interactions_count": len(proactive.items),
                 "continuity_count": self._continuity_count(),
                 "reflection_items_count": self._reflection_count(),
                 "pending_confirmation": None if pending is None else pending.model_dump(mode="json"),
@@ -151,6 +153,7 @@ class LocalConversationBridge(QObject):
             self._emit({"kind": "proactive_unavailable"})
             return
         interactions = self._application.proactive_interactions(limit=6)
+        self._visible_proactive_ids = {item.interaction_id for item in interactions.items}
         if self._session is None:
             self._session = self._application.open_home_session()
         snapshot = self._session_snapshot("opened")
@@ -168,6 +171,50 @@ class LocalConversationBridge(QObject):
                 "snapshot": snapshot.model_dump(mode="json"),
             }
         )
+
+    @Slot()
+    def refreshProactiveInteractions(self):  # noqa: N802
+        """Push newly delivered local interactions into an already open Home.
+
+        Detection/formulation remains owned by the existing proactive runtime.
+        This read-only heartbeat only projects delivery records that did not
+        exist at the previous observation, once per stable event_id.
+        """
+        if self._application is None or self._turn_in_flight or self._proactive_refresh_in_flight:
+            return
+        self._proactive_refresh_in_flight = True
+        future = self._executor.submit(
+            self._application.refresh_proactive_interactions,
+            limit=6,
+        )
+        future.add_done_callback(self._finish_proactive_refresh)
+
+    def _finish_proactive_refresh(self, future) -> None:
+        try:
+            interactions = future.result()
+        except Exception:
+            self._proactive_refresh_in_flight = False
+            return
+        current_ids = {item.interaction_id for item in interactions.items}
+        new_ids = current_ids - self._visible_proactive_ids
+        self._visible_proactive_ids = current_ids
+        self._proactive_refresh_in_flight = False
+        if not new_ids:
+            return
+        first = next(item for item in interactions.items if item.interaction_id in new_ids)
+        if self._session is None:
+            self._session = self._application.open_home_session()
+        snapshot = self._session_snapshot(
+            "proactive_opened",
+            event_id=first.interaction_id,
+            text=first.message,
+        )
+        self._emit({
+            "kind": "proactive_interactions_loaded",
+            "interactions": interactions.model_dump(mode="json"),
+            "snapshot": snapshot.model_dump(mode="json"),
+            "delivery_origin": "local_runtime",
+        })
 
     @Slot(str, str)
     def resolveProactiveInteraction(self, interaction_id: str, decision: str):  # noqa: N802

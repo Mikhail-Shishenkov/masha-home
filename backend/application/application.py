@@ -87,6 +87,10 @@ class MashaApplication:
     def proactive_interactions(self, *, limit: int = 6) -> ProactiveInteractionListView:
         return self._proactive.list(limit=limit)
 
+    def refresh_proactive_interactions(self, *, limit: int = 6) -> ProactiveInteractionListView:
+        """Advance only the existing policy-controlled local runtime."""
+        return self._proactive.refresh(limit=limit)
+
     def resolve_proactive(self, interaction_id: str, decision: str) -> ProactiveInteractionView:
         return self._proactive.resolve(interaction_id, decision)
 

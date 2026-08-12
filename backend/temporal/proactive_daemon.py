@@ -81,6 +81,11 @@ class ProactiveDaemon:
             return False
         try:
             pid = int(self.lock_path.read_text(encoding="ascii"))
+            # On Windows os.kill(current_pid, 0) is not a harmless POSIX-style
+            # existence probe and can interrupt the caller.  Owning this lock
+            # ourselves is already deterministic proof that it is live.
+            if pid == os.getpid():
+                return True
             os.kill(pid, 0)
             return True
         except (ValueError, OSError):

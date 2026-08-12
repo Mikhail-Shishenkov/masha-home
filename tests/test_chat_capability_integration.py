@@ -36,7 +36,7 @@ def _service(tmp_path, memory_path):
     return ConversationService(
         identity_kernel=IdentityKernel(IdentityStore(ROOT / "identity" / "masha.identity.json")),
         memory_retriever=MemoryRetriever(store), working_memory=WorkingMemory(),
-        router=ModelRouter([FakeProvider(provider_id="local", response_text="model must not run")]),
+        router=ModelRouter([FakeProvider(provider_id="ollama-local", response_text="model must not run")]),
         history=ConversationStore(tmp_path / "history.json"), memory_intent_handler=handler,
     ), store
 
@@ -183,6 +183,19 @@ def test_natural_query_routes_use_real_commitments_without_calling_model(tmp_pat
     assert all("Продолжить разработку Masha Home" in answer for answer in answers[1:])
 
 
+def test_generic_what_about_routes_only_when_a_real_commitment_matches(tmp_path, memory_path):
+    service, _ = _service(tmp_path, memory_path)
+    conversation_id, _ = _send(service, "Добавь мне задачу купить билеты")
+    _send(service, "да", conversation_id)
+
+    _, matched = _send(service, "Что там с билетами?", conversation_id)
+    assert "купить билеты" in matched
+
+    for phrase in ("Что с погодой?", "Что с фильмом?", "Как тебе кофе?"):
+        _, ordinary = _send(service, phrase, conversation_id)
+        assert ordinary == "model must not run"
+
+
 def test_natural_create_routes_are_proposals_and_never_write_before_confirmation(tmp_path, memory_path):
     phrases = (
         "Добавь мне задачу купить молоко",
@@ -221,6 +234,21 @@ def test_natural_completion_resolves_real_records_and_still_requires_confirmatio
     assert "Отметить обязательство выполненным" in second
 
 
+def test_russian_case_reference_resolves_one_real_commitment(tmp_path, memory_path):
+    service, store = _service(tmp_path, memory_path)
+    conversation_id, _ = _send(service, "Запиши в дела позвонить врачу")
+    _send(service, "да", conversation_id)
+
+    _, proposal = _send(service, "С врачом закончили", conversation_id)
+
+    assert "позвонить врачу" in proposal
+    commitment = next(item for item in store.read_document().commitments if item.text == "позвонить врачу")
+    assert commitment.status.value == "open"
+    _send(service, "подтверждаю", conversation_id)
+    commitment = next(item for item in store.read_document().commitments if item.text == "позвонить врачу")
+    assert commitment.status.value == "completed"
+
+
 def test_natural_forget_resolves_fact_semantically_and_requires_confirmation(tmp_path, memory_path):
     service, store = _service(tmp_path, memory_path)
     conversation_id, _ = _send(service, "Запомни, что я люблю чай")
@@ -248,6 +276,29 @@ def test_natural_continuity_is_explicit_and_legacy_developer_threads_are_filtere
     assert "выбор света для комнаты" in answer
     assert "memory_schema.json" not in answer
     assert "Python-модели" not in answer
+
+
+def test_relationship_memory_can_be_queried_and_forgotten_without_physical_delete(tmp_path, memory_path):
+    service, store = _service(tmp_path, memory_path)
+    text = "сегодня мы наконец соединили память, дела и Дом"
+    conversation_id, preview = _send(service, f"Сохрани как наш момент: {text}")
+    assert "часть нашей" in preview
+    _send(service, "да", conversation_id)
+
+    _, history = _send(service, "Что есть в нашей истории?", conversation_id)
+    assert text in history
+
+    _, forget = _send(service, f"Забудь {text}", conversation_id)
+    assert text in forget
+    relationship = next(item for item in store.read_document().relationship_memories if text in str(item.content))
+    assert relationship.visibility.value == "visible"
+    _send(service, "да", conversation_id)
+    relationship = next(item for item in store.read_document().relationship_memories if item.id == relationship.id)
+    assert relationship.visibility.value == "hidden"
+    assert any(
+        event["action"] == "memory_forget" and event["payload"].get("record_id") == relationship.id
+        for event in store.list_audit_events()
+    )
 
 
 def test_natural_minute_reminder_uses_temporal_engine_and_existing_commitment_contract(tmp_path, memory_path):

@@ -289,6 +289,26 @@ are the delivery path. No scheduler, UI capability or storage schema was added.
 Shared Continuity read projections exclude migrated developer backlog such as
 memory-schema/Python-model implementation tasks without deleting stored rows.
 
+Production-smoke hardening keeps generic `что с X` in ordinary conversation
+unless `X` resolves to a real open Commitment. Explicit continuity markers
+(`нить`, `тема`, `не потеряй`, `вернёмся`) take deterministic priority over
+semantic task classification. Russian record references use bounded
+morphology/fuzzy scoring and request clarification when top candidates remain
+ambiguous.
+
+RelationshipMemory participates in the same proposal/confirmation-based
+forget operation as other managed records: confirmation changes visibility to
+hidden and records audit history; it never physically deletes the record.
+Natural shared-history queries read visible RelationshipMemory and open
+Continuity threads only through SharedContinuityService.
+
+An open production Home has a two-second read-only proactive projection
+heartbeat. In background policy mode it invokes the existing DailyRuntime via
+the application boundary, then projects newly delivered stable event IDs into
+the existing proactive surface. No renderer storage access, new surface,
+delivery channel or schema was added; repeated observations do not redeliver
+the same interaction.
+
 Validated building blocks for memory, identity, router policy, SQLite and local
 model evaluation exist. There is no end-to-end Masha conversation yet.
 

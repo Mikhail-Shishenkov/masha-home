@@ -45,6 +45,14 @@ def test_daemon_lock_stop_and_status(tmp_path):
     assert daemon.status()["daemon"] == "stopped"
 
 
+def test_current_process_lock_is_detected_without_signalling_it(tmp_path, monkeypatch):
+    daemon = ProactiveDaemon(tmp_path)
+    daemon.lock_path.write_text(str(os.getpid()), encoding="utf-8")
+    monkeypatch.setattr(os, "kill", lambda *_: pytest.fail("must not signal current process"))
+
+    assert daemon.is_running() is True
+
+
 def test_emergency_stop_prevents_daemon_service_build_and_exits(tmp_path, monkeypatch):
     daemon = ProactiveDaemon(tmp_path, sleep=lambda _: None)
     AutonomySafetyService(store=daemon.safety_store).engage()

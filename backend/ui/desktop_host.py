@@ -18,7 +18,7 @@ if os.environ.get("MASHA_HOME_SOFTWARE_COMPOSITING") == "1":
         "--disable-gpu --disable-gpu-compositing",
     )
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QTimer, QUrl
 from PySide6.QtWebEngineCore import (
     QWebEnginePage,
     QWebEngineProfile,
@@ -96,6 +96,15 @@ class MashaHomeWindow(QMainWindow):
         self._view.setPage(self._page)
         self.setCentralWidget(self._view)
         self._view.setUrl(HOME_URL)
+        # The proactive runtime persists delivery independently.  This bounded
+        # read-only heartbeat lets an already open Home observe it without a
+        # refresh or click; event_id deduplication lives in the bridge/store.
+        self._proactive_projection_timer = QTimer(self)
+        self._proactive_projection_timer.setInterval(2_000)
+        self._proactive_projection_timer.timeout.connect(
+            self._bridge.refreshProactiveInteractions
+        )
+        self._proactive_projection_timer.start()
 
     @staticmethod
     def _build_application():

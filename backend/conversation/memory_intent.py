@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from difflib import SequenceMatcher
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -100,6 +101,10 @@ _UPDATE = re.compile(
     re.IGNORECASE,
 )
 _COMPLETE_IMPLICIT = re.compile(r"^\s*(?:маша\s*,?\s*)?(?:я\s+)?(?:это\s+)?(?:сделал|сделала|выполнил|выполнила)\s*\.?\s*$", re.IGNORECASE)
+_COMMITMENT_REFERENCE_QUERY = re.compile(
+    r"^\s*(?:маш(?:а|енька)?\s*[,!:-]?\s*)?что(?:\s+там)?\s+с\s+(?P<body>.+?)\s*\??\s*$",
+    re.IGNORECASE,
+)
 
 
 class ChatCapabilityAction(str, Enum):
@@ -268,6 +273,10 @@ class MemoryIntentHandler:
                 handled=True,
                 response="Что именно сохранить и как: факт, решение, обязательство или эпизод?",
             )
+        if reference := _COMMITMENT_REFERENCE_QUERY.match(message):
+            records = self._matching_open_commitments(reference.group("body"), project_id)
+            if records:
+                return self._render_commitments(records)
         if parsed := self.capability_router.route(message):
             return self._handle_capability(parsed, conversation_id=conversation_id, project_id=project_id)
         return MemoryIntentResult(handled=False)
@@ -324,6 +333,10 @@ class MemoryIntentHandler:
             ]
         if not records:
             return MemoryIntentResult(handled=True, response="Сейчас не вижу открытых дел.")
+        return self._render_commitments(records)
+
+    @staticmethod
+    def _render_commitments(records) -> MemoryIntentResult:
         lines = ["Сейчас открыто:"]
         for item in records[:8]:
             due_at = item.payload.get("due_at")
@@ -334,15 +347,21 @@ class MemoryIntentHandler:
     def _list_continuity(self, query: str | None = None) -> MemoryIntentResult:
         if self.shared_continuity is None:
             return MemoryIntentResult(handled=True, response="Общие нити сейчас недоступны.")
+        moments = list(self.shared_continuity.relationship_memories(limit=8))
         rows = list(self.shared_continuity.open_follow_ups())
         if query:
+            moments = self._rank_records(
+                moments,
+                query,
+                lambda item: f"{item.title} {self.shared_continuity.relationship_text(item)}",
+            )
             rows = self._rank_text_rows(rows, query, lambda row: f"{row[1].topic} {row[1].summary}")
-        if not rows:
-            return MemoryIntentResult(handled=True, response="Открытых общих нитей сейчас нет.")
-        return MemoryIntentResult(
-            handled=True,
-            response="\n".join(["Мы хотели вернуться к этому:", *(f"— {item.summary}" for _, item in rows[:6])]),
-        )
+        if not moments and not rows:
+            return MemoryIntentResult(handled=True, response="В нашей сохранённой истории пока нет подходящих моментов или открытых нитей.")
+        lines = ["Вот что есть в нашей сохранённой истории:"]
+        lines.extend(f"— {self.shared_continuity.relationship_text(item)}" for item in moments[:6])
+        lines.extend(f"— Открытая тема: {item.summary}" for _, item in rows[:6])
+        return MemoryIntentResult(handled=True, response="\n".join(lines))
 
     def _propose_commitment(self, body: str, conversation_id: str, project_id: str) -> MemoryIntentResult:
         body = body.strip().rstrip(".")
@@ -414,7 +433,7 @@ class MemoryIntentHandler:
 
     @staticmethod
     def _stem(token: str) -> str:
-        for suffix in ("иями", "ями", "ами", "ого", "ему", "ому", "кой", "ку", "ка", "ах", "ях", "ом", "ем", "ой", "ей", "ы", "и", "а", "я", "о"):
+        for suffix in ("иями", "ями", "ами", "ого", "ему", "ому", "ыми", "ими", "кой", "ку", "ка", "ах", "ях", "ом", "ем", "ой", "ей", "ую", "юю", "ы", "и", "а", "я", "о", "у", "ю", "е"):
             if token.endswith(suffix) and len(token) - len(suffix) >= 4:
                 return token[: -len(suffix)]
         return token
@@ -428,7 +447,13 @@ class MemoryIntentHandler:
             candidate = normalize_utterance(str(text_getter(record)))
             candidate_tokens = cls._tokens(candidate)
             overlap = len(query_tokens & candidate_tokens) / max(1, len(query_tokens))
-            score = 1.0 if query_text and query_text in candidate else overlap
+            fuzzy = (
+                sum(
+                    max((SequenceMatcher(None, left, right).ratio() for right in candidate_tokens), default=0.0)
+                    for left in query_tokens
+                ) / max(1, len(query_tokens))
+            )
+            score = 1.0 if query_text and query_text in candidate else max(overlap, fuzzy * 0.92)
             if score >= 0.5:
                 scored.append((score, record))
         scored.sort(key=lambda pair: pair[0], reverse=True)
@@ -436,6 +461,21 @@ class MemoryIntentHandler:
             return []
         best = scored[0][0]
         return [record for score, record in scored if score >= max(0.5, best - 0.12)]
+
+    def _matching_open_commitments(self, query: str, project_id: str):
+        if self.memory_management is None:
+            return []
+        return self._rank_records(
+            [
+                item
+                for item in self.memory_management.list(
+                    record_type="commitment", project_id=project_id, include_hidden=False
+                )
+                if item.payload.get("status") == "open"
+            ],
+            query,
+            lambda item: item.payload.get("text", ""),
+        )
 
     @classmethod
     def _rank_text_rows(cls, rows, query: str, text_getter):
@@ -460,6 +500,9 @@ class MemoryIntentHandler:
             return f"{payload['subject']}: {payload['key']} — {payload['value']}"
         if view.record_type == "decision":
             return f"решение: {payload['decision']}"
+        if view.record_type == "relationship_memory":
+            content = payload.get("content")
+            return str(content.get("text", payload.get("title", view.record_id))) if isinstance(content, dict) else str(content)
         return payload.get("summary") or payload.get("text") or view.record_id
 
     def _propose_shared_memory(

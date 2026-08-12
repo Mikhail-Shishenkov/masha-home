@@ -693,6 +693,18 @@ then detected by the existing TemporalRuntime. Starting proactive delivery
 still depends on the existing user policy/runtime mode; the router does not
 start or bypass it.
 
+Production Home live-delivery regression (isolated SQLite, no production
+memory writes):
+
+```powershell
+python -m pytest tests/test_desktop_host.py::test_open_home_refresh_projects_new_live_reminder_once -q
+```
+
+The test proves phrase → confirmation → deterministic `due_at` → existing
+DailyRuntime → already open bridge → existing proactive surface, including
+stable-event deduplication. Background delivery still requires the user's
+existing proactive policy (`enabled`, reminders allowed, background mode).
+
 ## Конфигурация
 
 `.env.example` содержит только безопасные локальные значения и зарезервированные ключи. Текущий прототип ещё не загружает `.env` автоматически.

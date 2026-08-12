@@ -14,6 +14,7 @@ from backend.identity.identity_store import IdentityStore
 from backend.llm.fake_provider import FakeProvider
 from backend.llm.model_models import MessageRole, PrivacyScope
 from backend.llm.model_router import ModelRouter
+from backend.llm.model_provider import ModelProviderUnavailableError, ModelTimeoutError
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,7 +30,6 @@ def test_fixed_allowlist_router_uses_composable_patterns_not_sentence_dictionary
         "Маш, что у меня сегодня?": CapabilityIntent.QUERY_COMMITMENTS,
         "Какие у нас дела?": CapabilityIntent.QUERY_COMMITMENTS,
         "Что было запланировано?": CapabilityIntent.QUERY_COMMITMENTS,
-        "Что там с билетами?": CapabilityIntent.QUERY_COMMITMENTS,
         "Добавь мне задачу купить молоко": CapabilityIntent.CREATE_COMMITMENT,
         "Запиши в дела позвонить врачу": CapabilityIntent.CREATE_COMMITMENT,
         "Надо не забыть купить корм": CapabilityIntent.CREATE_COMMITMENT,
@@ -44,6 +44,14 @@ def test_fixed_allowlist_router_uses_composable_patterns_not_sentence_dictionary
         assert parsed is not None
         assert parsed.intent is expected
         assert parsed.confidence >= router.CONFIDENCE_THRESHOLD
+
+
+def test_generic_what_about_reference_requires_real_record_context():
+    router = NaturalLanguageCapabilityRouter()
+    assert router.route("Что там с билетами?") is None
+    assert router.route("Что с погодой?") is None
+    assert router.route("Что с фильмом?") is None
+    assert router.route("Как тебе кофе?") is None
 
 
 def test_low_confidence_semantic_classification_falls_through_to_conversation():
@@ -82,6 +90,35 @@ def test_semantic_classifier_is_not_called_without_a_capability_signal():
             raise AssertionError("ordinary conversation must not be classified")
 
     assert NaturalLanguageCapabilityRouter(Exploding()).route("Как тебе сегодняшний вечер?") is None
+
+
+def test_explicit_continuity_markers_win_over_task_words():
+    router = NaturalLanguageCapabilityRouter()
+    for phrase in (
+        "Не потеряй тему задачи про поездку",
+        "Оставь эту нить про выбор билетов",
+        "Давай к плану отпуска потом вернёмся",
+    ):
+        parsed = router.route(phrase)
+        assert parsed is not None
+        assert parsed.intent is CapabilityIntent.OPEN_CONTINUITY
+
+
+def test_semantic_provider_failure_falls_through_to_conversation():
+    class Unavailable:
+        def __init__(self, error):
+            self.error = error
+
+        def classify(self, message):
+            raise self.error
+
+    for error in (
+        ModelProviderUnavailableError("offline"),
+        ModelTimeoutError("slow"),
+    ):
+        assert NaturalLanguageCapabilityRouter(Unavailable(error)).route(
+            "Может, заведём задачу про врача?"
+        ) is None
 
 
 def test_local_semantic_classifier_sees_only_current_utterance_and_fixed_allowlist():

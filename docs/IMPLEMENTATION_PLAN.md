@@ -787,3 +787,11 @@ reference resolution. Semantic classification is local-only, allowlisted and
 confidence-gated. It is not an agent or storage owner. All mutations retain
 their existing explicit confirmation and audit path; no UI or capability was
 added.
+
+Production-smoke fixes are also complete: generic `что с X` is record-aware;
+explicit continuity language has deterministic priority; Russian
+completion/forget references use bounded fuzzy morphology with ambiguity
+clarification; RelationshipMemory uses SharedContinuity plus the existing
+proposal/audit hide contract; and an open Home receives already-authorised
+background reminder delivery through an application-owned heartbeat and the
+existing proactive surface.
