@@ -8,6 +8,7 @@ from pathlib import Path
 from backend.conversation.conversation_service import ConversationService
 from backend.conversation.conversation_store import ConversationStore
 from backend.conversation.memory_intent import MemoryIntentHandler, MemoryProposalStore
+from backend.conversation.capability_router import LocalSemanticIntentClassifier, NaturalLanguageCapabilityRouter
 from backend.conversation.reflection_intent import ReflectionIntentHandler
 from backend.identity.identity_kernel import IdentityKernel
 from backend.identity.identity_store import IdentityStore
@@ -174,6 +175,13 @@ def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
             confirmed_memory=ConfirmedMemoryService(repository),
             memory_management=memory_management,
             shared_continuity=shared_continuity,
+            capability_router=NaturalLanguageCapabilityRouter(
+                LocalSemanticIntentClassifier(
+                    router=selected_router,
+                    identity_kernel=identity,
+                    model_profiles=profiles,
+                )
+            ),
         ),
         model_profiles=profiles,
         proactive_interactions=ProactiveInteractionStore(repository),

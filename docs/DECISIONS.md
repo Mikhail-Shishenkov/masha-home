@@ -811,6 +811,20 @@ availability check and no-fallback contract are retained. Installation, grants
 and policy mutations require a separate explicit confirmation UX and are not
 added to this slice.
 
+### DEC-095. Natural language routes capabilities but never owns them
+
+Статус: **Принято и реализовано**
+
+Natural-language routing is a bounded adapter over an explicit intent
+allowlist. Deterministic normalization and aliases run first. A selected local
+LLM may classify only the current ambiguous utterance and extract parameters;
+its result is rejected below the confidence threshold. The LLM receives no
+MemoryDocument, repository or mutation handle.
+
+Queries resolve against current backend records. Completion, forgetting,
+Commitment creation and Continuity changes always enter the existing
+proposal/confirmation contracts. Conversation history is not a record source.
+
 ## 6. Открытые вопросы ближайших этапов
 
 - Формат identity manifest.

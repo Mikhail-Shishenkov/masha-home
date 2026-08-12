@@ -776,3 +776,14 @@ is designed.
 
 Next: **Slice D — Runtime health & operating preferences**, followed by a
 focused motion/content-density polish pass.
+
+### Natural Language Capability Router
+
+Статус: **IMPLEMENTED**
+
+Existing Memory, Commitment, Continuity and Temporal application capabilities
+are reachable through normalized natural Russian utterances and bounded
+reference resolution. Semantic classification is local-only, allowlisted and
+confidence-gated. It is not an agent or storage owner. All mutations retain
+their existing explicit confirmation and audit path; no UI or capability was
+added.

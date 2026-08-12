@@ -30,6 +30,17 @@ def is_readable_continuity_text(value: str) -> bool:
     return not letters or suspicious / letters < 0.2
 
 
+def is_legacy_developer_follow_up(follow_up: ContinuityFollowUp) -> bool:
+    """Hide migrated implementation backlog from the human shared-history view."""
+    return (
+        follow_up.id.startswith("followup_migrated_")
+        or follow_up.topic in {"next_action", "open_question"}
+        or any(marker in follow_up.summary.casefold() for marker in (
+            "memory_schema.json", "python-модел", "хранение и поиск памяти",
+        ))
+    )
+
+
 class SharedContinuityService:
     """Manage the existing continuity records without inferring or auto-writing them."""
 
@@ -54,6 +65,7 @@ class SharedContinuityService:
             for state in document.continuity_states
             for follow_up in state.intended_follow_ups
             if follow_up.status == FollowUpStatus.OPEN
+            and not is_legacy_developer_follow_up(follow_up)
             and is_readable_continuity_text(follow_up.summary)
             and is_readable_continuity_text(follow_up.reason_to_return)
         ]

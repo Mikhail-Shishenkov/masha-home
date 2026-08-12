@@ -253,7 +253,7 @@ def test_desktop_bridge_loads_bounded_memory_and_continuity_without_mutation(tmp
     loaded = next(item for item in events if item["kind"] == "shared_continuity_loaded")
     assert loaded["continuity"]["confirmed_memories"] == []
     assert loaded["continuity"]["moments"] == []
-    assert loaded["continuity"]["open_threads"]
+    assert loaded["continuity"]["open_threads"] == []
     encoded = json.dumps(loaded, ensure_ascii=False)
     assert "audit_events" not in encoded
     assert "identity_version" not in encoded
@@ -731,3 +731,48 @@ def test_desktop_bridge_installs_a_valid_local_skill_and_restart_sees_it(tmp_pat
         router=ModelRouter([LocalProfileProvider()]),
     )
     assert any(item.skill_id == "project_observer" for item in restarted.workbench().skills)
+
+
+def test_production_bridge_natural_commitment_flow_persists_and_reloads(tmp_path):
+    from backend.application import build_masha_application
+    from backend.llm.model_router import ModelRouter
+    from backend.memory.sqlite_repository import MemorySqliteRepository
+    from backend.ui.conversation_bridge import LocalConversationBridge
+    from tests.test_application_boundary import LocalProfileProvider, _isolated_root
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    root = _isolated_root(tmp_path)
+    repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")
+    application = build_masha_application(
+        project_root=root,
+        router=ModelRouter([LocalProfileProvider()]),
+    )
+    bridge = LocalConversationBridge(application)
+    events: list[dict] = []
+    bridge.event.connect(lambda encoded: events.append(json.loads(encoded)))
+    bridge.loadInitialState()
+    before = len(repository.read_document().commitments)
+
+    bridge.submitMessage("Надо не забыть проверить Персеиды")
+    deadline = time.monotonic() + 3
+    while not any(item["kind"] == "turn_result" for item in events) and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    proposed = next(item for item in events if item["kind"] == "turn_result")
+    pending = proposed["result"]["pending_confirmation"]
+    assert pending["confirmation_type"] == "commitment_create"
+    assert len(repository.read_document().commitments) == before
+
+    bridge.resolveConfirmation(pending["proposal_id"], "confirm")
+    deadline = time.monotonic() + 3
+    while not any(item["kind"] == "confirmation_result" for item in events) and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    assert any("персеиды" in item.text.casefold() for item in repository.read_document().commitments)
+    bridge.close()
+
+    restarted = build_masha_application(
+        project_root=root,
+        router=ModelRouter([LocalProfileProvider()]),
+    )
+    assert any("персеиды" in item.text.casefold() for item in restarted.commitments().items)

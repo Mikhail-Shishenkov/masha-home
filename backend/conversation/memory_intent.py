@@ -37,6 +37,7 @@ from backend.memory.memory_models import (
 )
 from backend.temporal.temporal_engine import TemporalEngine
 from backend.memory.memory_management import MemoryMutationOperation
+from .capability_router import CapabilityIntent, NaturalLanguageCapabilityRouter, ParsedCapabilityIntent, normalize_utterance
 
 
 MemoryRecordType = Literal[
@@ -210,12 +211,14 @@ class MemoryIntentHandler:
         temporal_engine: TemporalEngine | None = None,
         memory_management=None,
         shared_continuity=None,
+        capability_router: NaturalLanguageCapabilityRouter | None = None,
     ):
         self.proposal_store = proposal_store
         self.confirmed_memory = confirmed_memory
         self.temporal_engine = temporal_engine or TemporalEngine()
         self.memory_management = memory_management
         self.shared_continuity = shared_continuity
+        self.capability_router = capability_router or NaturalLanguageCapabilityRouter()
 
     def handle(
         self,
@@ -265,6 +268,27 @@ class MemoryIntentHandler:
                 handled=True,
                 response="Что именно сохранить и как: факт, решение, обязательство или эпизод?",
             )
+        if parsed := self.capability_router.route(message):
+            return self._handle_capability(parsed, conversation_id=conversation_id, project_id=project_id)
+        return MemoryIntentResult(handled=False)
+
+    def _handle_capability(self, parsed: ParsedCapabilityIntent, *, conversation_id: str, project_id: str) -> MemoryIntentResult:
+        if parsed.intent is CapabilityIntent.QUERY_MEMORY:
+            return self._show_memory(parsed.entity, project_id)
+        if parsed.intent is CapabilityIntent.FORGET_MEMORY:
+            return self._propose_forget(parsed.entity or "это", conversation_id)
+        if parsed.intent is CapabilityIntent.QUERY_COMMITMENTS:
+            return self._list_commitments(project_id, query=parsed.entity, temporal_scope=parsed.temporal_scope)
+        if parsed.intent is CapabilityIntent.CREATE_COMMITMENT:
+            return self._propose_commitment(parsed.entity or "", conversation_id, project_id)
+        if parsed.intent is CapabilityIntent.COMPLETE_COMMITMENT:
+            return self._propose_completion(parsed.entity or "", conversation_id)
+        if parsed.intent is CapabilityIntent.QUERY_CONTINUITY:
+            return self._list_continuity(parsed.entity)
+        if parsed.intent is CapabilityIntent.OPEN_CONTINUITY:
+            if not parsed.entity:
+                return MemoryIntentResult(handled=True, response="Какую именно тему оставить открытой? Назови её — я не буду угадывать по истории чата.")
+            return self._propose_open_thread(parsed.entity, conversation_id)
         return MemoryIntentResult(handled=False)
 
     def _show_memory(self, query: str | None, project_id: str) -> MemoryIntentResult:
@@ -282,13 +306,22 @@ class MemoryIntentHandler:
             lines.append(f"И ещё {len(visible) - 6}. Могу сузить вопрос.")
         return MemoryIntentResult(handled=True, response="\n".join(lines))
 
-    def _list_commitments(self, project_id: str) -> MemoryIntentResult:
+    def _list_commitments(self, project_id: str, *, query: str | None = None, temporal_scope: str | None = None) -> MemoryIntentResult:
         if self.memory_management is None:
             return MemoryIntentResult(handled=True, response="Список дел сейчас недоступен.")
         records = [
             item for item in self.memory_management.list(record_type="commitment", project_id=project_id, include_hidden=False)
             if item.payload.get("status") == "open"
         ]
+        if query:
+            records = self._rank_records(records, query, lambda item: item.payload.get("text", ""))
+        if temporal_scope == "today":
+            local_now = self.temporal_engine.clock.now_local()
+            records = [
+                item for item in records
+                if item.payload.get("due_at") is not None
+                and datetime.fromisoformat(item.payload["due_at"]).astimezone(local_now.tzinfo).date() == local_now.date()
+            ]
         if not records:
             return MemoryIntentResult(handled=True, response="Сейчас не вижу открытых дел.")
         lines = ["Сейчас открыто:"]
@@ -298,11 +331,24 @@ class MemoryIntentHandler:
             lines.append(f"— {item.payload['text']}{due}")
         return MemoryIntentResult(handled=True, response="\n".join(lines))
 
+    def _list_continuity(self, query: str | None = None) -> MemoryIntentResult:
+        if self.shared_continuity is None:
+            return MemoryIntentResult(handled=True, response="Общие нити сейчас недоступны.")
+        rows = list(self.shared_continuity.open_follow_ups())
+        if query:
+            rows = self._rank_text_rows(rows, query, lambda row: f"{row[1].topic} {row[1].summary}")
+        if not rows:
+            return MemoryIntentResult(handled=True, response="Открытых общих нитей сейчас нет.")
+        return MemoryIntentResult(
+            handled=True,
+            response="\n".join(["Мы хотели вернуться к этому:", *(f"— {item.summary}" for _, item in rows[:6])]),
+        )
+
     def _propose_commitment(self, body: str, conversation_id: str, project_id: str) -> MemoryIntentResult:
         body = body.strip().rstrip(".")
         if not body:
             return MemoryIntentResult(handled=True, response="Какое именно дело добавить?")
-        body = re.sub(r"^через\s+два\s+часа\b", "через 2 часа", body, flags=re.IGNORECASE)
+        body = re.sub(r"^через\s+(?:два|две)\s+", "через 2 ", body, flags=re.IGNORECASE)
         body, due = self.temporal_engine.extract_due(body)
         if due is not None and due.ambiguity is not None:
             return MemoryIntentResult(handled=True, response="Срок получился неоднозначным. Скажи дату и время точнее — я не буду угадывать.")
@@ -355,8 +401,51 @@ class MemoryIntentHandler:
 
     def _find_memories(self, query: str):
         assert self.memory_management is not None
-        cleaned = query.strip().strip("«»\"'").rstrip(".")
-        return [item for item in self.memory_management.list(include_hidden=False) if cleaned.casefold() in self._memory_line(item).casefold()]
+        return self._rank_records(self.memory_management.list(include_hidden=False), query, self._memory_line)
+
+    @staticmethod
+    def _tokens(value: str) -> set[str]:
+        stop = {"я", "мне", "мой", "моя", "мои", "что", "это", "то", "у", "про", "как", "люблю"}
+        return {
+            MemoryIntentHandler._stem(token)
+            for token in normalize_utterance(value).split()
+            if len(token) > 1 and token not in stop
+        }
+
+    @staticmethod
+    def _stem(token: str) -> str:
+        for suffix in ("иями", "ями", "ами", "ого", "ему", "ому", "кой", "ку", "ка", "ах", "ях", "ом", "ем", "ой", "ей", "ы", "и", "а", "я", "о"):
+            if token.endswith(suffix) and len(token) - len(suffix) >= 4:
+                return token[: -len(suffix)]
+        return token
+
+    @classmethod
+    def _rank_records(cls, records, query: str, text_getter):
+        query_text = normalize_utterance(query.strip().strip("«»\"'").rstrip("."))
+        query_tokens = cls._tokens(query_text)
+        scored = []
+        for record in records:
+            candidate = normalize_utterance(str(text_getter(record)))
+            candidate_tokens = cls._tokens(candidate)
+            overlap = len(query_tokens & candidate_tokens) / max(1, len(query_tokens))
+            score = 1.0 if query_text and query_text in candidate else overlap
+            if score >= 0.5:
+                scored.append((score, record))
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        if not scored:
+            return []
+        best = scored[0][0]
+        return [record for score, record in scored if score >= max(0.5, best - 0.12)]
+
+    @classmethod
+    def _rank_text_rows(cls, rows, query: str, text_getter):
+        query_tokens = cls._tokens(query)
+        scored = []
+        for row in rows:
+            score = len(query_tokens & cls._tokens(text_getter(row))) / max(1, len(query_tokens))
+            if score >= 0.5:
+                scored.append((score, row))
+        return [row for _, row in sorted(scored, key=lambda pair: pair[0], reverse=True)]
 
     @staticmethod
     def _mutation_lookup_problem(matches, verb: str) -> MemoryIntentResult:
@@ -464,7 +553,11 @@ class MemoryIntentHandler:
     def _propose_completion(self, text: str, conversation_id: str) -> MemoryIntentResult:
         if self.memory_management is None:
             return MemoryIntentResult(handled=True, response="Завершение обязательств сейчас недоступно.")
-        matches = [view for view in self.memory_management.list(record_type="commitment") if view.payload.get("status") == "open" and text.casefold() in view.payload["text"].casefold()]
+        matches = self._rank_records(
+            [view for view in self.memory_management.list(record_type="commitment") if view.payload.get("status") == "open"],
+            text,
+            lambda item: item.payload["text"],
+        )
         if not matches:
             return MemoryIntentResult(handled=True, response="Не нашла открытое обязательство с таким текстом.")
         if len(matches) != 1:

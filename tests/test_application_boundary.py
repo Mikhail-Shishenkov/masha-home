@@ -671,7 +671,8 @@ def test_memory_and_shared_continuity_projection_is_bounded_read_only_and_restar
     assert len(view.confirmed_memories) <= 10
     assert len(view.open_threads) <= 8
     assert all(item.memory_type in {"fact", "decision", "episode"} for item in view.confirmed_memories)
-    assert any("memory_schema.json" in item.summary for item in view.open_threads)
+    assert not any("memory_schema.json" in item.summary for item in view.open_threads)
+    assert not any("Python-модели" in item.summary for item in view.open_threads)
     serialized = view.model_dump_json()
     assert "audit_events" not in serialized
     assert "identity_version" not in serialized

@@ -82,10 +82,16 @@ class TemporalEngine:
         base = {"вчера": -1, "сегодня": 0, "завтра": 1, "послезавтра": 2}.get(normalized.split(" в ")[0])
         method = "relative_day"
         if base is None:
-            match = re.fullmatch(r"через (\d+) (дн(?:я|ей)?|час(?:а|ов)?)", normalized)
+            match = re.fullmatch(r"через (\d+) (дн(?:я|ей)?|час(?:а|ов)?|минут(?:у|ы)?)", normalized)
             if match:
                 amount = int(match.group(1)); unit = match.group(2)
-                value = local + (timedelta(days=amount) if unit.startswith("д") else timedelta(hours=amount))
+                if unit.startswith("д"):
+                    delta = timedelta(days=amount)
+                elif unit.startswith("ч"):
+                    delta = timedelta(hours=amount)
+                else:
+                    delta = timedelta(minutes=amount)
+                value = local + delta
                 return self._parsed(text, value, "relative_duration", "minute")
             if normalized == "через неделю":
                 return self._parsed(text, local + timedelta(days=7), "relative_duration", "day")
@@ -110,7 +116,7 @@ class TemporalEngine:
 
     def extract_due(self, text: str) -> tuple[str, DueDateParseResult | None]:
         """Extract only a leading unambiguous deadline from an explicit statement."""
-        match = re.match(r"^\s*(?:до\s+)?(?P<due>(?:сегодня|завтра|послезавтра|вчера)(?:\s+в\s+\d{1,2}:\d{2})?|через\s+\d+\s+(?:дн(?:я|ей)?|час(?:а|ов)?)|через\s+неделю)\s+(?:нужно\s+)?(?P<body>.+)$", text, re.IGNORECASE)
+        match = re.match(r"^\s*(?:до\s+)?(?P<due>(?:сегодня|завтра|послезавтра|вчера)(?:\s+в\s+\d{1,2}:\d{2})?|через\s+\d+\s+(?:дн(?:я|ей)?|час(?:а|ов)?|минут(?:у|ы)?)|через\s+неделю)\s+(?:нужно\s+)?(?P<body>.+)$", text, re.IGNORECASE)
         if not match:
             return text, None
         return match.group("body").strip(), self.parse_due(match.group("due"))

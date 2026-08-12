@@ -678,6 +678,21 @@ acknowledge/dismiss lifecycle.
 Do not create fixture data in production `local-data` for visual testing. The
 application and bridge tests build isolated roots and databases.
 
+## Natural-language capability verification
+
+The production conversation route accepts natural variants for querying and
+managing Memory, Commitments and Shared Continuity. Writes always stop at a
+human-readable preview until explicitly confirmed. Useful deterministic checks:
+
+```powershell
+python -m pytest tests/test_capability_router.py tests/test_chat_capability_integration.py -q
+```
+
+Minute reminders become normal confirmed Commitments with UTC `due_at` and are
+then detected by the existing TemporalRuntime. Starting proactive delivery
+still depends on the existing user policy/runtime mode; the router does not
+start or bypass it.
+
 ## Конфигурация
 
 `.env.example` содержит только безопасные локальные значения и зарезервированные ключи. Текущий прототип ещё не загружает `.env` автоматически.

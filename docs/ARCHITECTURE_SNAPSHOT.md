@@ -270,6 +270,25 @@ description only; no implementation was started for this snapshot.
 
 ## CURRENT STATE
 
+### Natural Language Capability Router
+
+Ordinary Home conversation now reaches the existing Memory, Commitment,
+Continuity and Temporal contracts through a fixed allowlist router. It applies
+local normalization and deterministic composable aliases first; an optional
+selected local model may classify only ambiguous capability-like utterances
+above a confidence threshold. The classifier receives the current utterance
+only and cannot read storage, reconstruct records from conversation history or
+perform a mutation.
+
+Queries and reference resolution operate on current backend records. Every
+write still produces the existing proposal and requires human confirmation.
+Relative minute reminders are parsed by TemporalEngine into Commitment
+`due_at`; after confirmation the existing TemporalRuntime and proactive policy
+are the delivery path. No scheduler, UI capability or storage schema was added.
+
+Shared Continuity read projections exclude migrated developer backlog such as
+memory-schema/Python-model implementation tasks without deleting stored rows.
+
 Validated building blocks for memory, identity, router policy, SQLite and local
 model evaluation exist. There is no end-to-end Masha conversation yet.
 

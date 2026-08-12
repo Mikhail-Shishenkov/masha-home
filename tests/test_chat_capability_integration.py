@@ -14,6 +14,10 @@ from backend.memory.memory_management import MemoryManagementService
 from backend.memory.memory_retriever import MemoryRetriever
 from backend.memory.sqlite_repository import MemorySqliteRepository
 from backend.memory.working_memory import WorkingMemory
+from backend.memory.shared_continuity import SharedContinuityService
+from backend.temporal.temporal_engine import FixedClock, TemporalEngine
+from backend.temporal.temporal_runtime import TemporalRuntime
+from datetime import datetime, timezone
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,6 +31,7 @@ def _service(tmp_path, memory_path):
         proposal_store=MemoryProposalStore(tmp_path / "proposals.json"),
         confirmed_memory=ConfirmedMemoryService(store),
         memory_management=MemoryManagementService(store),
+        shared_continuity=SharedContinuityService(store),
     )
     return ConversationService(
         identity_kernel=IdentityKernel(IdentityStore(ROOT / "identity" / "masha.identity.json")),
@@ -34,6 +39,10 @@ def _service(tmp_path, memory_path):
         router=ModelRouter([FakeProvider(provider_id="local", response_text="model must not run")]),
         history=ConversationStore(tmp_path / "history.json"), memory_intent_handler=handler,
     ), store
+
+
+def _send(service, message, conversation_id=None):
+    return service.send(message, project_id=PROJECT, conversation_id=conversation_id)
 
 
 def test_remember_is_proposed_then_persisted_with_real_receipt(tmp_path, memory_path):
@@ -158,3 +167,103 @@ def test_update_fact_needs_confirmation_and_is_idempotent_after_receipt(tmp_path
     assert first == "Готово. Подтверждённая память обновлена."
     assert "нет предложения памяти" in second
     assert next(item for item in store.read_document().facts if item.id == "fact_002").value == "уже уверенно пишет Python"
+
+
+def test_natural_query_routes_use_real_commitments_without_calling_model(tmp_path, memory_path):
+    service, _ = _service(tmp_path, memory_path)
+
+    answers = [_send(service, phrase)[1] for phrase in (
+        "Маш, что у меня сегодня?",
+        "Какие у нас дела?",
+        "Что было запланировано?",
+        "Что там с разработкой?",
+    )]
+
+    assert "Сейчас не вижу" in answers[0]  # fixture has no deadline today
+    assert all("Продолжить разработку Masha Home" in answer for answer in answers[1:])
+
+
+def test_natural_create_routes_are_proposals_and_never_write_before_confirmation(tmp_path, memory_path):
+    phrases = (
+        "Добавь мне задачу купить молоко",
+        "Запиши в дела позвонить врачу",
+        "Надо не забыть купить корм",
+    )
+    for index, phrase in enumerate(phrases):
+        case = tmp_path / f"natural-create-{index}"
+        case.mkdir()
+        service, store = _service(case, memory_path)
+        before = len(store.read_document().commitments)
+
+        conversation_id, answer = _send(service, phrase)
+
+        assert "как обязательство" in answer
+        assert len(store.read_document().commitments) == before
+        _, confirmed = _send(service, "подтверждаю", conversation_id)
+        assert confirmed == "Готово, сохранила."
+        assert len(store.read_document().commitments) == before + 1
+
+
+def test_natural_completion_resolves_real_records_and_still_requires_confirmation(tmp_path, memory_path):
+    service, store = _service(tmp_path, memory_path)
+    conversation_id, _ = _send(service, "Добавь мне задачу купить билеты")
+    _send(service, "да", conversation_id)
+
+    _, proposal = _send(service, "Билеты купил", conversation_id)
+    assert "Отметить обязательство выполненным" in proposal
+    assert next(item for item in store.read_document().commitments if item.text == "купить билеты").status.value == "open"
+    _send(service, "да", conversation_id)
+    assert next(item for item in store.read_document().commitments if item.text == "купить билеты").status.value == "completed"
+
+    conversation_id, _ = _send(service, "Добавь мне задачу купить молоко")
+    _send(service, "да", conversation_id)
+    _, second = _send(service, "С молоком закончили", conversation_id)
+    assert "Отметить обязательство выполненным" in second
+
+
+def test_natural_forget_resolves_fact_semantically_and_requires_confirmation(tmp_path, memory_path):
+    service, store = _service(tmp_path, memory_path)
+    conversation_id, _ = _send(service, "Запомни, что я люблю чай")
+    _send(service, "да", conversation_id)
+    fact = next(item for item in store.read_document().facts if item.value == "я люблю чай")
+
+    _, proposal = _send(service, "Забудь, что я люблю чай", conversation_id)
+    assert "Скрыть из активной памяти" in proposal
+    assert next(item for item in store.read_document().facts if item.id == fact.id).visibility.value == "visible"
+    _send(service, "подтверждаю", conversation_id)
+    assert next(item for item in store.read_document().facts if item.id == fact.id).visibility.value == "hidden"
+
+
+def test_natural_continuity_is_explicit_and_legacy_developer_threads_are_filtered(tmp_path, memory_path):
+    service, _ = _service(tmp_path, memory_path)
+    conversation_id, clarification = _send(service, "Давай к этому вопросу потом вернёмся")
+    assert "Какую именно тему" in clarification
+    _, clarification_two = _send(service, "Не потеряй эту тему", conversation_id)
+    assert "Какую именно тему" in clarification_two
+
+    _, proposal = _send(service, "Не потеряй выбор света для комнаты", conversation_id)
+    assert "Оставить это открытой нитью" in proposal
+    _send(service, "да", conversation_id)
+    _, answer = _send(service, "К чему мы хотели вернуться?", conversation_id)
+    assert "выбор света для комнаты" in answer
+    assert "memory_schema.json" not in answer
+    assert "Python-модели" not in answer
+
+
+def test_natural_minute_reminder_uses_temporal_engine_and_existing_commitment_contract(tmp_path, memory_path):
+    service, store = _service(tmp_path, memory_path)
+    now = datetime(2026, 8, 12, 10, 0, tzinfo=timezone.utc)
+    engine = TemporalEngine(FixedClock(now))
+    service.temporal_engine = engine
+    service.memory_intent_handler.temporal_engine = engine
+
+    conversation_id, preview = _send(service, "Напомни через две минуты сказать «мяу»")
+    assert "как обязательство" in preview
+    _send(service, "да", conversation_id)
+    commitment = next(item for item in store.read_document().commitments if "мяу" in item.text)
+    assert commitment.due_at == datetime(2026, 8, 12, 10, 2, tzinfo=timezone.utc)
+    recovered = TemporalRuntime(
+        store,
+        TemporalEngine(FixedClock(datetime(2026, 8, 12, 10, 3, tzinfo=timezone.utc))),
+    ).recover()
+    assert recovered.events[0].source_commitment_id == commitment.id
