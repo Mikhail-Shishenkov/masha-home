@@ -671,3 +671,22 @@ Targeted regression: `55 passed`. Full regression: `334 passed`.
 Next: **UI-04C — Visual Composition Workshop**. Render disposable comparisons
 of the three semantic plans for joint UX selection before choosing a production
 frontend or connecting live UI-01 operations.
+
+### UI-06B. Home Attention & Safety + Production Visual Frontend
+
+Статус: **IMPLEMENTED**
+
+The reviewed full-scene visual direction is now the production Home renderer
+under root `frontend/`. The first bounded slice includes Conversation, New
+conversation, a temporary conversation shelf, Home Attention,
+Emergency Stop/Resume, model-unavailable truthfulness, deterministic Masha
+states, desktop-responsive composition, reduced motion and keyboard access.
+
+The bridge remains typed and allowlisted. Frontend has no arbitrary backend
+command, persistence or network access. Excluded capabilities remain absent
+until they receive explicit UI-safe application projections and their own UX
+stage.
+
+Next after acceptance: **UI-06C — Conversation Resilience**, limited to
+pagination/retrieval, retry/cancel semantics and long-thread UX after their
+application contracts are reviewed. Do not use UI-06C to expose other domains.

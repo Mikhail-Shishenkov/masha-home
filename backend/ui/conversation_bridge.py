@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 
 from PySide6.QtCore import QObject, Signal, Slot
 
@@ -23,6 +24,7 @@ class LocalConversationBridge(QObject):
         super().__init__(parent)
         self._application = application
         self._session = None
+        self._session_lock = Lock()
         self._conversation_id: str | None = None
         self._turn_in_flight = False
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="masha-conversation")
@@ -33,7 +35,7 @@ class LocalConversationBridge(QObject):
             self._emit({"kind": "home_unavailable"})
             return
         self._session = self._application.open_home_session()
-        snapshot = self._session.opened()
+        snapshot = self._session_snapshot("opened")
         conversation = self._application.latest_conversation(limit=16)
         if conversation is not None:
             self._conversation_id = conversation.conversation_id
@@ -59,6 +61,56 @@ class LocalConversationBridge(QObject):
             }
         )
 
+    @Slot()
+    def loadHomeAttention(self):  # noqa: N802 - Qt slot name is part of the JS contract
+        if self._application is None:
+            self._emit({"kind": "home_unavailable"})
+            return
+        self._emit(
+            {
+                "kind": "home_attention",
+                "attention": self._application.home_attention(
+                    conversation_id=self._conversation_id
+                ).model_dump(mode="json"),
+            }
+        )
+
+    @Slot()
+    def engageEmergencyStop(self):  # noqa: N802 - Qt slot name is part of the JS contract
+        if self._application is None:
+            self._emit({"kind": "home_unavailable"})
+            return
+        safety = self._application.emergency_stop()
+        if self._session is None:
+            self._session = self._application.open_home_session()
+        snapshot = self._session_snapshot(
+            "emergency_stop", reason=safety.reason or "manual_emergency_stop"
+        )
+        self._emit(
+            {
+                "kind": "safety_changed",
+                "safety": safety.model_dump(mode="json"),
+                "snapshot": snapshot.model_dump(mode="json"),
+            }
+        )
+
+    @Slot()
+    def resumeAutonomy(self):  # noqa: N802 - Qt slot name is part of the JS contract
+        if self._application is None:
+            self._emit({"kind": "home_unavailable"})
+            return
+        safety = self._application.resume_autonomy()
+        if self._session is None:
+            self._session = self._application.open_home_session()
+        snapshot = self._session_snapshot("autonomy_resumed")
+        self._emit(
+            {
+                "kind": "safety_changed",
+                "safety": safety.model_dump(mode="json"),
+                "snapshot": snapshot.model_dump(mode="json"),
+            }
+        )
+
     @Slot(str)
     def openConversation(self, conversation_id: str):  # noqa: N802 - Qt slot name is part of the JS contract
         if self._application is None or self._turn_in_flight:
@@ -74,7 +126,7 @@ class LocalConversationBridge(QObject):
         self._emit(
             {
                 "kind": "conversation_opened",
-                "snapshot": self._session.opened().model_dump(mode="json"),
+                "snapshot": self._session_snapshot("opened").model_dump(mode="json"),
                 "conversation": conversation.model_dump(mode="json"),
                 "recent": self._recent_payload(),
             }
@@ -94,7 +146,7 @@ class LocalConversationBridge(QObject):
         self._emit(
             {
                 "kind": "conversation_started",
-                "snapshot": self._session.opened().model_dump(mode="json"),
+                "snapshot": self._session_snapshot("opened").model_dump(mode="json"),
             }
         )
 
@@ -119,7 +171,7 @@ class LocalConversationBridge(QObject):
             {
                 "kind": "turn_started",
                 "content": normalized,
-                "snapshot": self._session.user_sent().model_dump(mode="json"),
+                "snapshot": self._session_snapshot("user_sent").model_dump(mode="json"),
             }
         )
         future = self._executor.submit(
@@ -130,12 +182,13 @@ class LocalConversationBridge(QObject):
 
     def _send_turn(self, content: str):
         """Publish the deterministic thinking phase before local model execution."""
-        self._emit(
-            {
-                "kind": "turn_thinking",
-                "snapshot": self._session.assistant_thinking().model_dump(mode="json"),
-            }
-        )
+        if self._application.status().model_available:
+            self._emit(
+                {
+                    "kind": "turn_thinking",
+                    "snapshot": self._session_snapshot("assistant_thinking").model_dump(mode="json"),
+                }
+            )
         return self._application.send_message(
             content,
             project_id=HOME_PROJECT_ID,
@@ -150,7 +203,8 @@ class LocalConversationBridge(QObject):
             # still must not leak an exception into the renderer if that invariant
             # is ever violated below it.
             result_payload = None
-            snapshot = self._session.model_unavailable(
+            snapshot = self._session_snapshot(
+                "model_unavailable",
                 profile_id="primary",
                 display_name="Локальная модель",
             )
@@ -158,9 +212,10 @@ class LocalConversationBridge(QObject):
             self._conversation_id = result.conversation_id or self._conversation_id
             result_payload = result.model_dump(mode="json")
             if result.status is ConversationTurnStatus.COMPLETED:
-                snapshot = self._session.assistant_responded()
+                snapshot = self._session_snapshot("assistant_responded")
             else:
-                snapshot = self._session.model_unavailable(
+                snapshot = self._session_snapshot(
+                    "model_unavailable",
                     profile_id=result.active_profile_id,
                     display_name=self._active_model_name(),
                 )
@@ -185,6 +240,12 @@ class LocalConversationBridge(QObject):
         if self._application is None:
             return []
         return [item.model_dump(mode="json") for item in self._application.recent_conversations(limit=8)]
+
+    def _session_snapshot(self, method_name: str, **kwargs):
+        """Serialize reducer access across the UI and the local model worker."""
+        with self._session_lock:
+            method = getattr(self._session, method_name)
+            return method(**kwargs)
 
     def _emit(self, payload: dict) -> None:
         self.event.emit(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))

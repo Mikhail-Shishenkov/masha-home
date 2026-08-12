@@ -16,6 +16,12 @@ const recentList = document.getElementById("recent-list");
 const title = document.getElementById("conversation-title");
 const surfaceStatus = document.getElementById("surface-status");
 const runtimeTruth = document.getElementById("runtime-truth");
+const homeAttentionTrigger = document.getElementById("home-attention-trigger");
+const homeAttention = document.getElementById("home-attention");
+const attentionLines = document.getElementById("attention-lines");
+const safetyTrigger = document.getElementById("safety-trigger");
+const safetyOverlay = document.getElementById("safety-overlay");
+const resumeAction = document.getElementById("resume-action");
 const sceneLayers = [...document.querySelectorAll(".scene")];
 
 let bridge = null;
@@ -25,29 +31,62 @@ let provisionalUser = null;
 let activeSceneId = "scene.home.idle";
 let activeSceneLayer = 0;
 let activeConversationId = null;
+let sceneTransitionRevision = 0;
+let sceneTransitionTimer = null;
+const COMPOSER_MIN_HEIGHT = 44;
+const COMPOSER_MAX_HEIGHT = 112;
+const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+function fitComposer() {
+  input.style.height = `${COMPOSER_MIN_HEIGHT}px`;
+  input.style.height = `${Math.min(input.scrollHeight, COMPOSER_MAX_HEIGHT)}px`;
+  input.classList.toggle("is-scrollable", input.scrollHeight > COMPOSER_MAX_HEIGHT);
+}
 
 function applyScene(presentation) {
   const next = window.MashaSceneMap.resolveScene(presentation);
   document.documentElement.dataset.scene = next.id;
   if (next.id === activeSceneId) return;
 
+  const revision = ++sceneTransitionRevision;
   const current = sceneLayers[activeSceneLayer];
   const incoming = sceneLayers[1 - activeSceneLayer];
-  let applied = false;
-  const showIncoming = () => {
-    if (applied) return;
-    applied = true;
-    incoming.alt = next.alt;
+  const transition = window.MashaSceneMap.resolveTransition({
+    presentation,
+    reducedMotion: reducedMotion.matches,
+  });
+  document.documentElement.dataset.sceneTransition = transition.kind;
+  document.documentElement.style.setProperty("--scene-transition-ms", `${transition.durationMs}ms`);
+  clearTimeout(sceneTransitionTimer);
+  let transitionStarted = false;
+  for (const layer of sceneLayers) {
+    layer.onload = null;
+    layer.onerror = null;
+    layer.classList.remove("is-incoming");
+  }
+  incoming.classList.remove("is-active");
+
+  const completeTransition = () => {
+    if (revision !== sceneTransitionRevision) return;
+    current.classList.remove("is-active", "is-incoming");
+    incoming.classList.remove("is-incoming");
     incoming.classList.add("is-active");
-    current.classList.remove("is-active");
     activeSceneLayer = sceneLayers.indexOf(incoming);
     activeSceneId = next.id;
   };
-  incoming.addEventListener("load", showIncoming, { once: true });
-  incoming.addEventListener("error", () => {
+  const showIncoming = () => {
+    if (revision !== sceneTransitionRevision || transitionStarted) return;
+    transitionStarted = true;
+    incoming.alt = next.alt;
+    incoming.classList.add("is-incoming");
+    sceneTransitionTimer = window.setTimeout(completeTransition, transition.durationMs + 40);
+  };
+  incoming.onload = showIncoming;
+  incoming.onerror = () => {
+    if (revision !== sceneTransitionRevision) return;
     incoming.src = "assets/canonical-master.png";
     incoming.alt = "Маша дома, в своей гостиной";
-  }, { once: true });
+  };
   incoming.src = next.source;
   if (incoming.complete) showIncoming();
 }
@@ -66,6 +105,43 @@ function setComposerState({ enabled, waiting = false }) {
   sendButton.disabled = !enabled || waiting || !input.value.trim();
   newConversationButton.disabled = !enabled || waiting;
   recentToggle.disabled = !enabled || waiting;
+  homeAttentionTrigger.disabled = !enabled || waiting;
+  safetyTrigger.disabled = !enabled;
+}
+
+function closeTemporarySurfaces() {
+  recentPanel.hidden = true;
+  homeAttention.hidden = true;
+  document.documentElement.dataset.homeAttention = "closed";
+  homeAttentionTrigger.setAttribute("aria-expanded", "false");
+}
+
+function renderHomeAttention(attention) {
+  attentionLines.replaceChildren();
+  const lines = [];
+  if (attention.emergency_stop_engaged) {
+    lines.push("Автономные действия стоят на паузе.");
+  } else {
+    lines.push("Аварийная остановка сейчас не включена.");
+  }
+  if (!attention.model_available) lines.push(attention.model_label);
+  if (attention.active_conversation) {
+    lines.push(`Продолжается разговор: ${attention.active_conversation.preview}`);
+  } else {
+    lines.push("Наша первая беседа ещё впереди.");
+  }
+  for (const content of lines) {
+    const paragraph = document.createElement("p");
+    paragraph.textContent = content;
+    attentionLines.append(paragraph);
+  }
+}
+
+function applySafety(engaged) {
+  document.documentElement.dataset.safety = engaged ? "autonomy_stopped" : "autonomy_active";
+  safetyOverlay.hidden = !engaged;
+  safetyTrigger.hidden = engaged;
+  if (engaged) closeTemporarySurfaces();
 }
 
 function messageKey(message) {
@@ -107,6 +183,7 @@ function formatRecentTime(value) {
 
 function renderRecent(items, activeId = activeConversationId) {
   recentList.replaceChildren();
+  surface.classList.toggle("has-conversations", Boolean(items?.length));
   if (!items?.length) {
     const empty = document.createElement("li");
     empty.className = "recent-empty";
@@ -152,6 +229,7 @@ function applySnapshot(snapshot) {
   if (!status.model_available) pieces.push("модель недоступна");
   if (status.emergency_stop_engaged) pieces.push("автономность на паузе");
   runtimeTruth.textContent = pieces.join(" · ");
+  applySafety(status.emergency_stop_engaged);
 }
 
 function showLocalFailure(text) {
@@ -195,6 +273,19 @@ function handleBridgeEvent(encoded) {
   }
   if (payload.kind === "recent_conversations") {
     renderRecent(payload.recent, payload.active_conversation_id);
+    return;
+  }
+  if (payload.kind === "home_attention") {
+    renderHomeAttention(payload.attention);
+    homeAttention.hidden = false;
+    document.documentElement.dataset.homeAttention = "active";
+    homeAttentionTrigger.setAttribute("aria-expanded", "true");
+    return;
+  }
+  if (payload.kind === "safety_changed") {
+    applySnapshot(payload.snapshot);
+    applySafety(payload.safety.emergency_stop_engaged);
+    if (!payload.safety.emergency_stop_engaged) input.focus();
     return;
   }
   if (payload.kind === "conversation_opened") {
@@ -264,6 +355,7 @@ composer.addEventListener("submit", (event) => {
   const content = input.value.trim();
   if (!ready || inFlight || !content) return;
   input.value = "";
+  fitComposer();
   setComposerState({ enabled: true, waiting: true });
   bridge.submitMessage(content);
 });
@@ -275,11 +367,67 @@ newConversationButton.addEventListener("click", () => {
 
 recentToggle.addEventListener("click", () => {
   if (!ready || inFlight) return;
+  homeAttention.hidden = true;
+  document.documentElement.dataset.homeAttention = "closed";
+  homeAttentionTrigger.setAttribute("aria-expanded", "false");
   recentPanel.hidden = !recentPanel.hidden;
   if (!recentPanel.hidden) bridge.loadRecentConversations();
 });
 
-input.addEventListener("input", () => setComposerState({ enabled: ready, waiting: inFlight }));
+homeAttentionTrigger.addEventListener("click", () => {
+  if (!ready || inFlight) return;
+  recentPanel.hidden = true;
+  if (homeAttention.hidden) {
+    bridge.loadHomeAttention();
+  } else {
+    homeAttention.hidden = true;
+    document.documentElement.dataset.homeAttention = "closed";
+    homeAttentionTrigger.setAttribute("aria-expanded", "false");
+  }
+});
+
+safetyTrigger.addEventListener("click", () => {
+  if (!ready) return;
+  bridge.engageEmergencyStop();
+});
+
+resumeAction.addEventListener("click", () => {
+  if (!ready) return;
+  bridge.resumeAutonomy();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closeTemporarySurfaces();
+    return;
+  }
+  if (event.ctrlKey && event.key.toLowerCase() === "h") {
+    event.preventDefault();
+    homeAttentionTrigger.click();
+  }
+  if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "s") {
+    event.preventDefault();
+    safetyTrigger.click();
+  }
+  if (event.ctrlKey && event.key.toLowerCase() === "l") {
+    event.preventDefault();
+    input.focus();
+  }
+});
+window.addEventListener("blur", closeTemporarySurfaces);
+
+input.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+  event.preventDefault();
+  if (!sendButton.disabled) composer.requestSubmit();
+});
+
+input.addEventListener("input", () => {
+  fitComposer();
+  setComposerState({ enabled: ready, waiting: inFlight });
+});
+fitComposer();
+document.documentElement.dataset.homeAttention = "closed";
 
 if (typeof QWebChannel === "function" && window.qt?.webChannelTransport) {
   window.MashaSceneMap.preload();

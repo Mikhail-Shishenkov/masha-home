@@ -3,6 +3,13 @@
 // Closed, deterministic visual registry. Presentation events choose an activity;
 // neither assistant text nor the model ever selects an image asset.
 (function registerMashaSceneMap(global) {
+  const TRANSITION_POLICY = Object.freeze({
+    initial: Object.freeze({ kind: "initial", durationMs: 620 }),
+    normal: Object.freeze({ kind: "normal", durationMs: 520 }),
+    attention: Object.freeze({ kind: "attention", durationMs: 390 }),
+    safety: Object.freeze({ kind: "safety", durationMs: 300 }),
+    reduced: Object.freeze({ kind: "reduced", durationMs: 1 }),
+  });
   const SCENES = Object.freeze({
     idle: Object.freeze({
       id: "scene.home.idle",
@@ -66,6 +73,18 @@
     }
   }
 
+  function resolveTransition({ presentation, reducedMotion = false, initial = false } = {}) {
+    if (reducedMotion) return TRANSITION_POLICY.reduced;
+    if (initial) return TRANSITION_POLICY.initial;
+    if (presentation?.overlays?.safety === "autonomy_stopped") {
+      return TRANSITION_POLICY.safety;
+    }
+    if (["listening", "waiting"].includes(presentation?.presence?.activity)) {
+      return TRANSITION_POLICY.attention;
+    }
+    return TRANSITION_POLICY.normal;
+  }
+
   function preload() {
     if (typeof Image !== "function") return;
     Object.values(SCENES).forEach((scene) => {
@@ -74,7 +93,7 @@
     });
   }
 
-  const api = Object.freeze({ SCENES, resolveScene, preload });
+  const api = Object.freeze({ SCENES, TRANSITION_POLICY, resolveScene, resolveTransition, preload });
   global.MashaSceneMap = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

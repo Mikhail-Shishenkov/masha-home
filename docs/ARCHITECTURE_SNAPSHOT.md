@@ -712,3 +712,24 @@ hysteresis. Implemented variants are `presence_first`, `conversation_first` and
 `adaptive_cinematic`; they are plans from one resolver, not separate frontends.
 
 Current regression after UI-04B: `334 passed`.
+
+## CURRENT — UI-06B PRODUCTION HOME
+
+The production visual renderer is owned by root `frontend/` and is served only
+through the hardened offline `masha://home/` origin. `backend.ui` remains the
+PySide6/WebEngine host and a closed typed WebChannel bridge; it does not own
+frontend assets and the renderer has no direct persistence, domain, Ollama or
+filesystem access. Packaging installs the same renderer under
+`share/masha-home/frontend` without changing this boundary.
+
+The implemented production slice contains one room-first composition with
+Masha as the persistent visual anchor, real Conversation, New conversation, a
+temporary spatial conversation shelf, a bounded read-only Home Attention view,
+Emergency Stop/Resume, honest model-unavailable presentation and deterministic
+presence transitions. Stop leaves Conversation and drafts usable; Resume does
+not resume stopped autonomous work.
+
+Only application-owned UI-safe projections cross the bridge. Memory,
+Commitments, Activities, Proactive/Check-in, Skills, Permissions, model
+switching, Voice, Media, Devices and automatic privacy have no production UI in
+this stage. No domain semantics or SQLite schema changed.

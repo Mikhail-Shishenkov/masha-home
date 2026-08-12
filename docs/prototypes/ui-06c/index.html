@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Masha Home · Capability Workshop</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main id="capability-workshop" data-zone="table" data-tone="commitment">
+    <img class="room" src="../../../frontend/assets/canonical-master.png" alt="Маша дома, в своей гостиной">
+    <div class="ambient" aria-hidden="true"></div>
+    <div class="spatial-focus" aria-hidden="true"></div>
+
+    <header class="workshop-header">
+      <p>UI-06C · визуальная мастерская</p>
+      <p id="scene-counter">01 / 10</p>
+    </header>
+
+    <section class="capability-surface" id="capability-surface" aria-live="polite">
+      <div class="surface-heading">
+        <p class="eyebrow" id="surface-eyebrow"></p>
+        <p class="surface-place" id="surface-place"></p>
+      </div>
+      <h1 id="surface-title"></h1>
+      <p class="surface-summary" id="surface-summary"></p>
+      <div class="surface-body" id="surface-body"></div>
+      <div class="surface-actions" id="surface-actions"></div>
+      <p class="surface-receipt" id="surface-receipt" hidden></p>
+    </section>
+
+    <nav class="scene-nav" aria-label="Сцены возможностей Маши">
+      <button class="scene-arrow" id="previous-scene" type="button" aria-label="Предыдущая сцена">←</button>
+      <div class="scene-dots" id="scene-dots"></div>
+      <button class="scene-arrow" id="next-scene" type="button" aria-label="Следующая сцена">→</button>
+    </nav>
+
+    <p class="workshop-truth">Только визуальный прототип · backend и личные данные не подключены</p>
+  </main>
+  <script src="workshop-core.js"></script>
+  <script src="prototype.js"></script>
+</body>
+</html>

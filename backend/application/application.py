@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from .contracts import (
     ConversationTurnResult,
     ConversationView,
     ConversationSummaryView,
+    HomeAttentionView,
     MashaStatusView,
     ModelProfileView,
     ModelSwitchResult,
@@ -53,6 +56,28 @@ class MashaApplication:
 
     def status(self) -> MashaStatusView:
         return self._status.snapshot()
+
+    def home_attention(self, *, conversation_id: str | None = None) -> HomeAttentionView:
+        """Return only facts that are safe and meaningful in the current Home slice."""
+        status = self._status.snapshot()
+        active_conversation = None
+        if conversation_id is not None:
+            active_conversation = next(
+                (
+                    item
+                    for item in self._conversation.recent_conversations(limit=8)
+                    if item.conversation_id == conversation_id
+                ),
+                None,
+            )
+        return HomeAttentionView(
+            observed_at=datetime.now(timezone.utc),
+            active_conversation=active_conversation,
+            model_available=status.model_available,
+            model_label=status.model_label,
+            emergency_stop_engaged=status.emergency_stop_engaged,
+            safety_label=status.safety_label,
+        )
 
     def emergency_stop(self, reason: str = "manual_emergency_stop") -> SafetyView:
         return self._status.engage_emergency_stop(reason)

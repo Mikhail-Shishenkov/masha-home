@@ -1,5 +1,5 @@
 const assert = require("node:assert/strict");
-const { resolveScene } = require("./scene-map.js");
+const { resolveScene, resolveTransition } = require("./scene-map.js");
 
 function presentation(activity, { homeState = "ready", model = "available" } = {}) {
   return {
@@ -19,5 +19,16 @@ assert.equal(resolveScene({ home_state: "ready", overlays: { model: "available" 
 assert.equal(resolveScene(presentation("speaking", { model: "model_unavailable" })).id, "scene.home.idle");
 assert.equal(resolveScene(presentation("speaking", { homeState: "unavailable" })).id, "scene.home.idle");
 assert.equal(resolveScene(null).id, "scene.home.idle");
+assert.deepEqual(resolveTransition({}), { kind: "normal", durationMs: 520 });
+assert.deepEqual(resolveTransition({ reducedMotion: true }), { kind: "reduced", durationMs: 1 });
+assert.deepEqual(resolveTransition({ initial: true }), { kind: "initial", durationMs: 620 });
+assert.deepEqual(
+  resolveTransition({ presentation: { overlays: { safety: "autonomy_stopped" } } }),
+  { kind: "safety", durationMs: 300 },
+);
+assert.deepEqual(
+  resolveTransition({ presentation: { presence: { activity: "listening" } } }),
+  { kind: "attention", durationMs: 390 },
+);
 
-console.log("scene-map: 10 passed");
+console.log("scene-map: 15 passed");

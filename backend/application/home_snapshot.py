@@ -7,10 +7,12 @@ from datetime import datetime, timezone
 from backend.presentation import (
     AssistantResponded,
     AssistantStartedThinking,
+    AutonomyResumed,
     CompositionPlan,
     CompositionResolver,
     CompositionVariant,
     HomePresentationModel,
+    EmergencyStopEngaged,
     ModelUnavailable,
     PresentationRuntime,
     UserOpenedApplication,
@@ -116,6 +118,29 @@ class HomePresentationSession:
                 display_name=display_name,
             )
         )
+
+    def emergency_stop(self, *, reason: str) -> HomeSnapshotView:
+        self._status = self._status.model_copy(
+            update={
+                "emergency_stop_engaged": True,
+                "safety_label": "Аварийная остановка включена",
+            }
+        )
+        return self._dispatch(
+            EmergencyStopEngaged(
+                occurred_at=datetime.now(timezone.utc),
+                reason=reason,
+            )
+        )
+
+    def autonomy_resumed(self) -> HomeSnapshotView:
+        self._status = self._status.model_copy(
+            update={
+                "emergency_stop_engaged": False,
+                "safety_label": "Аварийная остановка выключена",
+            }
+        )
+        return self._dispatch(AutonomyResumed(occurred_at=datetime.now(timezone.utc)))
 
     @property
     def active_model_display_name(self) -> str:

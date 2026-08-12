@@ -3,13 +3,27 @@
 from __future__ import annotations
 
 import mimetypes
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import QBuffer, QIODevice
 from PySide6.QtWebEngineCore import QWebEngineUrlScheme, QWebEngineUrlSchemeHandler
 
 
-FRONTEND_ROOT = Path(__file__).with_name("frontend").resolve()
+SOURCE_FRONTEND_ROOT = Path(__file__).resolve().parents[2] / "frontend"
+INSTALLED_FRONTEND_ROOT = Path(sys.prefix) / "share" / "masha-home" / "frontend"
+
+
+def _frontend_root() -> Path:
+    """Resolve the production renderer without making it a backend package detail."""
+    for candidate in (SOURCE_FRONTEND_ROOT, INSTALLED_FRONTEND_ROOT):
+        resolved = candidate.resolve()
+        if resolved.joinpath("index.html").is_file():
+            return resolved
+    return SOURCE_FRONTEND_ROOT.resolve()
+
+
+FRONTEND_ROOT = _frontend_root()
 SCHEME_NAME = b"masha"
 HOME_HOST = "home"
 

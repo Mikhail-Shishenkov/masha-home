@@ -281,6 +281,38 @@ def test_home_presentation_session_is_deterministic_and_has_no_domain_mutation(t
     assert repository.read_document() == before
 
 
+def test_home_attention_exposes_only_active_conversation_model_and_safety(tmp_path):
+    root, _, application = _application(tmp_path)
+    first = application.send_message("Первый разговор", project_id=PROJECT_ID)
+    second = application.send_message("Вторая ветка", project_id=PROJECT_ID)
+
+    attention = application.home_attention(conversation_id=first.conversation_id)
+
+    assert attention.active_conversation is not None
+    assert attention.active_conversation.conversation_id == first.conversation_id
+    assert attention.model_available is True
+    assert attention.emergency_stop_engaged is False
+    assert set(attention.model_dump()) == {
+        "observed_at",
+        "active_conversation",
+        "model_available",
+        "model_label",
+        "emergency_stop_engaged",
+        "safety_label",
+    }
+    assert application.home_attention(conversation_id=None).active_conversation is None
+    assert second.conversation_id != first.conversation_id
+
+    application.emergency_stop()
+    restarted = build_masha_application(
+        project_root=root,
+        router=ModelRouter([LocalProfileProvider()]),
+    )
+    assert restarted.home_attention(
+        conversation_id=first.conversation_id
+    ).emergency_stop_engaged is True
+
+
 def test_recent_conversation_summaries_use_existing_history_order(tmp_path):
     _, _, application = _application(tmp_path)
     first = application.send_message("Первый разговор", project_id=PROJECT_ID)

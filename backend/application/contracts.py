@@ -65,6 +65,17 @@ class ConversationSummaryView(UiContract):
     preview: str = Field(min_length=1, max_length=160)
 
 
+class HomeAttentionView(UiContract):
+    """Bounded truth for the temporary 'what is alive now' Home surface."""
+
+    observed_at: datetime
+    active_conversation: ConversationSummaryView | None
+    model_available: bool
+    model_label: str
+    emergency_stop_engaged: bool
+    safety_label: str
+
+
 class ConversationTurnResult(UiContract):
     conversation_id: str | None
     user_message: MessageView

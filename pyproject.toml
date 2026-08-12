@@ -25,8 +25,12 @@ ui = [
 where = ["."]
 include = ["backend*"]
 
-[tool.setuptools.package-data]
-"backend.ui" = ["frontend/*", "frontend/assets/*"]
+[tool.setuptools.data-files]
+"share/masha-home/frontend" = ["frontend/index.html"]
+"share/masha-home/frontend/renderer" = ["frontend/renderer/*.js"]
+"share/masha-home/frontend/styles" = ["frontend/styles/*.css"]
+"share/masha-home/frontend/scenes" = ["frontend/scenes/*.js", "frontend/scenes/*.cjs"]
+"share/masha-home/frontend/assets" = ["frontend/assets/*.png"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

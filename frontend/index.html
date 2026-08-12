@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' qrc:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>Masha Home</title>
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles/home.css">
 </head>
 <body>
   <main class="home" aria-label="Дом Маши">
@@ -14,6 +14,12 @@
       <img class="scene" src="assets/canonical-master.png" alt="">
     </div>
     <div class="ambient" aria-hidden="true"></div>
+    <button class="home-attention-trigger" id="home-attention-trigger" type="button" aria-expanded="false" aria-controls="home-attention" disabled>
+      <span aria-hidden="true">⌂</span><span class="sr-only">Что сейчас живо в Доме</span>
+    </button>
+    <button class="safety-trigger" id="safety-trigger" type="button" disabled>
+      <span class="safety-mark" aria-hidden="true"></span><span>Стоп</span>
+    </button>
     <section class="conversation-surface" id="conversation-surface" aria-label="Разговор с Машей">
       <header class="surface-header">
         <p class="eyebrow">между нами</p>
@@ -27,19 +33,33 @@
       <ol class="transcript" id="transcript" aria-live="polite"></ol>
       <form class="composer" id="composer">
         <label class="sr-only" for="message-input">Сообщение Маше</label>
-        <textarea id="message-input" rows="2" maxlength="4000" placeholder="Напиши Маше…" disabled></textarea>
+        <textarea id="message-input" rows="2" maxlength="4000" placeholder="Напиши Маше…" aria-describedby="composer-hint" disabled></textarea>
         <button class="send" id="send-button" type="submit" disabled>Отправить</button>
+        <span class="sr-only" id="composer-hint">Enter — отправить, Shift+Enter — новая строка</span>
       </form>
       <aside class="recent-conversations" id="recent-conversations" aria-label="Недавние разговоры" hidden>
-        <p class="recent-heading">Недавние разговоры</p>
+        <div class="shelf-line" aria-hidden="true"></div>
+        <p class="recent-heading">Наши разговоры</p>
         <ol class="recent-list" id="recent-list"></ol>
       </aside>
     </section>
-    <p class="orientation">Дом Маши · локально</p>
-    <p class="runtime-truth" id="runtime-truth" aria-live="polite">Локальный режим</p>
+    <aside class="home-attention" id="home-attention" aria-label="Что сейчас живо в Доме" hidden>
+      <p class="eyebrow">дом сейчас</p>
+      <h2>Здесь всё спокойно.</h2>
+      <div class="attention-lines" id="attention-lines"></div>
+    </aside>
+    <section class="safety-overlay" id="safety-overlay" aria-live="assertive" hidden>
+      <div class="safety-copy">
+        <p class="eyebrow">тишина действий</p>
+        <h2>Автономность остановлена.</h2>
+        <p>Разговор и наша история остаются здесь. Ничего не запустится само.</p>
+        <button class="resume-action" id="resume-action" type="button">Вернуть возможность действовать</button>
+      </div>
+    </section>
+    <p class="sr-only" id="runtime-truth" aria-live="polite">Локальный режим</p>
   </main>
   <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
-  <script src="scene-map.js"></script>
-  <script src="app.js"></script>
+  <script src="scenes/scene-map.js"></script>
+  <script src="renderer/app.js"></script>
 </body>
 </html>

@@ -464,10 +464,11 @@ UI-01 baseline: `290 passed` full regression.
 
 ## UI-03 Presentation Runtime and Tier 0 prototype
 
-Open the local structural Home prototype:
+The historical Tier 0 renderer remains available directly for structural
+presentation experiments:
 
 ```powershell
-.\masha.ps1 home
+.\.venv\Scripts\python.exe -m backend.presentation.prototype
 ```
 
 It uses only `backend.presentation` and standard-library Tk. Keys `1` through
@@ -482,6 +483,36 @@ python -m pytest tests/test_presentation_runtime.py tests/test_tier0_prototype.p
 ```
 
 UI-03 baseline: `307 passed` full regression.
+
+## UI-06B production Home
+
+Run the current offline desktop Home from the repository root:
+
+```powershell
+.\masha.ps1 home
+```
+
+The production renderer lives in root `frontend/`; `backend.ui` owns only the
+PySide6/WebEngine host, the closed typed WebChannel bridge and the hardened
+`masha://home/` local origin. The renderer has no external network access and
+cannot execute arbitrary backend commands.
+
+The current UI slice exposes only Conversation, New conversation, the temporary
+conversation shelf, bounded Home Attention and Emergency Stop/Resume. Missing
+UI-safe projections are intentionally not rendered. Stop pauses autonomous
+activity but keeps Conversation and its draft available; Resume only clears the
+latch and does not restart work.
+
+Shortcuts: `Ctrl+H` opens Home Attention, `Ctrl+L` focuses Conversation,
+`Ctrl+Shift+S` engages Stop, and `Escape` closes temporary surfaces.
+
+Targeted verification:
+
+```powershell
+python -m pytest tests/test_application_boundary.py tests/test_desktop_host.py tests/test_presentation_runtime.py tests/test_composition_runtime.py -q
+node --check frontend/renderer/app.js
+node frontend/scenes/scene-map.test.cjs
+```
 
 ## UI-04A Home Composition audit
 
