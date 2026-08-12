@@ -4,11 +4,11 @@
 // neither assistant text nor the model ever selects an image asset.
 (function registerMashaSceneMap(global) {
   const TRANSITION_POLICY = Object.freeze({
-    initial: Object.freeze({ kind: "initial", durationMs: 620 }),
-    normal: Object.freeze({ kind: "normal", durationMs: 520 }),
-    attention: Object.freeze({ kind: "attention", durationMs: 390 }),
-    safety: Object.freeze({ kind: "safety", durationMs: 300 }),
-    reduced: Object.freeze({ kind: "reduced", durationMs: 1 }),
+    initial: Object.freeze({ kind: "initial", exitMs: 0, enterMs: 520, settleMs: 0, minimumHoldMs: 500 }),
+    normal: Object.freeze({ kind: "normal", exitMs: 190, enterMs: 330, settleMs: 110, minimumHoldMs: 720 }),
+    attention: Object.freeze({ kind: "attention", exitMs: 160, enterMs: 280, settleMs: 120, minimumHoldMs: 620 }),
+    safety: Object.freeze({ kind: "safety", exitMs: 120, enterMs: 220, settleMs: 0, minimumHoldMs: 300 }),
+    reduced: Object.freeze({ kind: "reduced", exitMs: 0, enterMs: 1, settleMs: 0, minimumHoldMs: 0 }),
   });
   const SCENES = Object.freeze({
     idle: Object.freeze({
@@ -62,9 +62,11 @@
       case "speaking":
         return SCENES.conversation;
       case "listening":
-      case "waiting":
-      case "confirmation":
         return SCENES.listening;
+      case "waiting":
+        return presentation.presence?.attention === "toward_user" ? SCENES.listening : SCENES.idle;
+      case "confirmation":
+        return SCENES.idle;
       case "processing":
         return SCENES.thinking;
       case "working":

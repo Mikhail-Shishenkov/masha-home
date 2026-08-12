@@ -79,12 +79,137 @@ class CommitmentListView(UiContract):
     items: tuple[CommitmentView, ...]
 
 
+class AgentStepView(UiContract):
+    title: str = Field(min_length=1, max_length=200)
+    status: Literal["awaiting_confirmation", "denied", "executing", "verified", "failed"]
+    result_summary: str | None = Field(default=None, max_length=500)
+
+
+class AgentRunView(UiContract):
+    run_id: str = Field(min_length=1)
+    goal: str = Field(min_length=1, max_length=500)
+    status: Literal["running", "awaiting_confirmation", "completed", "denied", "failed", "budget_exhausted"]
+    started_at: datetime
+    updated_at: datetime
+    finished_at: datetime | None
+    completed_steps: int = Field(ge=0)
+    total_steps: int = Field(ge=0)
+    steps: tuple[AgentStepView, ...]
+    status_label: str = Field(min_length=1, max_length=120)
+
+
+class AgentRunListView(UiContract):
+    items: tuple[AgentRunView, ...]
+
+
+class ProactiveInteractionView(UiContract):
+    interaction_id: str = Field(min_length=1)
+    interaction_type: Literal["reminder", "check_in"]
+    state: Literal["delivered", "acknowledged", "dismissed"]
+    title: str = Field(min_length=1, max_length=160)
+    message: str = Field(min_length=1, max_length=500)
+    created_at: datetime
+    delivered_at: datetime
+    allowed_actions: tuple[Literal["acknowledge", "dismiss"], ...]
+
+
+class ProactiveInteractionListView(UiContract):
+    items: tuple[ProactiveInteractionView, ...]
+
+
+class RelationshipMomentView(UiContract):
+    moment_id: str = Field(min_length=1)
+    title: str = Field(min_length=1, max_length=240)
+    text: str = Field(min_length=1, max_length=1_000)
+    created_at: datetime
+
+
+class ConfirmedMemoryItemView(UiContract):
+    memory_id: str = Field(min_length=1)
+    memory_type: Literal["fact", "decision", "episode"]
+    text: str = Field(min_length=1, max_length=1_000)
+    created_at: datetime | None
+
+
+class ContinuityFollowUpView(UiContract):
+    thread_id: str = Field(min_length=1)
+    topic: str = Field(min_length=1, max_length=240)
+    summary: str = Field(min_length=1, max_length=1_000)
+    reason_to_return: str = Field(min_length=1, max_length=1_000)
+    priority: float = Field(ge=0.0, le=1.0)
+    revisit_after: datetime | None
+
+
+class SharedContinuityView(UiContract):
+    confirmed_memories: tuple[ConfirmedMemoryItemView, ...]
+    moments: tuple[RelationshipMomentView, ...]
+    open_threads: tuple[ContinuityFollowUpView, ...]
+    quarantined_count: int = Field(ge=0)
+
+
+class AdoptedReflectionView(UiContract):
+    reflection_id: str = Field(min_length=1)
+    text: str = Field(min_length=1, max_length=700)
+    meaning: str = Field(min_length=1, max_length=500)
+    confidence: float = Field(ge=0.0, le=1.0)
+    scope: Literal["self", "shared", "help_learning"]
+    created_at: datetime
+    reconsiders_previous: bool
+
+
+class PendingReflectionView(UiContract):
+    candidate_id: str = Field(min_length=1)
+    text: str = Field(min_length=1, max_length=700)
+    meaning: str = Field(min_length=1, max_length=500)
+    confidence: float = Field(ge=0.0, le=1.0)
+    scope: Literal["self", "shared", "help_learning"]
+    created_at: datetime
+    allowed_actions: tuple[Literal["adopt", "reject"], ...] = ("adopt", "reject")
+
+
+class HonestHelpOfferView(UiContract):
+    candidate_id: str = Field(min_length=1)
+    observation: str = Field(min_length=1, max_length=400)
+    offer: str = Field(min_length=1, max_length=400)
+    expected_benefit: str = Field(min_length=1, max_length=300)
+    why_now: str = Field(min_length=1, max_length=300)
+    allowed_actions: tuple[Literal["accept", "dismiss"], ...] = ("accept", "dismiss")
+
+
+class ReflectionWorkspaceView(UiContract):
+    adopted: tuple[AdoptedReflectionView, ...]
+    pending: tuple[PendingReflectionView, ...]
+    help_offers: tuple[HonestHelpOfferView, ...]
+
+
+class ReflectionResolutionView(UiContract):
+    candidate_id: str
+    status: Literal["adopted", "rejected"]
+    message: str
+
+
+class HonestHelpResolutionView(UiContract):
+    candidate_id: str
+    status: Literal["delivered", "dismissed", "model_unavailable"]
+    conversation_id: str | None
+    message: str
+    user_message_id: str | None = None
+
+
 class PendingConfirmationView(UiContract):
     """Bounded human-facing projection of one existing memory proposal."""
 
     proposal_id: str = Field(min_length=1)
     conversation_id: str = Field(min_length=1)
-    confirmation_type: Literal["commitment_create", "commitment_complete"]
+    confirmation_type: Literal[
+        "memory_create",
+        "memory_update",
+        "memory_forget",
+        "commitment_create",
+        "commitment_complete",
+        "shared_moment_create",
+        "continuity_update",
+    ]
     title: str = Field(min_length=1, max_length=160)
     subject: str = Field(min_length=1, max_length=500)
     due_at: datetime | None
@@ -171,6 +296,65 @@ class ModelSwitchResult(UiContract):
     active_profile: ModelProfileView
     error_code: ApplicationErrorCode | None = None
     error_label: str | None = None
+
+
+class SkillWorkbenchView(UiContract):
+    skill_id: str = Field(min_length=1)
+    name: str = Field(min_length=1, max_length=160)
+    version: str | None
+    integrity: str = Field(min_length=1, max_length=80)
+    capabilities: tuple[str, ...]
+    runtime_supported: bool
+
+
+class PermissionGrantView(UiContract):
+    skill_id: str = Field(min_length=1)
+    capability: str = Field(min_length=1, max_length=100)
+    scope: str = Field(min_length=1, max_length=200)
+    effective: bool
+    label: str = Field(min_length=1, max_length=100)
+    mode: Literal["self", "ask", "forbidden"]
+
+
+class PermissionPendingView(UiContract):
+    kind: str = Field(min_length=1, max_length=80)
+    title: str = Field(min_length=1, max_length=240)
+    status: str = Field(min_length=1, max_length=80)
+
+
+class WorkbenchView(UiContract):
+    profiles: tuple[ModelProfileView, ...]
+    skills: tuple[SkillWorkbenchView, ...]
+    grants: tuple[PermissionGrantView, ...]
+    pending: tuple[PermissionPendingView, ...]
+    emergency_stop_engaged: bool
+    action_autonomy_enabled: bool
+    action_autonomy_level: int = Field(ge=0, le=4)
+    active_agent_runs: int = Field(ge=0)
+
+
+class SkillInstallPreviewView(UiContract):
+    proposal_id: str = Field(min_length=1)
+    action: Literal["install", "upgrade"]
+    skill_id: str = Field(min_length=1)
+    name: str = Field(min_length=1, max_length=160)
+    proposed_version: str = Field(min_length=1, max_length=80)
+    capabilities: tuple[str, ...]
+    requested_scopes: tuple[str, ...]
+    risk_level: str = Field(min_length=1, max_length=80)
+    maximum_autonomy_level: int = Field(ge=0, le=4)
+    permissions_to_revoke: int = Field(ge=0)
+    runtime_supported: bool
+    files_added: int = Field(ge=0)
+    files_changed: int = Field(ge=0)
+    files_removed: int = Field(ge=0)
+
+
+class SkillInstallResultView(UiContract):
+    status: Literal["confirmed", "rejected"]
+    skill_id: str
+    message: str = Field(min_length=1, max_length=300)
+    workbench: WorkbenchView
 
 
 class VisualAssetView(UiContract):

@@ -23,6 +23,11 @@
     <button class="commitments-trigger" id="commitments-trigger" type="button" aria-expanded="false" aria-controls="commitments-surface" disabled>
       <span>Дела</span><span class="commitments-count" id="commitments-count" aria-label="Количество дел">0</span>
     </button>
+    <button class="activity-trigger" id="activity-trigger" type="button" aria-expanded="false" aria-controls="activity-surface" disabled hidden>Работа</button>
+    <button class="proactive-trigger" id="proactive-trigger" type="button" aria-expanded="false" aria-controls="proactive-surface" disabled hidden>Рядом</button>
+    <button class="continuity-trigger" id="continuity-trigger" type="button" aria-expanded="false" aria-controls="continuity-surface" disabled hidden>Наша история</button>
+    <button class="reflections-trigger" id="reflections-trigger" type="button" aria-expanded="false" aria-controls="reflections-surface" disabled hidden>Мысли</button>
+    <button class="workbench-trigger" id="workbench-trigger" type="button" aria-expanded="false" aria-controls="workbench-surface" disabled>Уголок</button>
     <section class="conversation-surface" id="conversation-surface" aria-label="Разговор с Машей">
       <header class="surface-header">
         <p class="eyebrow">между нами</p>
@@ -49,10 +54,59 @@
     <aside class="commitments-surface" id="commitments-surface" aria-label="Наши дела" hidden>
       <header class="commitments-header">
         <div><p class="eyebrow">рядом с нами</p><h2>Наши дела</h2></div>
-        <button class="surface-close" id="close-commitments" type="button" aria-label="Закрыть список дел">Закрыть</button>
+        <div class="object-header-actions"><button class="surface-action" id="add-commitment" type="button">Добавить дело</button><button class="surface-close" id="close-commitments" type="button" aria-label="Закрыть список дел">Закрыть</button></div>
       </header>
       <p class="commitments-intro">Не отчёт и не контрольная панель — только то, что мы решили не потерять.</p>
       <ol class="commitments-list" id="commitments-list"></ol>
+    </aside>
+    <aside class="activity-surface" id="activity-surface" aria-label="Работа Маши" hidden>
+      <header class="object-header">
+        <div><p class="eyebrow">проверенная работа</p><h2>Что я делала</h2></div>
+        <button class="surface-close" id="close-activity" type="button">Закрыть</button>
+      </header>
+      <ol class="agent-run-list" id="agent-run-list"></ol>
+    </aside>
+    <aside class="proactive-surface" id="proactive-surface" aria-label="Маша рядом" hidden>
+      <header class="object-header">
+        <div><p class="eyebrow">Маша рядом</p><h2>Я хотела сказать</h2></div>
+        <button class="surface-close" id="close-proactive" type="button">Закрыть</button>
+      </header>
+      <ol class="proactive-list" id="proactive-list"></ol>
+    </aside>
+    <aside class="continuity-surface" id="continuity-surface" aria-label="Наша общая история" hidden>
+      <header class="object-header">
+        <div><p class="eyebrow">что между нами продолжается</p><h2>Наша история</h2></div>
+        <div class="object-header-actions"><button class="surface-action" id="add-shared-moment" type="button">Сохранить момент</button><button class="surface-action" id="add-continuity-thread" type="button">Оставить нить</button><button class="surface-close" id="close-continuity" type="button">Закрыть</button></div>
+      </header>
+      <p class="object-intro">Не досье — только то, что действительно осталось с нами и к чему хочется вернуться.</p>
+      <div class="continuity-columns">
+        <section><h3>Наши моменты</h3><ol class="continuity-list" id="relationship-moments"></ol></section>
+        <section><h3>К чему стоит вернуться</h3><ol class="continuity-list" id="continuity-threads"></ol></section>
+      </div>
+    </aside>
+    <aside class="reflections-surface" id="reflections-surface" aria-label="Мысли Маши и честная помощь" hidden>
+      <header class="object-header">
+        <div><p class="eyebrow">я тут подумала</p><h2>Мои мысли</h2></div>
+        <button class="surface-close" id="close-reflections" type="button">Закрыть</button>
+      </header>
+      <p class="object-intro">Рефлексия — моё evidence-linked мнение, а не факт о Мише и не часть Identity.</p>
+      <ol class="reflection-list" id="reflection-list"></ol>
+    </aside>
+    <aside class="workbench-surface" id="workbench-surface" aria-label="Рабочий уголок Маши" hidden>
+      <header class="object-header">
+        <div><p class="eyebrow">локально и под твоим контролем</p><h2>Рабочий уголок</h2></div>
+        <button class="surface-close" id="close-workbench" type="button">Закрыть</button>
+      </header>
+      <p class="object-intro">Здесь видно, чем Маша может пользоваться. Ничего не запускается и не меняется само.</p>
+      <section class="workbench-section">
+        <h3>Как я думаю</h3><ol class="workbench-list" id="workbench-models"></ol>
+      </section>
+      <section class="workbench-section">
+        <div class="workbench-section-heading"><h3>Что я умею</h3><button class="surface-action" id="add-skill" type="button">Добавить навык</button></div><ol class="workbench-list" id="workbench-skills"></ol>
+      </section>
+      <section class="workbench-section">
+        <h3>Что мне можно</h3><ol class="workbench-list" id="workbench-permissions"></ol>
+      </section>
     </aside>
     <aside class="operation-surface" id="operation-surface" aria-live="polite" hidden>
       <p class="eyebrow" id="operation-eyebrow">нужно твоё решение</p>
@@ -69,6 +123,21 @@
         <button class="operation-action" id="reject-operation" type="button">Не сейчас</button>
       </div>
       <button class="operation-close" id="close-operation" type="button" hidden>Вернуться к разговору</button>
+    </aside>
+    <aside class="quick-action-surface" id="commitment-create-surface" aria-live="polite" hidden>
+      <p class="eyebrow">новое дело</p><h2>Что не потерять?</h2>
+      <label for="commitment-title">Название</label><input id="commitment-title" maxlength="500" placeholder="Например: купить билеты">
+      <label for="commitment-due">Срок, если нужен</label><input id="commitment-due" maxlength="120" placeholder="завтра в 18:00 или оставить пустым">
+      <div class="object-actions"><button id="submit-commitment" type="button">Показать перед сохранением</button><button id="cancel-commitment" type="button">Не сейчас</button></div>
+    </aside>
+    <aside class="quick-action-surface" id="skill-install-surface" aria-live="polite" hidden>
+      <p class="eyebrow">проверенный локальный пакет</p><h2 id="skill-install-title">Добавить навык?</h2>
+      <p id="skill-install-copy"></p><div class="object-actions"><button id="confirm-skill-install" type="button">Установить</button><button id="reject-skill-install" type="button">Не сейчас</button></div>
+    </aside>
+    <aside class="quick-action-surface" id="continuity-create-surface" aria-live="polite" hidden>
+      <p class="eyebrow" id="continuity-create-eyebrow">между нами</p><h2 id="continuity-create-title">Что сохранить?</h2>
+      <label class="sr-only" for="continuity-create-text">Текст момента или открытой нити</label><textarea id="continuity-create-text" rows="3" maxlength="1200" placeholder="Напиши своими словами…"></textarea>
+      <div class="object-actions"><button id="submit-continuity" type="button">Показать перед сохранением</button><button id="cancel-continuity" type="button">Не сейчас</button></div>
     </aside>
     <aside class="home-attention" id="home-attention" aria-label="Что сейчас живо в Доме" hidden>
       <p class="eyebrow">дом сейчас</p>

@@ -752,6 +752,65 @@ policies producing the same `CompositionPlan` type. They are not separate
 frontends and cannot change Identity, authority, Surface lifecycle or domain
 state. Visual comparison and final default selection remain a user decision.
 
+### DEC-090. Scene motion has deterministic hysteresis and one visible identity
+
+Статус: **Принято и реализовано (UI-06F)**
+
+Presentation events select opaque scene IDs, but the renderer owns a bounded
+settle delay and minimum hold time. A scene change exits the current frame before
+revealing the next; two Masha frames must never be visible simultaneously.
+Conversation content does not resize the primary surface or select a scene.
+Reduced-motion remains an explicit deterministic policy.
+
+### DEC-091. Capability grammar is accepted before production binding
+
+Статус: **Принято; visual review passed and Slice A implemented (UI-06F)**
+
+Every new capability moment is first reviewed as an offline disposable scene
+through `appeared → focused → waiting → resolved|dismissed`. Only after user
+acceptance may a separate UI-safe application projection and allowlisted action
+be introduced. The workshop itself cannot access backend state or claim a domain
+mutation.
+
+### DEC-092. Capability objects are contextual, not permanent navigation
+
+Статус: **Принято и реализовано для Slice A (UI-06F)**
+
+Activity and Proactive Presence appear in the Home only when a real application
+object exists. Empty capability categories do not become dashboard navigation.
+Agent receipts are read-only until a real general action contract exists.
+Reminder/Check-in exposes only the already-supported acknowledge/dismiss
+lifecycle and never performs Memory or Commitment mutation.
+
+### DEC-093. Continuity facts and Masha reflections stay visibly distinct
+
+Статус: **Принято и реализовано в UI-06G**
+
+Confirmed Memory and Shared Continuity are presented as read-only shared
+history. A Masha reflection remains a fallible evidence-linked interpretation
+and is never displayed as a Fact. It becomes adopted only after Misha's explicit
+decision.
+
+Honest Help is likewise an explicit offer. Dismissal has no model call;
+acceptance delegates to the existing Stage 15 service and selected local model.
+The renderer cannot infer, adopt or execute either capability and Emergency Stop
+blocks their actions.
+
+### DEC-094. Operating controls appear as one contextual workbench
+
+Статус: **Принято и реализовано в UI-06H**
+
+Skills, grants, Agent Runs and local model profiles must not become permanent
+dashboard navigation. The Home presents them through one bounded `Режим` object
+when Misha chooses to inspect operating state. Agent receipts retain their own
+`Работа` surface.
+
+Manual model selection is a local operating preference, not agent execution;
+it remains available during Emergency Stop. The existing deterministic
+availability check and no-fallback contract are retained. Installation, grants
+and policy mutations require a separate explicit confirmation UX and are not
+added to this slice.
+
 ## 6. Открытые вопросы ближайших этапов
 
 - Формат identity manifest.

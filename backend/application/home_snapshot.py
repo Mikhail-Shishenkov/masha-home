@@ -8,8 +8,10 @@ from backend.presentation import (
     AssistantResponded,
     AssistantStartedThinking,
     ActivityCompleted,
+    ActivityCancelled,
     ActivityFailed,
     ActivityStarted,
+    ActivityWaiting,
     AutonomyResumed,
     CompositionPlan,
     CompositionResolver,
@@ -17,6 +19,11 @@ from backend.presentation import (
     HomePresentationModel,
     EmergencyStopEngaged,
     ModelUnavailable,
+    ModelChanged,
+    ModelSwitchStarted,
+    ProactiveAcknowledged,
+    ProactiveDelivered,
+    ProactiveDismissed,
     InteractionSurface,
     SurfaceCapability,
     SurfaceCompleted,
@@ -160,6 +167,157 @@ class HomePresentationSession:
         )
         return self._dispatch(SurfaceFocused(occurred_at=now, surface_id="home.commitments"))
 
+    def activity_opened(self, *, run_id: str, title: str, status: str) -> HomeSnapshotView:
+        now = datetime.now(timezone.utc)
+        activity_id = f"agent.{run_id}"
+        surface_id = f"agent.{run_id}"
+        self._dispatch(
+            ActivityStarted(
+                occurred_at=now,
+                activity_id=activity_id,
+                surface_id=surface_id,
+                title=title,
+                summary="Проверенный локальный агентный запуск",
+            )
+        )
+        if status == "running":
+            return self._dispatch(SurfaceFocused(occurred_at=now, surface_id=surface_id))
+        if status == "awaiting_confirmation":
+            return self._dispatch(
+                ActivityWaiting(
+                    occurred_at=now,
+                    activity_id=activity_id,
+                    summary="Нужно твоё решение перед продолжением",
+                )
+            )
+        if status == "completed":
+            return self._dispatch(
+                ActivityCompleted(
+                    occurred_at=now,
+                    activity_id=activity_id,
+                    summary="Завершено и проверено",
+                )
+            )
+        if status == "denied":
+            return self._dispatch(
+                ActivityCancelled(
+                    occurred_at=now,
+                    activity_id=activity_id,
+                    summary="Остановлено правилами доступа",
+                )
+            )
+        return self._dispatch(
+            ActivityFailed(
+                occurred_at=now,
+                activity_id=activity_id,
+                summary="Запуск завершился без подтверждённого результата",
+                reason_code=status,
+            )
+        )
+
+    def proactive_opened(self, *, event_id: str, text: str) -> HomeSnapshotView:
+        now = datetime.now(timezone.utc)
+        self._dispatch(ProactiveDelivered(occurred_at=now, event_id=event_id, text=text))
+        return self._dispatch(
+            SurfaceFocused(occurred_at=now, surface_id=f"proactive:{event_id}")
+        )
+
+    def proactive_resolved(self, *, event_id: str, decision: str) -> HomeSnapshotView:
+        event = (
+            ProactiveAcknowledged(occurred_at=datetime.now(timezone.utc), event_id=event_id)
+            if decision == "acknowledge"
+            else ProactiveDismissed(occurred_at=datetime.now(timezone.utc), event_id=event_id)
+        )
+        return self._dispatch(event)
+
+    def continuity_opened(self, *, summary: str) -> HomeSnapshotView:
+        return self._open_memory_surface(
+            surface_id="home.continuity",
+            title="Наша история",
+            summary=summary,
+            decision=False,
+        )
+
+    def reflections_opened(self, *, summary: str, decision: bool) -> HomeSnapshotView:
+        return self._open_memory_surface(
+            surface_id="home.reflections",
+            title="Мысли Маши",
+            summary=summary,
+            decision=decision,
+        )
+
+    def reflection_action_started(self, *, title: str) -> HomeSnapshotView:
+        return self._dispatch(
+            ActivityStarted(
+                occurred_at=datetime.now(timezone.utc),
+                activity_id="activity.reflection",
+                surface_id="activity.reflection",
+                title=title,
+                summary="Только явно выбранное действие с рефлексией",
+            )
+        )
+
+    def reflection_action_resolved(self, *, summary: str) -> HomeSnapshotView:
+        return self._dispatch(
+            ActivityCompleted(
+                occurred_at=datetime.now(timezone.utc),
+                activity_id="activity.reflection",
+                summary=summary,
+            )
+        )
+
+    def reflection_action_failed(self, *, summary: str) -> HomeSnapshotView:
+        return self._dispatch(
+            ActivityFailed(
+                occurred_at=datetime.now(timezone.utc),
+                activity_id="activity.reflection",
+                summary=summary,
+                reason_code="reflection_action_failed",
+            )
+        )
+
+    def workbench_opened(self, *, summary: str, decision: bool) -> HomeSnapshotView:
+        now = datetime.now(timezone.utc)
+        self._dispatch(
+            SurfaceCreated(
+                occurred_at=now,
+                surface=InteractionSurface(
+                    surface_id="home.workbench",
+                    kind=SurfaceKind.MODEL_RUNTIME,
+                    lifecycle=SurfaceLifecycle.ACTIVE,
+                    role=SurfaceRole.DECISION if decision else SurfaceRole.SUPPORTING,
+                    title="Рабочий уголок",
+                    summary=summary,
+                    sensitive=True,
+                    capabilities=(
+                        (SurfaceCapability.INSPECT, SurfaceCapability.CONFIRM)
+                        if decision
+                        else (SurfaceCapability.INSPECT,)
+                    ),
+                ),
+            )
+        )
+        return self._dispatch(SurfaceFocused(occurred_at=now, surface_id="home.workbench"))
+
+    def model_switch_started(self) -> HomeSnapshotView:
+        return self._dispatch(ModelSwitchStarted(occurred_at=datetime.now(timezone.utc)))
+
+    def model_changed(
+        self,
+        *,
+        active_model: ModelProfileView,
+        status: MashaStatusView,
+    ) -> HomeSnapshotView:
+        self._active_model = active_model
+        self._status = status
+        return self._dispatch(
+            ModelChanged(
+                occurred_at=datetime.now(timezone.utc),
+                profile_id=active_model.profile_id,
+                display_name=active_model.display_name,
+            )
+        )
+
     def confirmation_resolving(self, *, title: str) -> HomeSnapshotView:
         now = datetime.now(timezone.utc)
         self._dispatch(
@@ -174,6 +332,36 @@ class HomePresentationSession:
                 summary="Применяю только подтверждённое изменение локально",
             )
         )
+
+    def _open_memory_surface(
+        self,
+        *,
+        surface_id: str,
+        title: str,
+        summary: str,
+        decision: bool,
+    ) -> HomeSnapshotView:
+        now = datetime.now(timezone.utc)
+        self._dispatch(
+            SurfaceCreated(
+                occurred_at=now,
+                surface=InteractionSurface(
+                    surface_id=surface_id,
+                    kind=SurfaceKind.MEMORY,
+                    lifecycle=SurfaceLifecycle.ACTIVE,
+                    role=SurfaceRole.DECISION if decision else SurfaceRole.SUPPORTING,
+                    title=title,
+                    summary=summary,
+                    sensitive=True,
+                    capabilities=(
+                        (SurfaceCapability.INSPECT, SurfaceCapability.CONFIRM, SurfaceCapability.REJECT)
+                        if decision
+                        else (SurfaceCapability.INSPECT,)
+                    ),
+                ),
+            )
+        )
+        return self._dispatch(SurfaceFocused(occurred_at=now, surface_id=surface_id))
 
     def confirmation_resolved(self, *, summary: str) -> HomeSnapshotView:
         return self._dispatch(

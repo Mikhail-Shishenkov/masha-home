@@ -53,6 +53,17 @@ def test_production_frontend_keeps_desktop_composition_and_accessibility_contrac
     assert "operation-surface" in html
     assert "commitments-trigger" in html
     assert "commitments-surface" in html
+    assert "activity-trigger" in html
+    assert "activity-surface" in html
+    assert "proactive-trigger" in html
+    assert "proactive-surface" in html
+    assert "continuity-trigger" in html
+    assert "continuity-surface" in html
+    assert "reflections-trigger" in html
+    assert "reflections-surface" in html
+    assert "workbench-trigger" in html
+    assert ">Уголок</button>" in html
+    assert "Рабочий уголок" in html
     assert "confirm-operation" in html
     assert "reject-operation" in html
     assert "dashboard" not in html.lower()
@@ -66,6 +77,13 @@ def test_production_frontend_keeps_desktop_composition_and_accessibility_contrac
     assert ".safety-overlay" in css and "pointer-events: none" in css
     assert ".operation-surface" in css
     assert ".commitments-surface" in css
+    assert ".activity-surface" in css
+    assert ".proactive-surface" in css
+    assert ".continuity-surface" in css
+    assert ".reflections-surface" in css
+    assert ".workbench-surface" in css
+    assert ".is-surface-leaving" in css
+    assert "surface-content-appear" in css
     assert ".conversation-surface:not(.has-conversations) .surface-actions" in css
     assert "html, body { width: 100%; height: 100%; overflow: hidden; }" in css
     assert "max-height: 112px" in css
@@ -77,14 +95,34 @@ def test_production_frontend_keeps_desktop_composition_and_accessibility_contrac
     app_source = FRONTEND_ROOT.joinpath("renderer", "app.js").read_text(encoding="utf-8")
     assert "sceneTransitionRevision" in app_source
     assert "clearTimeout(sceneTransitionTimer)" in app_source
-    assert 'window.addEventListener("blur", closeTemporarySurfaces)' in app_source
+    assert 'window.addEventListener("blur", closeTemporarySurfaces)' not in app_source
+    assert "bridge.loadWorkbench()" in app_source
+    assert "bridge.useModelProfile(profile.profile_id)" in app_source
+    assert "transitionToSurface" in app_source
+    assert "humanizeContinuityText" not in app_source
+    assert "memory_schema.json" not in app_source
+    assert "add-shared-moment" in html
+    assert "add-continuity-thread" in html
+    assert "continuityTrigger.hidden = false" in app_source
+    assert "surface.hidden = true" in app_source
     assert 'bridge.resolveConfirmation(pendingConfirmation.proposal_id, "confirm")' in app_source
     assert 'bridge.resolveConfirmation(pendingConfirmation.proposal_id, "reject")' in app_source
     scene_map = FRONTEND_ROOT.joinpath("scenes", "scene-map.js").read_text(encoding="utf-8")
     assert "TRANSITION_POLICY" in scene_map
-    assert 'durationMs: 520' in scene_map
-    assert 'durationMs: 300' in scene_map
-    assert 'durationMs: 1' in scene_map
+    assert 'enterMs: 330' in scene_map
+    assert 'enterMs: 220' in scene_map
+    assert 'enterMs: 1' in scene_map
+    assert "minimumHoldMs" in scene_map
+    assert "settleMs" in scene_map
+
+
+def test_desktop_host_keeps_hardware_compositing_by_default_with_an_explicit_fallback():
+    import os
+    from backend.ui import desktop_host
+
+    assert "MASHA_HOME_SOFTWARE_COMPOSITING" in desktop_host.__doc__ or "MASHA_HOME_SOFTWARE_COMPOSITING" in open(desktop_host.__file__, encoding="utf-8").read()
+    assert os.environ.get("QT_OPENGL") != "software"
+    assert "backdrop-filter" not in FRONTEND_ROOT.joinpath("styles", "home.css").read_text(encoding="utf-8")
 
 
 def test_webchannel_bridge_exposes_only_typed_allowlisted_slots():
@@ -102,6 +140,18 @@ def test_webchannel_bridge_exposes_only_typed_allowlisted_slots():
         "loadRecentConversations",
         "loadHomeAttention",
         "loadCommitments",
+        "loadAgentRuns",
+        "loadProactiveInteractions",
+        "resolveProactiveInteraction",
+            "loadSharedContinuity",
+            "continueContinuityThread",
+        "loadReflectionWorkspace",
+        "resolveReflection",
+        "resolveHonestHelp",
+        "loadWorkbench",
+            "useModelProfile",
+            "chooseSkillPackage",
+            "resolveSkillInstall",
         "engageEmergencyStop",
         "resumeAutonomy",
         "openConversation",
@@ -176,6 +226,174 @@ def test_local_conversation_bridge_serializes_one_real_isolated_turn(tmp_path):
     resumed = [item for item in events if item["kind"] == "safety_changed"][-1]
     assert resumed["safety"]["emergency_stop_engaged"] is False
     assert resumed["snapshot"]["presentation"]["overlays"]["safety"] == "autonomy_active"
+    bridge.close()
+
+
+def test_desktop_bridge_loads_bounded_memory_and_continuity_without_mutation(tmp_path):
+    from backend.application import build_masha_application
+    from backend.llm.model_router import ModelRouter
+    from backend.memory.sqlite_repository import MemorySqliteRepository
+    from backend.ui.conversation_bridge import LocalConversationBridge
+    from tests.test_application_boundary import LocalProfileProvider, _isolated_root
+
+    root = _isolated_root(tmp_path)
+    repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")
+    before = repository.read_document()
+    application = build_masha_application(
+        project_root=root,
+        router=ModelRouter([LocalProfileProvider()]),
+    )
+    bridge = LocalConversationBridge(application)
+    events: list[dict] = []
+    bridge.event.connect(lambda encoded: events.append(json.loads(encoded)))
+
+    bridge.loadInitialState()
+    bridge.loadSharedContinuity()
+
+    loaded = next(item for item in events if item["kind"] == "shared_continuity_loaded")
+    assert loaded["continuity"]["confirmed_memories"] == []
+    assert loaded["continuity"]["moments"] == []
+    assert loaded["continuity"]["open_threads"]
+    encoded = json.dumps(loaded, ensure_ascii=False)
+    assert "audit_events" not in encoded
+    assert "identity_version" not in encoded
+    assert "source_memory_ids" not in encoded
+    assert loaded["snapshot"]["composition"]["primary_surface_id"] == "home.continuity"
+    assert repository.read_document() == before
+    bridge.close()
+
+
+def test_desktop_bridge_projects_workbench_and_switches_only_available_profile(tmp_path):
+    from backend.application import build_masha_application
+    from backend.llm.model_router import ModelRouter
+    from backend.memory.sqlite_repository import MemorySqliteRepository
+    from backend.ui.conversation_bridge import LocalConversationBridge
+    from tests.test_application_boundary import LocalProfileProvider, _isolated_root
+
+    root = _isolated_root(tmp_path)
+    repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")
+    before = repository.read_document()
+    application = build_masha_application(
+        project_root=root,
+        router=ModelRouter([LocalProfileProvider()]),
+    )
+    bridge = LocalConversationBridge(application)
+    events: list[dict] = []
+    bridge.event.connect(lambda encoded: events.append(json.loads(encoded)))
+
+    bridge.loadInitialState()
+    bridge.loadWorkbench()
+    loaded = next(item for item in events if item["kind"] == "workbench_loaded")
+    fast = next(item for item in loaded["workbench"]["profiles"] if item["profile_id"] == "fast")
+    assert "grant_id" not in json.dumps(loaded, ensure_ascii=False)
+    assert "local-data" not in json.dumps(loaded, ensure_ascii=False)
+    assert loaded["snapshot"]["composition"]["primary_surface_id"] == "home.workbench"
+
+    bridge.useModelProfile(fast["profile_id"])
+
+    applied = next(item for item in events if item["kind"] == "model_switch_applied")
+    assert applied["result"]["active_profile"]["profile_id"] == "fast"
+
+
+def test_desktop_bridge_fact_confirmation_and_restart_use_real_application_result(tmp_path):
+    from backend.application import build_masha_application
+    from backend.llm.model_router import ModelRouter
+    from backend.ui.conversation_bridge import LocalConversationBridge
+    from tests.test_application_boundary import LocalProfileProvider, _isolated_root
+
+    root = _isolated_root(tmp_path)
+    application = build_masha_application(project_root=root, router=ModelRouter([LocalProfileProvider()]))
+    bridge = LocalConversationBridge(application)
+    events = []
+    bridge.event.connect(lambda encoded: events.append(json.loads(encoded)))
+    bridge.loadInitialState()
+    bridge.submitMessage("Запомни, что bridge-факт — настоящий")
+    deadline = time.monotonic() + 2
+    while not any(item["kind"] == "turn_result" for item in events) and time.monotonic() < deadline:
+        QCoreApplication.processEvents()
+    turn = next(item for item in events if item["kind"] == "turn_result")["result"]
+    assert turn["pending_confirmation"]["confirmation_type"] == "memory_create"
+    bridge.resolveConfirmation(turn["pending_confirmation"]["proposal_id"], "confirm")
+    deadline = time.monotonic() + 2
+    while not any(item["kind"] == "confirmation_result" for item in events) and time.monotonic() < deadline:
+        QCoreApplication.processEvents()
+    assert next(item for item in events if item["kind"] == "confirmation_result")["result"]["status"] == "confirmed"
+
+    restarted = build_masha_application(project_root=root, router=ModelRouter([LocalProfileProvider()]))
+    read = restarted.send_message("Что ты обо мне помнишь?", project_id="project_masha_home")
+    assert "bridge-факт" in read.assistant_message.content
+    bridge.close()
+
+
+def test_desktop_emergency_stop_blocks_reflection_and_honest_help_actions(tmp_path):
+    from backend.application import build_masha_application
+    from backend.llm.model_router import ModelRouter
+    from backend.memory.reflection import ReflectionScope
+    from backend.memory.sqlite_repository import MemorySqliteRepository
+    from backend.ui.conversation_bridge import LocalConversationBridge
+    from tests.test_application_boundary import LocalProfileProvider, _isolated_root
+
+    provider = LocalProfileProvider(
+        response_text=json.dumps(
+            {
+                "text": "Мы лучше двигаемся, когда спорим честно.",
+                "meaning": "Согласие не важнее ясности.",
+                "confidence": 0.8,
+                "importance": 0.7,
+                "help_offer": {
+                    "observation": "Задача выглядит слишком широкой.",
+                    "offer": "Могу помочь выделить первый проверяемый шаг.",
+                    "expected_benefit": "Появится ясная точка начала.",
+                    "why_now": "Тема уже находится в разговоре.",
+                    "capability": "conversation",
+                },
+            },
+            ensure_ascii=False,
+        )
+    )
+    root = _isolated_root(tmp_path)
+    repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")
+    application = build_masha_application(
+        project_root=root,
+        router=ModelRouter([provider]),
+    )
+    conversation = application._conversation._conversation.history.create()  # noqa: SLF001
+    application._reflections._reflections.reflect(  # noqa: SLF001
+        scope=ReflectionScope.SHARED,
+        topic="как мы решаем сложные задачи",
+        project_id="project_masha_home",
+        conversation_id=conversation.id,
+        evidence_message_ids=("message-test",),
+        conversation_messages=(),
+    )
+    bridge = LocalConversationBridge(application)
+    events: list[dict] = []
+    bridge.event.connect(lambda encoded: events.append(json.loads(encoded)))
+
+    bridge.loadInitialState()
+    bridge.loadReflectionWorkspace()
+    workspace = next(item for item in events if item["kind"] == "reflection_workspace_loaded")["workspace"]
+    reflection_id = workspace["pending"][0]["candidate_id"]
+
+    bridge.engageEmergencyStop()
+    bridge.resolveReflection(reflection_id, "adopt")
+
+    # Prepare an already-approved offer through the domain service; the UI action
+    # itself remains blocked by the still-engaged persistent Emergency Stop.
+    application._reflections._reflections.adopt(reflection_id)  # noqa: SLF001
+    help_id = application.reflection_workspace().help_offers[0].candidate_id
+    before = repository.read_document()
+    bridge.resolveHonestHelp(help_id, "accept")
+
+    rejected = [item for item in events if item["kind"] in {"reflection_resolution_rejected", "honest_help_rejected"}]
+    assert {item["kind"] for item in rejected} == {
+        "reflection_resolution_rejected",
+        "honest_help_rejected",
+    }
+    assert all(item["reason"] == "safety_stop" for item in rejected)
+    assert repository.read_document() == before
+    assert application.reflection_workspace().pending == ()
+    assert len(application.reflection_workspace().help_offers) == 1
     bridge.close()
 
 
@@ -315,3 +533,201 @@ def test_desktop_bridge_projects_commitments_and_requires_confirmation_for_compl
     updated = next(item for item in repository.read_document().commitments if item.id == commitment.id)
     assert updated.status is CommitmentStatus.COMPLETED
     bridge.close()
+
+
+def test_desktop_bridge_projects_agent_receipts_and_delivered_checkin(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    from backend.application import build_masha_application
+    from backend.llm.model_router import ModelRouter
+    from backend.memory.sqlite_repository import MemorySqliteRepository
+    from backend.skills.agent_loop import (
+        AgentRunReceipt,
+        AgentRunStatus,
+        AgentRunStore,
+        AgentStepReceipt,
+        AgentStepStatus,
+    )
+    from backend.skills.autonomy import ActionDecision
+    from backend.temporal.proactive_events import (
+        ProactiveEvent,
+        ProactiveEventState,
+        ProactiveEventStore,
+        ProactiveEventType,
+        check_in_event_id,
+    )
+    from backend.temporal.proactive_interaction import ProactiveInteractionStore
+    from backend.temporal.temporal_models import CheckInCandidate
+    from backend.ui.conversation_bridge import LocalConversationBridge
+    from tests.test_application_boundary import LocalProfileProvider, _isolated_root
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    root = _isolated_root(tmp_path)
+    repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")
+    memory_before = repository.read_document()
+    now = datetime(2026, 8, 12, 8, 0, tzinfo=timezone.utc)
+    AgentRunStore(root / "local-data" / "runtime" / "agent-runs.json").save(
+        AgentRunReceipt(
+            plan_id="plan_bridge_activity",
+            plan_sha256="b" * 64,
+            goal="Проверить локальный документ",
+            status=AgentRunStatus.COMPLETED,
+            started_at=now,
+            updated_at=now,
+            finished_at=now,
+            steps=(
+                AgentStepReceipt(
+                    step_id="step_check",
+                    title="Проверить результат",
+                    tool_id="private_tool",
+                    operation="inspect",
+                    status=AgentStepStatus.VERIFIED,
+                    policy_decision=ActionDecision.ALLOW,
+                    policy_reason="private_reason",
+                    started_at=now,
+                    finished_at=now,
+                    result_summary="Проверено локально",
+                ),
+            ),
+        )
+    )
+    event_id = check_in_event_id("bridge-anchor")
+    proactive_events = ProactiveEventStore(repository)
+    proactive_events.create(
+        ProactiveEvent(
+            event_id=event_id,
+            event_type=ProactiveEventType.CHECK_IN,
+            source_type="absence",
+            source_id="bridge-anchor",
+            created_at=now,
+            detected_at=now,
+            payload={
+                "absence_seconds": 3_600,
+                "anchor_created_at": (now - timedelta(hours=1)).isoformat(),
+            },
+        )
+    )
+    proactive_events.update_state(event_id, ProactiveEventState.CANDIDATE, now)
+    interactions = ProactiveInteractionStore(repository)
+    interactions.ensure_candidate(
+        CheckInCandidate(
+            event_id=event_id,
+            absence_duration_seconds=3_600,
+            last_message_at=now - timedelta(hours=1),
+            current_local_time=now,
+            proactive_level=2,
+        )
+    )
+    interactions.mark_delivered(event_id, "Миша, просто заглянула. Как ты?", now)
+    application = build_masha_application(
+        project_root=root,
+        router=ModelRouter([LocalProfileProvider()]),
+    )
+    bridge = LocalConversationBridge(application)
+    emitted: list[dict] = []
+    bridge.event.connect(lambda encoded: emitted.append(json.loads(encoded)))
+
+    bridge.loadInitialState()
+    bridge.loadAgentRuns()
+    activity = next(item for item in emitted if item["kind"] == "agent_runs_loaded")
+    assert activity["runs"]["items"][0]["status"] == "completed"
+    assert activity["runs"]["items"][0]["steps"][0]["title"] == "Проверить результат"
+    encoded_activity = json.dumps(activity, ensure_ascii=False)
+    assert "private_tool" not in encoded_activity
+    assert "private_reason" not in encoded_activity
+
+    bridge.loadProactiveInteractions()
+    proactive = next(
+        item for item in emitted if item["kind"] == "proactive_interactions_loaded"
+    )
+    assert proactive["interactions"]["items"][0]["message"] == "Миша, просто заглянула. Как ты?"
+    bridge.resolveProactiveInteraction(event_id, "dismiss")
+    resolved = next(
+        item for item in emitted if item["kind"] == "proactive_interaction_resolved"
+    )
+    assert resolved["interaction"]["state"] == "dismissed"
+    assert repository.read_document() == memory_before
+    assert ProactiveInteractionStore(repository).get(event_id)["state"] == "dismissed"
+    bridge.close()
+
+
+def test_desktop_bridge_continues_a_real_confirmed_thread(tmp_path):
+    from backend.application import build_masha_application
+    from backend.llm.model_router import ModelRouter
+    from backend.ui.conversation_bridge import LocalConversationBridge
+    from tests.test_application_boundary import LocalProfileProvider, _isolated_root
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    root = _isolated_root(tmp_path)
+    application = build_masha_application(
+        project_root=root,
+        router=ModelRouter([LocalProfileProvider(response_text="Вернулись к нашей теме.")]),
+    )
+    proposed = application.send_message(
+        "Оставь это как открытую нить: выбрать свет для комнаты",
+        project_id="masha-home",
+    )
+    application.resolve_confirmation(
+        conversation_id=proposed.conversation_id,
+        proposal_id=proposed.pending_confirmation.proposal_id,
+        decision="confirm",
+        project_id="masha-home",
+    )
+    thread = application.shared_continuity().open_threads[0]
+
+    bridge = LocalConversationBridge(application)
+    events: list[dict] = []
+    bridge.event.connect(lambda encoded: events.append(json.loads(encoded)))
+    bridge.loadInitialState()
+    bridge.continueContinuityThread(thread.thread_id)
+    deadline = time.monotonic() + 3
+    while not any(item["kind"] == "continuity_thread_result" for item in events) and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+
+    result = next(item for item in events if item["kind"] == "continuity_thread_result")
+    assert result["result"]["assistant_message"]["content"] == "Вернулись к нашей теме."
+    conversation_id = result["result"]["conversation_id"]
+    assert any(
+        "выбрать свет для комнаты" in message.content
+        for message in application.conversation(conversation_id).messages
+    )
+    bridge.close()
+
+
+def test_desktop_bridge_installs_a_valid_local_skill_and_restart_sees_it(tmp_path, monkeypatch):
+    import shutil
+
+    from backend.application import build_masha_application
+    from backend.llm.model_router import ModelRouter
+    from backend.ui.conversation_bridge import LocalConversationBridge, QFileDialog
+    from tests.test_application_boundary import LocalProfileProvider, _isolated_root
+
+    root = _isolated_root(tmp_path)
+    bundled = root / "skills" / "project_observer"
+    package = tmp_path / "selected-skill-package"
+    shutil.copytree(bundled, package)
+    shutil.rmtree(bundled)
+    application = build_masha_application(
+        project_root=root,
+        router=ModelRouter([LocalProfileProvider()]),
+    )
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *args, **kwargs: (str(package), ""))
+
+    bridge = LocalConversationBridge(application)
+    events: list[dict] = []
+    bridge.event.connect(lambda encoded: events.append(json.loads(encoded)))
+    bridge.chooseSkillPackage()
+    preview = next(item for item in events if item["kind"] == "skill_install_preview")["preview"]
+    assert preview["skill_id"] == "project_observer"
+    bridge.resolveSkillInstall(preview["proposal_id"], "confirm")
+    result = next(item for item in events if item["kind"] == "skill_install_result")["result"]
+    assert result["status"] == "confirmed"
+    assert any(item["skill_id"] == "project_observer" for item in result["workbench"]["skills"])
+    bridge.close()
+
+    restarted = build_masha_application(
+        project_root=root,
+        router=ModelRouter([LocalProfileProvider()]),
+    )
+    assert any(item.skill_id == "project_observer" for item in restarted.workbench().skills)

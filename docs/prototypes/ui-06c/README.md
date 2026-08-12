@@ -12,3 +12,7 @@ The workshop deliberately keeps one canonical full-scene room and one visual
 identity. Capability differences are expressed through spatial origin, light,
 surface structure and lifecycle instead of changing Masha's pose on every
 state transition.
+
+Each of the ten moments can now be evaluated through the same grammar:
+`appeared → focused → waiting → resolved/dismissed`. These transitions are
+presentation-only and deliberately disconnected from backend operations.

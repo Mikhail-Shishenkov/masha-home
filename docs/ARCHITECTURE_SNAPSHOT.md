@@ -759,3 +759,58 @@ object. An explicitly selected actionable Commitment enters the existing
 completion proposal, confirmation, persistence and audit flow. Listing and
 selection do not invoke the LLM, and no Commitment changes before explicit
 confirmation. Technical record and proposal IDs remain opaque bridge values.
+
+## CURRENT — UI-06F MOTION AND CAPABILITY REVIEW GATE
+
+The production renderer applies presentation-driven scene changes with a
+deterministic settle delay, minimum frame hold and sequential exit/enter. At no
+point should two Masha scene layers be visible together. Conversation geometry
+is stable across empty/history states, preventing text-driven layout reflow.
+
+The disconnected UI-06C workshop now demonstrates all ten agreed capability
+moments through one lifecycle grammar: `appeared`, `focused`, `waiting`, then
+`resolved` or `dismissed`. It remains offline and has no WebChannel, backend,
+SQLite, Ollama or local-data access.
+
+The visual grammar was accepted. Production now has bounded
+`AgentRunListView`/`AgentStepView` receipt projections and a
+`ProactiveInteractionListView` for already-delivered Reminder/Check-in
+interactions. The bridge exposes three explicit operations: load Agent Runs,
+load proactive interactions and acknowledge/dismiss one currently visible
+delivered interaction.
+
+The renderer receives no tool IDs, policy reasons, plan hashes, event payloads,
+repository handles or SQLite details. Agent runs are read-only. Proactive actions
+reuse the existing lifecycle and do not mutate Memory, Identity, Commitment or
+Conversation history. Contextual triggers remain hidden when there is no real
+object to show.
+
+## CURRENT — UI-06G SLICE B
+
+The production application boundary now projects Shared Continuity through a
+bounded `SharedContinuityView`: confirmed Fact/Decision/Episode records,
+relationship moments and open follow-up threads. Reading it is side-effect free;
+returning to a thread only prefills the conversation composer.
+
+`ReflectionWorkspaceView` keeps adopted Masha reflections separate from pending
+interpretations and Honest Help offers. Adoption/rejection and help
+acceptance/dismissal delegate to the existing Stage 15 service. Honest Help
+uses the selected local model only after explicit acceptance and writes the
+result to the source conversation. Emergency Stop blocks these actions.
+
+The frontend receives neither raw MemoryDocument nor evidence/audit/proposal
+internals. This slice changes no SQLite schema, Identity, Commitment, Temporal,
+model-profile or proactive-policy contract.
+
+## CURRENT — UI-06H SLICE C
+
+The production Home contains a contextual `Режим` workbench backed by a bounded
+`WorkbenchView`. It projects existing local Model Profiles, Skill Registry,
+effective permissions and pending controls without exposing package details,
+grant/proposal identifiers, local paths or persistence handles.
+
+The bridge allows only two operations: read this projection and manually select
+an existing available Model Profile. Selection delegates to LLM-03, has no
+fallback and leaves Identity, Memory, Commitments, Temporal state, conversation
+history, policy and grants untouched. Emergency Stop still governs autonomous
+work, but does not prevent selecting a local execution profile.

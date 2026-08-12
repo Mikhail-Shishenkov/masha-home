@@ -78,29 +78,57 @@ class ConversationApplicationService:
         handler = self._conversation.memory_intent_handler
         if handler is None:
             return None
-        proposals = tuple(
-            proposal
-            for proposal in handler.proposal_store.pending_for_conversation(conversation_id)
-            if proposal.record_type == "commitment"
-        )
+        proposals = handler.proposal_store.pending_for_conversation(conversation_id)
         if len(proposals) != 1:
             return None
         proposal = proposals[0]
         payload = proposal.record_payload
-        completion = proposal.operation != "create"
+        confirmation_type, title, subject = self._confirmation_copy(proposal)
         return PendingConfirmationView(
             proposal_id=proposal.id,
             conversation_id=proposal.conversation_id,
-            confirmation_type="commitment_complete" if completion else "commitment_create",
-            title=(
-                "Отметить обязательство выполненным?"
-                if completion
-                else "Сохранить обязательство?"
-            ),
-            subject=str(payload.get("text") or "Обязательство"),
+            confirmation_type=confirmation_type,
+            title=title,
+            subject=subject,
             due_at=payload.get("due_at"),
             created_at=proposal.created_at,
         )
+
+    @staticmethod
+    def _confirmation_copy(proposal):
+        payload = proposal.record_payload
+        if proposal.record_type == "commitment":
+            completion = proposal.operation != "create"
+            return (
+                "commitment_complete" if completion else "commitment_create",
+                "Отметить обязательство выполненным?" if completion else "Сохранить обязательство?",
+                str(payload.get("text") or "Обязательство"),
+            )
+        if proposal.record_type == "relationship_memory":
+            content = payload.get("content")
+            text = content.get("text") if isinstance(content, dict) else content
+            return "shared_moment_create", "Сохранить наш общий момент?", str(text or payload.get("title") or "Наш момент")
+        if proposal.record_type == "continuity_state":
+            rows = payload.get("intended_follow_ups") or []
+            subject = rows[-1].get("summary") if rows else "Общая нить"
+            return "continuity_update", "Обновить нашу общую нить?", str(subject)
+        if proposal.operation == "forget":
+            return "memory_forget", "Убрать запись из активной памяти?", ConversationApplicationService._proposal_subject(proposal)
+        if proposal.operation in {"edit", "supersede"}:
+            return "memory_update", "Обновить подтверждённую память?", ConversationApplicationService._proposal_subject(proposal)
+        return "memory_create", "Сохранить это в память?", ConversationApplicationService._proposal_subject(proposal)
+
+    @staticmethod
+    def _proposal_subject(proposal) -> str:
+        payload = proposal.record_payload
+        return str(
+            payload.get("value")
+            or payload.get("decision")
+            or payload.get("summary")
+            or payload.get("text")
+            or payload.get("title")
+            or "Подтверждённая запись"
+        )[:500]
 
     def resolve_confirmation(
         self,

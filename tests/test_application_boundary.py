@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -21,6 +22,23 @@ from backend.llm.model_router import ModelRouter
 from backend.memory.sqlite_repository import MemorySqliteRepository
 from backend.memory.memory_models import CommitmentStatus
 from backend.presentation import PresenceActivity
+from backend.skills.agent_loop import (
+    AgentRunReceipt,
+    AgentRunStatus,
+    AgentRunStore,
+    AgentStepReceipt,
+    AgentStepStatus,
+)
+from backend.skills.autonomy import ActionDecision
+from backend.temporal.proactive_events import (
+    ProactiveEvent,
+    ProactiveEventState,
+    ProactiveEventStore,
+    ProactiveEventType,
+    check_in_event_id,
+)
+from backend.temporal.proactive_interaction import ProactiveInteractionStore
+from backend.temporal.temporal_models import CheckInCandidate
 from backend.temporal.temporal_engine import FixedClock, TemporalEngine
 
 
@@ -238,11 +256,39 @@ def test_read_views_and_ordinary_chat_do_not_mutate_long_term_memory(tmp_path):
     before = repository.read_document()
 
     application.model_profiles()
+    workbench = application.workbench()
     application.canonical_visual_assets()
     application.status()
     application.send_message("Обычный разговор", project_id=PROJECT_ID)
 
     assert repository.read_document() == before
+    assert workbench.profiles
+    assert all("grant_id" not in item.model_dump_json() for item in workbench.grants)
+    assert "local-data" not in workbench.model_dump_json()
+
+
+def test_workbench_model_selection_is_manual_and_keeps_other_domains_unchanged(tmp_path):
+    root, _, application = _application(tmp_path)
+    identity_path = root / "identity" / "masha.identity.json"
+    memory_path = root / "local-data" / "memory" / "masha.sqlite3"
+    history_path = root / "local-data" / "conversations" / "history.json"
+    before = {
+        "identity": identity_path.read_bytes(),
+        "memory": hashlib.sha256(memory_path.read_bytes()).digest(),
+        "history_exists": history_path.exists(),
+    }
+
+    workbench = application.workbench()
+    fast = next(item for item in workbench.profiles if item.profile_id == "fast")
+    result = application.use_model(fast.profile_id)
+
+    assert fast.active is False
+    assert fast.available is True
+    assert result.status is ModelSwitchStatus.APPLIED
+    assert application.workbench().profiles[1].active is True
+    assert identity_path.read_bytes() == before["identity"]
+    assert hashlib.sha256(memory_path.read_bytes()).digest() == before["memory"]
+    assert history_path.exists() is before["history_exists"]
 
 
 def test_commitment_projection_uses_temporal_engine_and_keeps_exact_due_open(tmp_path):
@@ -388,7 +434,75 @@ def test_commitment_confirmation_reject_and_restart_are_honest(tmp_path):
     assert resolved.status.value == "rejected"
     assert resolved.user_message.content == "Не сейчас."
     assert resolved.assistant_message.content == "Хорошо, не сохраняю."
-    assert repository.read_document() == before
+
+
+def test_fact_confirmation_is_projected_and_survives_restart(tmp_path):
+    root, _, application = _application(tmp_path)
+    proposed = application.send_message(
+        "Запомни, что мой тестовый напиток — какао",
+        project_id=PROJECT_ID,
+    )
+
+    assert proposed.pending_confirmation is not None
+    assert proposed.pending_confirmation.confirmation_type == "memory_create"
+    resolved = application.resolve_confirmation(
+        conversation_id=proposed.conversation_id,
+        proposal_id=proposed.pending_confirmation.proposal_id,
+        decision="confirm",
+        project_id=PROJECT_ID,
+    )
+    assert resolved.status.value == "confirmed"
+
+    restarted = build_masha_application(
+        project_root=root,
+        router=ModelRouter([LocalProfileProvider()]),
+    )
+    read = restarted.send_message("Что ты обо мне помнишь?", project_id=PROJECT_ID)
+    assert "какао" in read.assistant_message.content
+
+
+def test_shared_history_contains_only_real_moments_and_threads(tmp_path):
+    _, _, application = _application(tmp_path)
+    empty = application.shared_continuity()
+    assert empty.confirmed_memories == ()
+    assert empty.moments == ()
+
+    proposed = application.send_message(
+        "Маша, запомни как часть нашей истории, что мы впервые проверили живой Дом",
+        project_id=PROJECT_ID,
+    )
+    application.resolve_confirmation(
+        conversation_id=proposed.conversation_id,
+        proposal_id=proposed.pending_confirmation.proposal_id,
+        decision="confirm",
+        project_id=PROJECT_ID,
+    )
+    view = application.shared_continuity()
+    assert [item.text for item in view.moments] == ["мы впервые проверили живой Дом"]
+    assert view.confirmed_memories == ()
+
+
+def test_workbench_installs_existing_supported_skill_contract_and_survives_restart(tmp_path):
+    root, _, application = _application(tmp_path)
+    source = root / "skills" / "project_observer"
+    # The bundled copy is already discoverable, so isolate the selected package
+    # from the registry's bundled root as a normal user package source.
+    package = tmp_path / "observer-package"
+    shutil.copytree(source, package)
+    shutil.rmtree(source)
+
+    preview = application.propose_skill_install(str(package))
+    assert preview.skill_id == "project_observer"
+    assert preview.runtime_supported is True
+    result = application.resolve_skill_install(preview.proposal_id, "confirm")
+    assert result.status == "confirmed"
+    assert any(item.skill_id == "project_observer" for item in result.workbench.skills)
+
+    restarted = build_masha_application(
+        project_root=root,
+        router=ModelRouter([LocalProfileProvider()]),
+    )
+    assert any(item.skill_id == "project_observer" for item in restarted.workbench().skills)
 
 
 def test_home_snapshot_is_a_read_only_application_owned_projection(tmp_path):
@@ -428,6 +542,253 @@ def test_home_presentation_session_is_deterministic_and_has_no_domain_mutation(t
     assert responded.presentation.presence.activity is PresenceActivity.SPEAKING
     assert responded.composition.primary_surface_id == "home.conversation"
     assert repository.read_document() == before
+
+
+def test_home_session_model_change_updates_only_execution_overlay(tmp_path):
+    _, _, application = _application(tmp_path)
+    session = application.open_home_session()
+    opened = session.opened()
+    before = opened.presentation
+    switched = application.use_model("fast")
+
+    changed = session.model_changed(
+        active_model=switched.active_profile,
+        status=application.status(),
+    )
+
+    assert changed.active_model.profile_id == "fast"
+    assert changed.presentation.overlays.active_profile_id == "fast"
+    assert changed.presentation.presence == before.presence
+    assert changed.presentation.surfaces == before.surfaces
+    assert changed.presentation.activities == before.activities
+
+
+def test_agent_runs_are_bounded_read_only_receipts_and_survive_restart(tmp_path):
+    root, provider, application = _application(tmp_path)
+    repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")
+    before = repository.read_document()
+    now = datetime(2026, 8, 12, 7, 30, tzinfo=timezone.utc)
+    store = AgentRunStore(root / "local-data" / "runtime" / "agent-runs.json")
+    store.save(
+        AgentRunReceipt(
+            plan_id="plan_ui_slice_a",
+            plan_sha256="a" * 64,
+            goal="Подготовить локальный отчёт",
+            status=AgentRunStatus.COMPLETED,
+            started_at=now,
+            updated_at=now + timedelta(minutes=2),
+            finished_at=now + timedelta(minutes=2),
+            steps=(
+                AgentStepReceipt(
+                    step_id="step_report",
+                    title="Собрать проверенные результаты",
+                    tool_id="local_report",
+                    operation="build",
+                    status=AgentStepStatus.VERIFIED,
+                    policy_decision=ActionDecision.ALLOW,
+                    policy_reason="standing_permission",
+                    started_at=now,
+                    finished_at=now + timedelta(minutes=2),
+                    result_summary="Отчёт подготовлен локально",
+                    verification_code="verified",
+                ),
+            ),
+        )
+    )
+
+    view = application.agent_runs()
+
+    assert len(view.items) == 1
+    assert view.items[0].status == "completed"
+    assert view.items[0].status_label == "Завершено и проверено"
+    serialized = view.model_dump_json()
+    assert "local_report" not in serialized
+    assert "standing_permission" not in serialized
+    assert "plan_sha256" not in serialized
+    assert repository.read_document() == before
+    restarted = build_masha_application(project_root=root, router=ModelRouter([provider]))
+    assert restarted.agent_runs() == view
+
+
+def test_proactive_projection_resolves_existing_lifecycle_without_memory_mutation(tmp_path):
+    root, provider, application = _application(tmp_path)
+    repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")
+    before = repository.read_document()
+    now = datetime(2026, 8, 12, 7, 30, tzinfo=timezone.utc)
+    event_id = check_in_event_id("ui-slice-a-anchor")
+    events = ProactiveEventStore(repository)
+    events.create(
+        ProactiveEvent(
+            event_id=event_id,
+            event_type=ProactiveEventType.CHECK_IN,
+            source_type="absence",
+            source_id="ui-slice-a-anchor",
+            created_at=now,
+            detected_at=now,
+            payload={
+                "absence_seconds": 7_200,
+                "anchor_created_at": (now - timedelta(hours=2)).isoformat(),
+            },
+        )
+    )
+    events.update_state(event_id, ProactiveEventState.CANDIDATE, now)
+    interactions = ProactiveInteractionStore(repository)
+    interactions.ensure_candidate(
+        CheckInCandidate(
+            event_id=event_id,
+            absence_duration_seconds=7_200,
+            last_message_at=now - timedelta(hours=2),
+            current_local_time=now,
+            proactive_level=2,
+        )
+    )
+    interactions.mark_delivered(event_id, "Миша, я рядом. Как ты?", now)
+
+    view = application.proactive_interactions()
+
+    assert len(view.items) == 1
+    assert view.items[0].interaction_type == "check_in"
+    assert view.items[0].message == "Миша, я рядом. Как ты?"
+    assert view.items[0].allowed_actions == ("acknowledge", "dismiss")
+    assert "absence_seconds" not in view.model_dump_json()
+    assert repository.read_document() == before
+
+    resolved = application.resolve_proactive(event_id, "dismiss")
+    assert resolved.state == "dismissed"
+    assert application.proactive_interactions().items == ()
+    assert repository.read_document() == before
+    restarted = build_masha_application(project_root=root, router=ModelRouter([provider]))
+    assert restarted.proactive_interactions().items == ()
+
+
+def test_memory_and_shared_continuity_projection_is_bounded_read_only_and_restart_safe(tmp_path):
+    root, provider, application = _application(tmp_path)
+    repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")
+    before = repository.read_document()
+
+    view = application.shared_continuity()
+
+    assert len(view.confirmed_memories) <= 10
+    assert len(view.open_threads) <= 8
+    assert all(item.memory_type in {"fact", "decision", "episode"} for item in view.confirmed_memories)
+    assert any("memory_schema.json" in item.summary for item in view.open_threads)
+    serialized = view.model_dump_json()
+    assert "audit_events" not in serialized
+    assert "identity_version" not in serialized
+    assert "source_memory_ids" not in serialized
+    assert repository.read_document() == before
+    restarted = build_masha_application(project_root=root, router=ModelRouter([provider]))
+    assert restarted.shared_continuity() == view
+
+
+def test_empty_reflection_workspace_is_read_only(tmp_path):
+    root, provider, application = _application(tmp_path)
+    repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")
+    before = repository.read_document()
+
+    workspace = application.reflection_workspace()
+
+    assert workspace.adopted == ()
+    assert workspace.pending == ()
+    assert workspace.help_offers == ()
+    assert repository.read_document() == before
+    restarted = build_masha_application(project_root=root, router=ModelRouter([provider]))
+    assert restarted.reflection_workspace() == workspace
+
+
+def test_shared_reflection_requires_explicit_application_decision(tmp_path):
+    from backend.memory.reflection import ReflectionScope
+
+    provider = LocalProfileProvider(
+        response_text=json.dumps(
+            {
+                "text": "Наша близость держится на честном споре, а не на постоянном согласии.",
+                "meaning": "Конфликт не разрушает близость, если сохраняются тепло и верность.",
+                "confidence": 0.82,
+                "importance": 0.74,
+                "help_offer": None,
+            },
+            ensure_ascii=False,
+        )
+    )
+    root, provider, application = _application(tmp_path, provider)
+    repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")
+    conversation = application._conversation._conversation.history.create()  # noqa: SLF001
+    result = application._reflections._reflections.reflect(  # noqa: SLF001
+        scope=ReflectionScope.SHARED,
+        topic="как мы спорим",
+        project_id=PROJECT_ID,
+        conversation_id=conversation.id,
+        evidence_message_ids=("message-test",),
+        conversation_messages=(),
+    )
+
+    workspace = application.reflection_workspace()
+
+    assert result.adopted is False
+    assert len(workspace.pending) == 1
+    candidate = workspace.pending[0]
+    before_resolution = repository.read_document()
+    assert before_resolution.reflections == []
+    resolved = application.resolve_reflection(candidate.candidate_id, "adopt")
+    assert resolved.status == "adopted"
+    assert len(repository.read_document().reflections) == 1
+    assert provider.last_request is not None
+
+
+def test_honest_help_runs_only_after_explicit_application_acceptance(tmp_path):
+    from backend.memory.reflection import ReflectionScope
+
+    provider = LocalProfileProvider(
+        response_text=json.dumps(
+            {
+                "text": "Мне кажется, задачу лучше сначала разложить на проверяемые части.",
+                "meaning": "Так легче увидеть ближайший честный шаг.",
+                "confidence": 0.84,
+                "importance": 0.72,
+                "help_offer": {
+                    "observation": "Задача пока выглядит слишком большой и смешивает несколько решений.",
+                    "offer": "Могу помочь разложить её на три проверяемых шага.",
+                    "expected_benefit": "Станет понятен ближайший конкретный ход.",
+                    "why_now": "Тема уже поднята в нашем текущем разговоре.",
+                    "capability": "conversation",
+                },
+            },
+            ensure_ascii=False,
+        )
+    )
+    root, provider, application = _application(tmp_path, provider)
+    repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")
+    conversation = application._conversation._conversation.history.create()  # noqa: SLF001
+    application._reflections._reflections.reflect(  # noqa: SLF001
+        scope=ReflectionScope.SELF,
+        topic="большая задача",
+        project_id=PROJECT_ID,
+        conversation_id=conversation.id,
+        evidence_message_ids=("message-help",),
+        conversation_messages=(),
+    )
+    before_help = repository.read_document()
+    workspace = application.reflection_workspace()
+
+    assert len(workspace.help_offers) == 1
+    assert application.conversation(conversation.id).messages == ()
+    result = application.resolve_honest_help(
+        workspace.help_offers[0].candidate_id,
+        "accept",
+    )
+
+    assert result.status == "delivered"
+    assert result.conversation_id == conversation.id
+    history = application.conversation(conversation.id).messages
+    assert [item.role for item in history] == ["user", "assistant"]
+    assert history[0].content == "Давай, помоги."
+    assert application.reflection_workspace().help_offers == ()
+    after_help = repository.read_document()
+    assert after_help.facts == before_help.facts
+    assert after_help.decisions == before_help.decisions
+    assert after_help.commitments == before_help.commitments
+    assert provider.last_request.private_context["task"] == "accepted_honest_help_offer"
 
 
 def test_home_attention_exposes_only_active_conversation_model_and_safety(tmp_path):

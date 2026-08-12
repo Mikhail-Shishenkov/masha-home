@@ -35,11 +35,28 @@ test("scene selection and circular navigation are deterministic", () => {
 
 test("workshop actions create presentation receipts only", () => {
   const initial = workshop.initialState();
-  const acted = workshop.reduce(initial, { type: "ACT", actionIndex: 0 });
+  const focused = workshop.reduce(initial, { type: "FOCUS" });
+  const waiting = workshop.reduce(focused, { type: "WAIT" });
+  const acted = workshop.reduce(waiting, { type: "ACT", actionIndex: 0 });
   assert.equal(acted.sceneId, initial.sceneId);
+  assert.equal(acted.phase, "resolved");
   assert.ok(acted.resolution.message);
   const reset = workshop.reduce(acted, { type: "RESET" });
+  assert.equal(reset.phase, "appeared");
   assert.equal(reset.resolution, null);
+});
+
+test("every capability follows appeared focused waiting resolved or dismissed grammar", () => {
+  for (const scene of workshop.SCENES) {
+    let state = workshop.reduce(workshop.initialState(), { type: "SELECT", sceneId: scene.id });
+    assert.equal(state.phase, "appeared");
+    state = workshop.reduce(state, { type: "FOCUS" });
+    assert.equal(state.phase, "focused");
+    state = workshop.reduce(state, { type: "WAIT" });
+    assert.equal(state.phase, "waiting");
+    assert.equal(workshop.reduce(state, { type: "ACT", actionIndex: 0 }).phase, "resolved");
+    assert.equal(workshop.reduce(state, { type: "ACT", actionIndex: 1 }).phase, "dismissed");
+  }
 });
 
 test("each scene has human content, a spatial zone and bounded actions", () => {

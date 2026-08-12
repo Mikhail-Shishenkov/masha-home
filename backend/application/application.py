@@ -5,9 +5,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from .contracts import (
+    AgentRunListView,
     ConversationTurnResult,
     CommitmentListView,
     CommitmentProposalResult,
+    HonestHelpResolutionView,
     ConfirmationResolutionResult,
     ConversationView,
     ConversationSummaryView,
@@ -16,9 +18,15 @@ from .contracts import (
     ModelProfileView,
     ModelSwitchResult,
     PendingConfirmationView,
+    ProactiveInteractionListView,
+    ProactiveInteractionView,
+    ReflectionResolutionView,
+    ReflectionWorkspaceView,
     ResolvedVisualAsset,
     SafetyView,
+    SharedContinuityView,
     VisualAssetView,
+    WorkbenchView,
 )
 from .conversation import ConversationApplicationService
 from .home_snapshot import HomeSnapshotService, HomeSnapshotView
@@ -39,6 +47,11 @@ class MashaApplication:
         models: ModelSettingsService,
         home_snapshot: HomeSnapshotService,
         commitments,
+        activities,
+        proactive,
+        continuity,
+        reflections,
+        workbench,
     ):
         self._conversation = conversation
         self._status = status
@@ -46,6 +59,11 @@ class MashaApplication:
         self._models = models
         self._home_snapshot = home_snapshot
         self._commitments = commitments
+        self._activities = activities
+        self._proactive = proactive
+        self._continuity = continuity
+        self._reflections = reflections
+        self._workbench = workbench
 
     def send_message(self, content: str, *, project_id: str, conversation_id: str | None = None) -> ConversationTurnResult:
         return self._conversation.send_message(content, project_id=project_id, conversation_id=conversation_id)
@@ -62,6 +80,50 @@ class MashaApplication:
 
     def commitments(self, *, limit: int = 12) -> CommitmentListView:
         return self._commitments.list(limit=limit)
+
+    def agent_runs(self, *, limit: int = 8) -> AgentRunListView:
+        return self._activities.list(limit=limit)
+
+    def proactive_interactions(self, *, limit: int = 6) -> ProactiveInteractionListView:
+        return self._proactive.list(limit=limit)
+
+    def resolve_proactive(self, interaction_id: str, decision: str) -> ProactiveInteractionView:
+        return self._proactive.resolve(interaction_id, decision)
+
+    def shared_continuity(self) -> SharedContinuityView:
+        return self._continuity.view()
+
+    def continue_continuity_thread(
+        self,
+        thread_id: str,
+        *,
+        conversation_id: str | None,
+        project_id: str,
+    ) -> ConversationTurnResult:
+        prompt = self._continuity.thread_prompt(thread_id)
+        return self._conversation.send_message(
+            prompt,
+            project_id=project_id,
+            conversation_id=conversation_id,
+        )
+
+    def reflection_workspace(self) -> ReflectionWorkspaceView:
+        return self._reflections.workspace()
+
+    def resolve_reflection(self, candidate_id: str, decision: str) -> ReflectionResolutionView:
+        return self._reflections.resolve_reflection(candidate_id, decision)
+
+    def resolve_honest_help(self, candidate_id: str, decision: str) -> HonestHelpResolutionView:
+        return self._reflections.resolve_help(candidate_id, decision)
+
+    def workbench(self) -> WorkbenchView:
+        return self._workbench.view()
+
+    def propose_skill_install(self, source_path: str):
+        return self._workbench.propose_install(source_path)
+
+    def resolve_skill_install(self, proposal_id: str, decision: str):
+        return self._workbench.resolve_install(proposal_id, decision)
 
     def propose_commitment_completion(
         self,

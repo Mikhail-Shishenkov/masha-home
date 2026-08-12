@@ -24,8 +24,8 @@ from backend.memory.working_memory import WorkingMemory
 from backend.runtime.health import RuntimeHealthService
 from backend.runtime.safety import AutonomySafetyService, AutonomySafetyStore
 from backend.skills.agent_loop import AgentRunStore
-from backend.skills.autonomy import ActionAutonomyPolicyStore
-from backend.skills.installer import SkillInstallProposalStore
+from backend.skills.autonomy import ActionAutonomyPolicyStore, ActionAutonomyService
+from backend.skills.installer import SkillInstallProposalStore, SkillInstallerService
 from backend.skills.permissions import PermissionControlService, PermissionsSnapshot
 from backend.skills.registry import SkillRegistry
 from backend.temporal.proactive import ProactivePolicyStore
@@ -33,12 +33,17 @@ from backend.temporal.proactive_daemon import ProactiveDaemon
 from backend.temporal.proactive_interaction import ProactiveInteractionStore
 
 from .application import MashaApplication
+from .activities import ActivityApplicationService
 from .conversation import ConversationApplicationService
 from .commitments import CommitmentApplicationService
+from .continuity import ContinuityApplicationService
 from .home_snapshot import HomeSnapshotService
 from .model_settings import ModelSettingsService
+from .proactive import ProactiveApplicationService
+from .reflections import ReflectionApplicationService
 from .status import MashaStatusService
 from .visual_assets import VisualIdentityResolver
+from .workbench import WorkbenchApplicationService
 
 
 @dataclass(frozen=True)
@@ -71,18 +76,28 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
     safety = AutonomySafetyService(store=AutonomySafetyStore(config / "autonomy-safety.json"))
     interactions = ProactiveInteractionStore(core.repository)
 
+    registry = SkillRegistry(
+        skills_root=core.project_root / "local-data" / "skills",
+        bundled_skills_root=core.project_root / "skills",
+        state_path=config / "skills.json",
+    )
+    action_policy_store = ActionAutonomyPolicyStore(config / "action-autonomy.json")
+    install_store = SkillInstallProposalStore(config / "skill-installs.json")
+    autonomy = ActionAutonomyService(store=action_policy_store, registry=registry)
+    installer = SkillInstallerService(
+        registry=registry,
+        autonomy=autonomy,
+        proposal_store=install_store,
+        runtime_root=runtime / "skill-installs",
+    )
+
     def permissions_snapshot() -> PermissionsSnapshot:
-        registry = SkillRegistry(
-            skills_root=core.project_root / "local-data" / "skills",
-            bundled_skills_root=core.project_root / "skills",
-            state_path=config / "skills.json",
-        )
         return PermissionControlService(
             registry=registry,
-            action_policy_store=ActionAutonomyPolicyStore(config / "action-autonomy.json"),
+            action_policy_store=action_policy_store,
             safety=safety,
             run_store=AgentRunStore(runtime / "agent-runs.json"),
-            install_store=SkillInstallProposalStore(config / "skill-installs.json"),
+            install_store=install_store,
             proactive_policy=proactive_policy.load(),
             background_runtime_running=daemon.is_running(),
         ).snapshot()
@@ -109,6 +124,26 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
         models=models,
         home_snapshot=HomeSnapshotService(status=status, models=models, visuals=visuals),
         commitments=CommitmentApplicationService(conversation=core.conversation),
+        activities=ActivityApplicationService(
+            store=AgentRunStore(runtime / "agent-runs.json")
+        ),
+        proactive=ProactiveApplicationService(
+            store=interactions,
+            clock=core.conversation.temporal_engine.clock,
+        ),
+        continuity=ContinuityApplicationService(
+            continuity=core.conversation.shared_continuity,
+            memory_management=MemoryManagementService(core.repository),
+        ),
+        reflections=ReflectionApplicationService(
+            reflections=core.conversation.reflection_service,
+            history=core.conversation.history,
+        ),
+        workbench=WorkbenchApplicationService(
+            models=models,
+            permissions=permissions_snapshot,
+            installer=installer,
+        ),
     )
 
 

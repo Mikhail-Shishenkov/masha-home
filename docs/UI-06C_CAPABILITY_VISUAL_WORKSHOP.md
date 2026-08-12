@@ -41,6 +41,17 @@ production bridge actions.
 
 ## Следующий gate
 
+Каждая из десяти сцен теперь проходит одну общую проверяемую грамматику:
+
+```text
+appeared → focused → waiting → resolved | dismissed
+```
+
+Переключение между сценами сбрасывает lifecycle в `appeared`. Действия до
+`waiting` меняют только фокус presentation, а финальное действие создаёт только
+локальный disposable receipt. Это позволяет отдельно оценить появление,
+удержание внимания и уход объекта, не имитируя backend-результат.
+
 После совместного визуального review выбираются сцены и lifecycle, которые
 переходят в production. Для них отдельно создаются bounded UI-safe views и
 allowlisted actions. Рекомендуемый первый binding slice:

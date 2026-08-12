@@ -725,3 +725,54 @@ repository handle, raw MemoryDocument, temporal calculation or mutation API.
 
 Next: **UI-06F — Activity & Agent Run Truth**: project the existing execution
 lifecycle and already-supported controls into one calm spatial work surface.
+
+### UI-06F. Motion stabilization & capability grammar gate
+
+Статус: **IMPLEMENTED; VISUAL GRAMMAR ACCEPTED; SLICE A BOUND**
+
+Production Home no longer changes both Masha frames at once. Scene selection has
+deterministic settle/hold timing, two-phase exit/enter, reduced-motion handling
+and no size transition on the Conversation surface. Confirmation keeps the
+current calm frame instead of forcing a simultaneous pose and surface change.
+
+The disposable Capability Visual Workshop covers Commitment, Confirmation,
+Activity/Agent Run, Reminder, Check-in, Continuity, Reflection/Honest Help,
+Skills/Permissions, Model Profiles and Runtime Recovery. Every scene follows
+`appeared → focused → waiting → resolved|dismissed`.
+
+The visual grammar was accepted. Slice A now binds real Agent Run receipts and
+already-delivered Reminder/Check-in interactions through bounded UI-safe views.
+Only existing acknowledge/dismiss lifecycle actions cross the allowlisted
+bridge; no generic agent control is invented.
+
+### UI-06G. Slice B — Memory, Shared Continuity, Reflection & Honest Help
+
+Статус: **IMPLEMENTED**
+
+Production Home now exposes two contextual objects backed by existing domain
+services. `Наша история` is a bounded read-only projection of confirmed Memory,
+relationship moments and open threads. `Мысли` separates adopted Masha
+reflections, pending interpretations and explicit Honest Help offers.
+
+Reflection adoption/rejection and Honest Help acceptance/dismissal reuse the
+existing Stage 15 lifecycle. A model call occurs only after explicit Help
+acceptance. Emergency Stop blocks decisions, and the renderer receives no raw
+MemoryDocument, evidence IDs, audit details or persistence API.
+
+### UI-06H. Slice C — Local Workbench
+
+Статус: **IMPLEMENTED**
+
+The `Режим` object is a contextual, bounded view of existing Model Profiles,
+Skill Registry, effective standing permissions and pending decisions. Agent Run
+details remain in the already implemented `Работа` object rather than being
+duplicated into administration UI.
+
+Manual model selection is wired through the existing LLM-03 contract only after
+local availability validation. It has no fallback and changes only the execution
+profile/presentation overlay. Skill installation, grants, autonomy-level and
+policy changes remain outside the Home until their own explicit confirmation UX
+is designed.
+
+Next: **Slice D — Runtime health & operating preferences**, followed by a
+focused motion/content-density polish pass.

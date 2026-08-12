@@ -7,6 +7,7 @@
 
   const VISUAL_IDENTITY_ID = "masha.visual.identity.canonical-v4";
   const ROOM_ASSET_ID = "scene.home.canonical.static";
+  const PHASES = Object.freeze(["appeared", "focused", "waiting", "resolved", "dismissed"]);
 
   const SCENES = Object.freeze([
     scene({
@@ -158,30 +159,36 @@
   const SCENE_MAP = Object.freeze(Object.fromEntries(SCENES.map((item) => [item.id, item])));
 
   function initialState() {
-    return freeze({ sceneId: SCENES[0].id, resolution: null, revision: 0 });
+    return freeze({ sceneId: SCENES[0].id, phase: "appeared", resolution: null, revision: 0 });
   }
 
   function reduce(state, event) {
     if (!event || typeof event.type !== "string") return state;
     if (event.type === "SELECT") {
       if (!SCENE_MAP[event.sceneId] || event.sceneId === state.sceneId) return state;
-      return freeze({ sceneId: event.sceneId, resolution: null, revision: state.revision + 1 });
+      return freeze({ sceneId: event.sceneId, phase: "appeared", resolution: null, revision: state.revision + 1 });
     }
     if (event.type === "NEXT" || event.type === "PREVIOUS") {
       const index = SCENES.findIndex((item) => item.id === state.sceneId);
       const offset = event.type === "NEXT" ? 1 : -1;
       const next = (index + offset + SCENES.length) % SCENES.length;
-      return freeze({ sceneId: SCENES[next].id, resolution: null, revision: state.revision + 1 });
+      return freeze({ sceneId: SCENES[next].id, phase: "appeared", resolution: null, revision: state.revision + 1 });
     }
-    if (event.type === "ACT") {
+    if (event.type === "FOCUS" && state.phase === "appeared") {
+      return freeze({ sceneId: state.sceneId, phase: "focused", resolution: null, revision: state.revision + 1 });
+    }
+    if (event.type === "WAIT" && state.phase === "focused") {
+      return freeze({ sceneId: state.sceneId, phase: "waiting", resolution: null, revision: state.revision + 1 });
+    }
+    if (event.type === "ACT" && state.phase === "waiting") {
       const sceneValue = SCENE_MAP[state.sceneId];
       const action = sceneValue.actions[event.actionIndex];
       if (!action) return state;
       const message = event.actionIndex === 0 ? sceneValue.primaryReceipt : sceneValue.secondaryReceipt;
-      return freeze({ sceneId: state.sceneId, resolution: freeze({ label: action.label, message }), revision: state.revision + 1 });
+      return freeze({ sceneId: state.sceneId, phase: event.actionIndex === 0 ? "resolved" : "dismissed", resolution: freeze({ label: action.label, message }), revision: state.revision + 1 });
     }
-    if (event.type === "RESET" && state.resolution !== null) {
-      return freeze({ sceneId: state.sceneId, resolution: null, revision: state.revision + 1 });
+    if (event.type === "RESET" && state.phase !== "appeared") {
+      return freeze({ sceneId: state.sceneId, phase: "appeared", resolution: null, revision: state.revision + 1 });
     }
     return state;
   }
@@ -193,6 +200,8 @@
       roomAssetId: ROOM_ASSET_ID,
       index: SCENES.indexOf(selected),
       total: SCENES.length,
+      phase: state.phase,
+      phases: PHASES,
       scene: selected,
       resolution: state.resolution,
     });
@@ -202,5 +211,5 @@
   function actions(...labels) { return freeze(labels.map((label, index) => freeze({ id: `action-${index + 1}`, label }))); }
   function freeze(value) { return Object.freeze(value); }
 
-  return Object.freeze({ VISUAL_IDENTITY_ID, ROOM_ASSET_ID, SCENES, initialState, reduce, project });
+  return Object.freeze({ VISUAL_IDENTITY_ID, ROOM_ASSET_ID, PHASES, SCENES, initialState, reduce, project });
 });

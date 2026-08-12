@@ -254,6 +254,40 @@ profile to declare `structured_output`; `primary` supports it and no fallback
 to another profile occurs. Ordinary chat neither creates reflections nor
 injects them into general context.
 
+## UI-06G Slice B
+
+The production Home has contextual `Наша история` and `Мысли` objects. They are
+hidden when their bounded application projections are empty.
+
+- Continuity is read-only and shows only confirmed Fact/Decision/Episode
+  summaries, shared moments and open threads.
+- A thread action only prefills the composer; sending stays manual.
+- Reflection candidates require explicit adopt/reject.
+- Honest Help requires explicit accept/dismiss; only accept invokes the active
+  local model.
+- Emergency Stop blocks all Slice B decision actions.
+
+Run the focused regression with:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_application_boundary.py tests/test_desktop_host.py -q
+node --check frontend/renderer/app.js
+```
+
+## UI-06H Slice C
+
+`Режим` opens the local workbench: available profiles, installed skills,
+effective standing permissions and pending controls. It does not expose raw
+configuration or package data.
+
+The only action in this slice is manually choosing an already configured and
+available local model. The provider/model availability check occurs before the
+active profile changes; no fallback is attempted. Emergency Stop does not block
+this operating preference, but it continues to block autonomous work.
+
+Skill installation, upgrades and permission grants remain CLI-only until their
+separate proposal/confirmation UI exists.
+
 ## Stage 16.1 Skill Registry
 
 Developers may place a bundled package under `skills/<skill_id>/` with
@@ -609,6 +643,40 @@ Targeted verification:
 python -m pytest tests/test_application_boundary.py tests/test_desktop_host.py -q
 node --test frontend/scenes/scene-map.test.cjs
 ```
+
+## UI-06F motion and capability workshop
+
+Open the disposable workshop directly:
+
+```powershell
+start docs\prototypes\ui-06c\index.html
+```
+
+For each of the ten scenes, use `Посмотреть`, then `Оставить рядом`, then choose
+the primary or secondary resolution. Check that the spatial object reads as
+`appeared → focused → waiting → resolved/dismissed` while the canonical room and
+Masha remain unchanged.
+
+The production Home has only motion stabilization in this step: minimum scene
+hold, settle delay, sequential fade and stable Conversation geometry. The
+workshop is deliberately disconnected from the production WebChannel.
+
+Targeted verification:
+
+```powershell
+node --test frontend\scenes\scene-map.test.cjs docs\prototypes\ui-06c\workshop.test.cjs
+python -m pytest tests\test_desktop_host.py tests\test_presentation_runtime.py tests\test_composition_runtime.py -q
+```
+
+After visual acceptance, production Slice A is also active. Start the desktop
+Home normally. `Работа` appears only if
+`local-data/runtime/agent-runs.json` contains real receipts. `Рядом` appears only
+if SQLite contains an existing delivered Reminder or Check-in interaction.
+Closing a surface is presentation-only; `Понял` and `Не сейчас` call the existing
+acknowledge/dismiss lifecycle.
+
+Do not create fixture data in production `local-data` for visual testing. The
+application and bridge tests build isolated roots and databases.
 
 ## Конфигурация
 

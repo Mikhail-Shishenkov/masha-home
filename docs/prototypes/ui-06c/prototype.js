@@ -11,6 +11,7 @@ const summary = document.getElementById("surface-summary");
 const body = document.getElementById("surface-body");
 const actions = document.getElementById("surface-actions");
 const receipt = document.getElementById("surface-receipt");
+const lifecycleRail = document.getElementById("lifecycle-rail");
 const dots = document.getElementById("scene-dots");
 let state = workshop.initialState();
 
@@ -95,11 +96,45 @@ function renderBody(scene) {
 
 function renderActions(view) {
   actions.replaceChildren();
+  if (view.phase === "appeared") {
+    const focus = element("button", "surface-action is-primary", "Посмотреть");
+    focus.type = "button";
+    focus.addEventListener("click", () => dispatch({ type: "FOCUS" }));
+    actions.append(focus);
+    return;
+  }
+  if (view.phase === "focused") {
+    const wait = element("button", "surface-action is-primary", "Оставить рядом");
+    wait.type = "button";
+    wait.addEventListener("click", () => dispatch({ type: "WAIT" }));
+    actions.append(wait);
+    return;
+  }
+  if (["resolved", "dismissed"].includes(view.phase)) {
+    const reset = element("button", "surface-action", "Повторить момент");
+    reset.type = "button";
+    reset.addEventListener("click", () => dispatch({ type: "RESET" }));
+    actions.append(reset);
+    return;
+  }
   view.scene.actions.forEach((action, index) => {
     const button = element("button", index === 0 ? "surface-action is-primary" : "surface-action", action.label);
     button.type = "button";
     button.addEventListener("click", () => dispatch({ type: "ACT", actionIndex: index }));
     actions.append(button);
+  });
+}
+
+function renderLifecycle(view) {
+  lifecycleRail.replaceChildren();
+  const labels = { appeared: "появился", focused: "в фокусе", waiting: "ждёт", resolved: "решён", dismissed: "убран" };
+  view.phases.forEach((phase) => {
+    const item = element("li", "lifecycle-phase", labels[phase]);
+    item.dataset.phase = phase;
+    if (phase === view.phase) item.dataset.current = "true";
+    if (view.phase === "resolved" && phase === "dismissed") item.hidden = true;
+    if (view.phase === "dismissed" && phase === "resolved") item.hidden = true;
+    lifecycleRail.append(item);
   });
 }
 
@@ -123,12 +158,14 @@ function render() {
   home.dataset.zone = scene.zone;
   home.dataset.tone = scene.kind;
   surface.dataset.scene = scene.id;
+  surface.dataset.phase = view.phase;
   counter.textContent = `${String(view.index + 1).padStart(2, "0")} / ${String(view.total).padStart(2, "0")}`;
   eyebrow.textContent = scene.eyebrow;
   place.textContent = scene.place;
   title.textContent = scene.title;
   summary.textContent = scene.summary;
   renderBody(scene);
+  renderLifecycle(view);
   renderActions(view);
   renderDots(view);
   receipt.hidden = view.resolution === null;

@@ -5,6 +5,19 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+# Hardware compositing is the normal path: the Home scene is 4K bitmap-heavy
+# and software Chromium compositing makes interaction visibly sluggish.  A
+# user can still opt into the fallback for a known-bad graphics driver by
+# setting MASHA_HOME_SOFTWARE_COMPOSITING=1 before launching the application.
+import os
+
+if os.environ.get("MASHA_HOME_SOFTWARE_COMPOSITING") == "1":
+    os.environ.setdefault("QT_OPENGL", "software")
+    os.environ.setdefault(
+        "QTWEBENGINE_CHROMIUM_FLAGS",
+        "--disable-gpu --disable-gpu-compositing",
+    )
+
 from PySide6.QtCore import QUrl
 from PySide6.QtWebEngineCore import (
     QWebEnginePage,

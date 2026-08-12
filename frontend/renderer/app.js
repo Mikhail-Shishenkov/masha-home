@@ -38,6 +38,49 @@ const commitmentsCount = document.getElementById("commitments-count");
 const commitmentsSurface = document.getElementById("commitments-surface");
 const commitmentsList = document.getElementById("commitments-list");
 const closeCommitments = document.getElementById("close-commitments");
+const activityTrigger = document.getElementById("activity-trigger");
+const activitySurface = document.getElementById("activity-surface");
+const agentRunList = document.getElementById("agent-run-list");
+const closeActivity = document.getElementById("close-activity");
+const proactiveTrigger = document.getElementById("proactive-trigger");
+const proactiveSurface = document.getElementById("proactive-surface");
+const proactiveList = document.getElementById("proactive-list");
+const closeProactive = document.getElementById("close-proactive");
+const continuityTrigger = document.getElementById("continuity-trigger");
+const continuitySurface = document.getElementById("continuity-surface");
+const relationshipMoments = document.getElementById("relationship-moments");
+const continuityThreads = document.getElementById("continuity-threads");
+const closeContinuity = document.getElementById("close-continuity");
+const reflectionsTrigger = document.getElementById("reflections-trigger");
+const reflectionsSurface = document.getElementById("reflections-surface");
+const reflectionList = document.getElementById("reflection-list");
+const closeReflections = document.getElementById("close-reflections");
+const workbenchTrigger = document.getElementById("workbench-trigger");
+const workbenchSurface = document.getElementById("workbench-surface");
+const workbenchModels = document.getElementById("workbench-models");
+const workbenchSkills = document.getElementById("workbench-skills");
+const workbenchPermissions = document.getElementById("workbench-permissions");
+const closeWorkbench = document.getElementById("close-workbench");
+const addCommitment = document.getElementById("add-commitment");
+const commitmentCreateSurface = document.getElementById("commitment-create-surface");
+const commitmentTitle = document.getElementById("commitment-title");
+const commitmentDue = document.getElementById("commitment-due");
+const submitCommitment = document.getElementById("submit-commitment");
+const cancelCommitment = document.getElementById("cancel-commitment");
+const addSkill = document.getElementById("add-skill");
+const skillInstallSurface = document.getElementById("skill-install-surface");
+const skillInstallTitle = document.getElementById("skill-install-title");
+const skillInstallCopy = document.getElementById("skill-install-copy");
+const confirmSkillInstall = document.getElementById("confirm-skill-install");
+const rejectSkillInstall = document.getElementById("reject-skill-install");
+const addSharedMoment = document.getElementById("add-shared-moment");
+const addContinuityThread = document.getElementById("add-continuity-thread");
+const continuityCreateSurface = document.getElementById("continuity-create-surface");
+const continuityCreateEyebrow = document.getElementById("continuity-create-eyebrow");
+const continuityCreateTitle = document.getElementById("continuity-create-title");
+const continuityCreateText = document.getElementById("continuity-create-text");
+const submitContinuity = document.getElementById("submit-continuity");
+const cancelContinuity = document.getElementById("cancel-continuity");
 
 let bridge = null;
 let ready = false;
@@ -48,10 +91,16 @@ let activeSceneLayer = 0;
 let activeConversationId = null;
 let sceneTransitionRevision = 0;
 let sceneTransitionTimer = null;
+let sceneSettleTimer = null;
+let activeSceneChangedAt = performance.now();
 let pendingConfirmation = null;
+let pendingSkillInstall = null;
+let continuityCreateKind = null;
 const COMPOSER_MIN_HEIGHT = 44;
 const COMPOSER_MAX_HEIGHT = 112;
+const SURFACE_EXIT_MS = 200;
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+let surfaceTransitionTimer = null;
 
 function fitComposer() {
   input.style.height = `${COMPOSER_MIN_HEIGHT}px`;
@@ -62,40 +111,58 @@ function fitComposer() {
 function applyScene(presentation) {
   const next = window.MashaSceneMap.resolveScene(presentation);
   document.documentElement.dataset.scene = next.id;
-  if (next.id === activeSceneId) return;
-
   const revision = ++sceneTransitionRevision;
-  const current = sceneLayers[activeSceneLayer];
-  const incoming = sceneLayers[1 - activeSceneLayer];
   const transition = window.MashaSceneMap.resolveTransition({
     presentation,
     reducedMotion: reducedMotion.matches,
   });
+  clearTimeout(sceneSettleTimer);
+  if (next.id === activeSceneId) return;
+  const heldFor = performance.now() - activeSceneChangedAt;
+  const holdDelay = Math.max(0, transition.minimumHoldMs - heldFor);
+  const delay = Math.max(transition.settleMs, holdDelay);
+  sceneSettleTimer = window.setTimeout(
+    () => commitScene(next, transition, revision),
+    delay,
+  );
+}
+
+function commitScene(next, transition, revision) {
+  if (revision !== sceneTransitionRevision || next.id === activeSceneId) return;
+  const current = sceneLayers[activeSceneLayer];
+  const incoming = sceneLayers[1 - activeSceneLayer];
   document.documentElement.dataset.sceneTransition = transition.kind;
-  document.documentElement.style.setProperty("--scene-transition-ms", `${transition.durationMs}ms`);
+  document.documentElement.style.setProperty("--scene-exit-ms", `${transition.exitMs}ms`);
+  document.documentElement.style.setProperty("--scene-enter-ms", `${transition.enterMs}ms`);
   clearTimeout(sceneTransitionTimer);
   let transitionStarted = false;
   for (const layer of sceneLayers) {
     layer.onload = null;
     layer.onerror = null;
-    layer.classList.remove("is-incoming");
+    layer.classList.remove("is-incoming", "is-revealed", "is-leaving");
   }
   incoming.classList.remove("is-active");
 
   const completeTransition = () => {
     if (revision !== sceneTransitionRevision) return;
-    current.classList.remove("is-active", "is-incoming");
-    incoming.classList.remove("is-incoming");
+    current.classList.remove("is-active", "is-leaving");
+    incoming.classList.remove("is-incoming", "is-revealed");
     incoming.classList.add("is-active");
     activeSceneLayer = sceneLayers.indexOf(incoming);
     activeSceneId = next.id;
+    activeSceneChangedAt = performance.now();
   };
   const showIncoming = () => {
     if (revision !== sceneTransitionRevision || transitionStarted) return;
     transitionStarted = true;
     incoming.alt = next.alt;
     incoming.classList.add("is-incoming");
-    sceneTransitionTimer = window.setTimeout(completeTransition, transition.durationMs + 40);
+    current.classList.add("is-leaving");
+    sceneTransitionTimer = window.setTimeout(() => {
+      if (revision !== sceneTransitionRevision) return;
+      incoming.classList.add("is-revealed");
+      sceneTransitionTimer = window.setTimeout(completeTransition, transition.enterMs + 30);
+    }, transition.exitMs + 20);
   };
   incoming.onload = showIncoming;
   incoming.onerror = () => {
@@ -123,6 +190,11 @@ function setComposerState({ enabled, waiting = false }) {
   recentToggle.disabled = !enabled || waiting;
   homeAttentionTrigger.disabled = !enabled || waiting;
   commitmentsTrigger.disabled = !enabled || waiting || Boolean(pendingConfirmation);
+  activityTrigger.disabled = !enabled || waiting || Boolean(pendingConfirmation);
+  proactiveTrigger.disabled = !enabled || waiting || Boolean(pendingConfirmation);
+  continuityTrigger.disabled = !enabled || waiting || Boolean(pendingConfirmation);
+  reflectionsTrigger.disabled = !enabled || waiting || Boolean(pendingConfirmation);
+  workbenchTrigger.disabled = !enabled || waiting || Boolean(pendingConfirmation);
   safetyTrigger.disabled = !enabled;
 }
 
@@ -130,10 +202,322 @@ function closeTemporarySurfaces() {
   recentPanel.hidden = true;
   homeAttention.hidden = true;
   commitmentsSurface.hidden = true;
+  activitySurface.hidden = true;
+  proactiveSurface.hidden = true;
+  continuitySurface.hidden = true;
+  reflectionsSurface.hidden = true;
+  workbenchSurface.hidden = true;
+  commitmentCreateSurface.hidden = true;
+  skillInstallSurface.hidden = true;
+  continuityCreateSurface.hidden = true;
   document.documentElement.dataset.commitments = "closed";
   document.documentElement.dataset.homeAttention = "closed";
+  document.documentElement.dataset.objectSurface = "closed";
+  recentToggle.setAttribute("aria-expanded", "false");
   homeAttentionTrigger.setAttribute("aria-expanded", "false");
   commitmentsTrigger.setAttribute("aria-expanded", "false");
+  activityTrigger.setAttribute("aria-expanded", "false");
+  proactiveTrigger.setAttribute("aria-expanded", "false");
+  continuityTrigger.setAttribute("aria-expanded", "false");
+  reflectionsTrigger.setAttribute("aria-expanded", "false");
+  workbenchTrigger.setAttribute("aria-expanded", "false");
+}
+
+function transitionToSurface(open) {
+  clearTimeout(surfaceTransitionTimer);
+  const visible = [
+    surface,
+    recentPanel,
+    homeAttention,
+    commitmentsSurface,
+    activitySurface,
+    proactiveSurface,
+    continuitySurface,
+    reflectionsSurface,
+    workbenchSurface,
+    operationSurface, commitmentCreateSurface, skillInstallSurface, continuityCreateSurface,
+  ].filter((element) => !element.hidden);
+  for (const element of visible) element.classList.add("is-surface-leaving");
+  surfaceTransitionTimer = window.setTimeout(() => {
+    closeTemporarySurfaces();
+    hideOperationSurface();
+    surface.classList.remove("is-surface-leaving");
+    surface.classList.add("is-surface-concealed");
+    surface.hidden = true;
+    for (const element of visible) element.classList.remove("is-surface-leaving");
+    open();
+  }, reducedMotion.matches ? 0 : SURFACE_EXIT_MS);
+}
+
+function returnToConversation() {
+  clearTimeout(surfaceTransitionTimer);
+  const visible = [commitmentsSurface, activitySurface, proactiveSurface, continuitySurface, reflectionsSurface, workbenchSurface, operationSurface]
+    .filter((element) => !element.hidden);
+  for (const element of visible) element.classList.add("is-surface-leaving");
+  surfaceTransitionTimer = window.setTimeout(() => {
+    closeTemporarySurfaces();
+    hideOperationSurface();
+    for (const element of visible) element.classList.remove("is-surface-leaving");
+    surface.hidden = false;
+    // Force the hidden shell to become a distinct rendered frame before its
+    // normal opacity transition begins.  The conversation is absolutely
+    // positioned, so this does not reflow the room or the active surface.
+    void surface.offsetWidth;
+    surface.classList.remove("is-surface-concealed");
+    input.focus();
+  }, reducedMotion.matches ? 0 : SURFACE_EXIT_MS);
+}
+
+function workbenchItem(title, detail) {
+  const item = document.createElement("li");
+  item.className = "workbench-item";
+  item.append(
+    Object.assign(document.createElement("h4"), { textContent: title }),
+    Object.assign(document.createElement("p"), { textContent: detail }),
+  );
+  return item;
+}
+
+function humanCapability(capability) {
+  return {
+    text: "разговор и тексты",
+    thinking: "рассуждение",
+    vision: "работа с изображениями",
+    tools: "инструменты",
+    structured_output: "структурированные ответы",
+  }[capability] || "локальная возможность";
+}
+
+function humanProfileTitle(profile) {
+  if (profile.profile_id === "primary") return "Основная";
+  if (profile.profile_id === "fast") return "Быстрая";
+  return profile.display_name;
+}
+
+function modelItem(profile) {
+  const status = profile.active ? "сейчас" : profile.available ? "доступна локально" : "сейчас недоступна";
+  const item = workbenchItem(
+    `${humanProfileTitle(profile)}${profile.active ? " · сейчас" : ""}`,
+    `${profile.model_id || "Модель ещё не настроена"} · ${status}`,
+  );
+  if (!profile.active) {
+    const action = document.createElement("button");
+    action.type = "button";
+    action.textContent = "Использовать";
+    action.disabled = !profile.available || !profile.enabled || inFlight;
+    action.addEventListener("click", () => bridge.useModelProfile(profile.profile_id));
+    item.append(action);
+  }
+  return item;
+}
+
+function renderWorkbench(view) {
+  workbenchModels.replaceChildren();
+  workbenchSkills.replaceChildren();
+  workbenchPermissions.replaceChildren();
+  const profiles = view?.profiles || [];
+  const familiarProfiles = profiles.filter((profile) => profile.profile_id === "primary" || profile.profile_id === "fast");
+  const otherProfiles = profiles.filter((profile) => !familiarProfiles.includes(profile));
+  for (const profile of familiarProfiles) {
+    workbenchModels.append(modelItem(profile));
+  }
+  if (otherProfiles.length) {
+    const details = document.createElement("details");
+    details.className = "workbench-other-options";
+    const summary = document.createElement("summary");
+    summary.textContent = "Другие варианты";
+    const list = document.createElement("ol");
+    list.className = "workbench-list";
+    for (const profile of otherProfiles) list.append(modelItem(profile));
+    details.append(summary, list);
+    const item = document.createElement("li");
+    item.className = "workbench-other";
+    item.append(details);
+    workbenchModels.append(item);
+  }
+  for (const skill of view?.skills || []) {
+    const capabilityText = skill.capabilities.length
+      ? skill.capabilities.map(humanCapability).join(", ")
+      : "пока без доступных действий";
+    workbenchSkills.append(workbenchItem(
+      skill.name,
+      skill.runtime_supported ? `Могу использовать для: ${capabilityText}.` : "Пока просто хранится здесь и ничего не запускает.",
+    ));
+  }
+  const skillNames = new Map((view?.skills || []).map((skill) => [skill.skill_id, skill.name]));
+  for (const grant of view?.grants || []) {
+    workbenchPermissions.append(workbenchItem(
+      grant.mode === "self" ? "Могу сама" : grant.mode === "forbidden" ? "Запрещено" : "Сначала спрошу тебя",
+      `${skillNames.get(grant.skill_id) || "Этот навык"} · ${humanCapability(grant.capability)}`,
+    ));
+  }
+  for (const pending of view?.pending || []) {
+    workbenchPermissions.append(workbenchItem(
+      "Сначала спрошу тебя",
+      pending.title,
+    ));
+  }
+  if (!workbenchModels.children.length) workbenchModels.append(objectEmpty("Профили моделей пока не настроены."));
+  if (!workbenchSkills.children.length) workbenchSkills.append(objectEmpty("Навыков в локальном реестре пока нет."));
+  if (!workbenchPermissions.children.length) workbenchPermissions.append(objectEmpty("Постоянных разрешений и ожидающих решений нет."));
+}
+
+function renderContinuity(view) {
+  relationshipMoments.replaceChildren();
+  continuityThreads.replaceChildren();
+  for (const moment of view?.moments || []) {
+    const item = document.createElement("li");
+    item.className = "continuity-item";
+    const title = document.createElement("strong");
+    title.textContent = moment.title;
+    const text = document.createElement("p");
+    text.textContent = moment.text;
+    item.append(title, text);
+    relationshipMoments.append(item);
+  }
+  for (const thread of view?.open_threads || []) {
+    const item = document.createElement("li");
+    item.className = "continuity-item is-thread";
+    const title = document.createElement("strong");
+    title.textContent = thread.summary;
+    const reason = document.createElement("p");
+    reason.textContent = thread.reason_to_return;
+    const action = document.createElement("button");
+    action.type = "button";
+    action.textContent = "Продолжить в разговоре";
+    action.addEventListener("click", () => {
+      if (!ready || inFlight) return;
+      setComposerState({ enabled: true, waiting: true });
+      bridge.continueContinuityThread(thread.thread_id);
+    });
+    item.append(title, reason, action);
+    continuityThreads.append(item);
+  }
+  if (!relationshipMoments.children.length) relationshipMoments.append(objectEmpty("Наших сохранённых моментов пока нет."));
+  if (!continuityThreads.children.length) continuityThreads.append(objectEmpty("Открытых нитей сейчас нет."));
+}
+
+function objectEmpty(text) {
+  const item = document.createElement("li");
+  item.className = "object-empty";
+  item.textContent = text;
+  return item;
+}
+
+function reflectionActions(candidateId, actions, resolver) {
+  const row = document.createElement("div");
+  row.className = "object-actions";
+  const labels = { adopt: "Согласен сохранить", reject: "Не согласен", accept: "Давай, помоги", dismiss: "Не сейчас" };
+  for (const decision of actions) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = labels[decision] || decision;
+    button.addEventListener("click", () => {
+      if (!ready || inFlight) return;
+      resolver(candidateId, decision);
+    });
+    row.append(button);
+  }
+  return row;
+}
+
+function renderReflections(view) {
+  reflectionList.replaceChildren();
+  for (const pending of view?.pending || []) {
+    const item = document.createElement("li");
+    item.className = "reflection-item is-pending";
+    item.append(
+      Object.assign(document.createElement("p"), { className: "reflection-kind", textContent: "Нужно твоё решение · это интерпретация" }),
+      Object.assign(document.createElement("h3"), { textContent: pending.text }),
+      Object.assign(document.createElement("p"), { textContent: pending.meaning }),
+      reflectionActions(pending.candidate_id, pending.allowed_actions, (id, decision) => bridge.resolveReflection(id, decision)),
+    );
+    reflectionList.append(item);
+  }
+  for (const help of view?.help_offers || []) {
+    const item = document.createElement("li");
+    item.className = "reflection-item is-help";
+    item.append(
+      Object.assign(document.createElement("p"), { className: "reflection-kind", textContent: "Честная помощь · только по согласию" }),
+      Object.assign(document.createElement("h3"), { textContent: help.offer }),
+      Object.assign(document.createElement("p"), { textContent: help.observation }),
+      Object.assign(document.createElement("p"), { className: "reflection-benefit", textContent: help.expected_benefit }),
+      reflectionActions(help.candidate_id, help.allowed_actions, (id, decision) => bridge.resolveHonestHelp(id, decision)),
+    );
+    reflectionList.append(item);
+  }
+  for (const adopted of view?.adopted || []) {
+    const item = document.createElement("li");
+    item.className = "reflection-item is-adopted";
+    item.append(
+      Object.assign(document.createElement("p"), { className: "reflection-kind", textContent: `Моё мнение · уверенность ${Math.round(adopted.confidence * 100)}%` }),
+      Object.assign(document.createElement("h3"), { textContent: adopted.text }),
+      Object.assign(document.createElement("p"), { textContent: adopted.meaning }),
+    );
+    reflectionList.append(item);
+  }
+  if (!reflectionList.children.length) reflectionList.append(objectEmpty("Здесь пока нет сохранённых мыслей или предложений помощи."));
+}
+
+function renderAgentRuns(view) {
+  agentRunList.replaceChildren();
+  for (const run of view?.items || []) {
+    const item = document.createElement("li");
+    item.className = "agent-run";
+    item.dataset.status = run.status;
+    const heading = document.createElement("h3");
+    heading.textContent = run.goal;
+    const status = document.createElement("p");
+    status.className = "object-status";
+    status.textContent = run.status_label;
+    item.append(heading, status);
+    for (const step of run.steps) {
+      const row = document.createElement("p");
+      row.className = "agent-step";
+      row.dataset.status = step.status;
+      row.textContent = step.title;
+      item.append(row);
+    }
+    agentRunList.append(item);
+  }
+  if (!agentRunList.children.length) {
+    const empty = document.createElement("li");
+    empty.className = "object-empty";
+    empty.textContent = "Проверенных агентных запусков пока не было.";
+    agentRunList.append(empty);
+  }
+}
+
+function renderProactiveInteractions(view) {
+  proactiveList.replaceChildren();
+  for (const interaction of view?.items || []) {
+    const item = document.createElement("li");
+    item.className = "proactive-item";
+    item.dataset.kind = interaction.interaction_type;
+    const heading = document.createElement("h3");
+    heading.textContent = interaction.title;
+    const copy = document.createElement("p");
+    copy.textContent = interaction.message;
+    const actions = document.createElement("div");
+    actions.className = "object-actions";
+    for (const decision of interaction.allowed_actions) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = decision === "acknowledge" ? "Понял" : "Не сейчас";
+      button.addEventListener("click", () => {
+        bridge.resolveProactiveInteraction(interaction.interaction_id, decision);
+      });
+      actions.append(button);
+    }
+    item.append(heading, copy, actions);
+    proactiveList.append(item);
+  }
+  if (!proactiveList.children.length) {
+    const empty = document.createElement("li");
+    empty.className = "object-empty";
+    empty.textContent = "Сейчас ничего не ждёт твоего внимания.";
+    proactiveList.append(empty);
+  }
 }
 
 function formatDueAt(value) {
@@ -218,8 +602,10 @@ function renderPendingConfirmation(confirmation) {
   closeOperation.hidden = true;
   confirmOperation.disabled = false;
   rejectOperation.disabled = false;
-  operationSurface.hidden = false;
-  document.documentElement.dataset.operation = "confirmation";
+  transitionToSurface(() => {
+    operationSurface.hidden = false;
+    document.documentElement.dataset.operation = "confirmation";
+  });
   setComposerState({ enabled: ready, waiting: inFlight });
 }
 
@@ -242,7 +628,7 @@ function renderConfirmationResult(result) {
   const confirmed = result?.status === "confirmed";
   const rejected = result?.status === "rejected";
   operationEyebrow.textContent = confirmed ? "готово" : rejected ? "без изменений" : "не получилось";
-  operationTitle.textContent = confirmed ? "Обязательство обновлено" : rejected ? "Ничего не меняла" : "Изменение не применено";
+  operationTitle.textContent = confirmed ? "Изменение сохранено" : rejected ? "Ничего не меняла" : "Изменение не применено";
   operationSubject.textContent = result?.assistant_message?.content || "Предложение осталось без изменений.";
   operationSteps.hidden = false;
   for (const step of operationSteps.children) step.dataset.state = confirmed || rejected ? "done" : "waiting";
@@ -395,17 +781,72 @@ function handleBridgeEvent(encoded) {
     activeConversationId = payload.conversation?.conversation_id || null;
     renderRecent(payload.recent, activeConversationId);
     commitmentsCount.textContent = String(payload.commitments_count || 0);
+    activityTrigger.hidden = !(payload.agent_runs_count > 0);
+    proactiveTrigger.hidden = !(payload.proactive_interactions_count > 0);
+    // Empty history is still a real state: this is where the first explicitly
+    // confirmed shared moment or open thread is created.
+    continuityTrigger.hidden = false;
+    reflectionsTrigger.hidden = !(payload.reflection_items_count > 0);
     ready = true;
     clearLocalFailure();
     setComposerState({ enabled: true });
     renderPendingConfirmation(payload.pending_confirmation);
     return;
   }
+  if (payload.kind === "workbench_loaded") {
+    applySnapshot(payload.snapshot);
+    renderWorkbench(payload.workbench);
+    workbenchSurface.hidden = false;
+    document.documentElement.dataset.objectSurface = "workbench";
+    workbenchTrigger.setAttribute("aria-expanded", "true");
+    return;
+  }
+  if (payload.kind === "skill_install_preview") {
+    pendingSkillInstall = payload.preview;
+    const preview = payload.preview;
+    skillInstallTitle.textContent = `${preview.action === "upgrade" ? "Обновить" : "Добавить"} «${preview.name}»?`;
+    skillInstallCopy.textContent = `Версия ${preview.proposed_version}. Возможности: ${preview.capabilities.map(humanCapability).join(", ") || "не заявлены"}. Области: ${preview.requested_scopes.join(", ") || "не запрошены"}. Риск: ${preview.risk_level}. Автономность не выше ${preview.maximum_autonomy_level}.`;
+    workbenchSurface.hidden = true;
+    skillInstallSurface.hidden = false;
+    return;
+  }
+  if (payload.kind === "skill_install_result") {
+    pendingSkillInstall = null;
+    skillInstallSurface.hidden = true;
+    renderWorkbench(payload.result.workbench);
+    workbenchSurface.hidden = false;
+    surfaceStatus.textContent = payload.result.message;
+    return;
+  }
+  if (payload.kind === "skill_install_cancelled") return;
+  if (payload.kind === "skill_install_rejected") {
+    pendingSkillInstall = null;
+    skillInstallSurface.hidden = true;
+    showLocalFailure("Пакет навыка не прошёл проверку или изменился после preview.");
+    return;
+  }
+  if (payload.kind === "model_switch_started") {
+    applySnapshot(payload.snapshot);
+    setComposerState({ enabled: true, waiting: true });
+    surfaceStatus.textContent = "Проверяю выбранную локальную модель…";
+    return;
+  }
+  if (payload.kind === "model_switch_applied") {
+    applySnapshot(payload.snapshot);
+    renderWorkbench(payload.workbench);
+    workbenchSurface.hidden = false;
+    surfaceStatus.textContent = `Теперь отвечает ${payload.result.active_profile.display_name}.`;
+    setComposerState({ enabled: ready });
+    return;
+  }
+  if (payload.kind === "model_switch_rejected") {
+    setComposerState({ enabled: ready });
+    showLocalFailure(payload.result?.error_label || "Эта локальная модель сейчас недоступна.");
+    return;
+  }
   if (payload.kind === "commitments_loaded") {
     applySnapshot(payload.snapshot);
     renderCommitments(payload.commitments);
-    recentPanel.hidden = true;
-    homeAttention.hidden = true;
     commitmentsSurface.hidden = false;
     document.documentElement.dataset.commitments = "active";
     commitmentsTrigger.setAttribute("aria-expanded", "true");
@@ -425,6 +866,81 @@ function handleBridgeEvent(encoded) {
     renderPendingConfirmation(result.pending_confirmation);
     bridge.loadRecentConversations();
     scrollToLatestIfAppropriate(true);
+    return;
+  }
+  if (payload.kind === "agent_runs_loaded") {
+    applySnapshot(payload.snapshot);
+    renderAgentRuns(payload.runs);
+    activityTrigger.hidden = !(payload.runs?.items?.length > 0);
+    activitySurface.hidden = false;
+    document.documentElement.dataset.objectSurface = "activity";
+    activityTrigger.setAttribute("aria-expanded", "true");
+    return;
+  }
+  if (payload.kind === "proactive_interactions_loaded") {
+    applySnapshot(payload.snapshot);
+    renderProactiveInteractions(payload.interactions);
+    proactiveTrigger.hidden = !(payload.interactions?.items?.length > 0);
+    proactiveSurface.hidden = false;
+    document.documentElement.dataset.objectSurface = "proactive";
+    proactiveTrigger.setAttribute("aria-expanded", "true");
+    return;
+  }
+  if (payload.kind === "proactive_interaction_resolved") {
+    applySnapshot(payload.snapshot);
+    closeTemporarySurfaces();
+    proactiveTrigger.hidden = !(payload.remaining_count > 0);
+    surfaceStatus.textContent = payload.interaction.state === "acknowledged"
+      ? "Хорошо, учла."
+      : "Не сейчас — убрала без других изменений.";
+    input.focus();
+    return;
+  }
+  if (payload.kind === "shared_continuity_loaded") {
+    applySnapshot(payload.snapshot);
+    renderContinuity(payload.continuity);
+    continuitySurface.hidden = false;
+    document.documentElement.dataset.objectSurface = "continuity";
+    continuityTrigger.setAttribute("aria-expanded", "true");
+    return;
+  }
+  if (payload.kind === "reflection_workspace_loaded") {
+    applySnapshot(payload.snapshot);
+    renderReflections(payload.workspace);
+    reflectionsSurface.hidden = false;
+    document.documentElement.dataset.objectSurface = "reflections";
+    reflectionsTrigger.setAttribute("aria-expanded", "true");
+    return;
+  }
+  if (payload.kind === "reflection_resolved") {
+    applySnapshot(payload.snapshot);
+    renderReflections(payload.workspace);
+    reflectionsTrigger.hidden = !(payload.remaining_count > 0);
+    surfaceStatus.textContent = payload.result.message;
+    return;
+  }
+  if (payload.kind === "honest_help_started") {
+    applySnapshot(payload.snapshot);
+    setComposerState({ enabled: true, waiting: true });
+    surfaceStatus.textContent = "Думаю над тем, как помочь без лишней магии…";
+    return;
+  }
+  if (payload.kind === "honest_help_resolved") {
+    applySnapshot(payload.snapshot);
+    renderReflections(payload.workspace);
+    reflectionsTrigger.hidden = !(payload.remaining_count > 0);
+    if (payload.conversation) {
+      activeConversationId = payload.conversation.conversation_id;
+      renderConversation(payload.conversation);
+      closeTemporarySurfaces();
+      bridge.loadRecentConversations();
+    }
+    surfaceStatus.textContent = payload.result?.message || "Помощь сейчас не удалось сформулировать.";
+    setComposerState({ enabled: ready });
+    return;
+  }
+  if (["activities_unavailable", "proactive_unavailable", "proactive_resolution_rejected", "continuity_unavailable", "reflections_unavailable", "reflection_resolution_rejected", "honest_help_rejected", "workbench_unavailable"].includes(payload.kind)) {
+    showLocalFailure("Локальное состояние сейчас не удалось открыть.");
     return;
   }
   if (payload.kind === "commitment_operation_rejected" || payload.kind === "commitments_unavailable") {
@@ -470,6 +986,8 @@ function handleBridgeEvent(encoded) {
     activeConversationId = payload.conversation.conversation_id;
     renderRecent(payload.recent, activeConversationId);
     recentPanel.hidden = true;
+    recentToggle.setAttribute("aria-expanded", "false");
+    surface.classList.remove("is-shelf-open");
     clearLocalFailure();
     setComposerState({ enabled: ready });
     renderPendingConfirmation(payload.pending_confirmation);
@@ -510,6 +1028,19 @@ function handleBridgeEvent(encoded) {
     bridge.loadRecentConversations();
     setComposerState({ enabled: ready });
     renderPendingConfirmation(result?.pending_confirmation);
+    scrollToLatestIfAppropriate(true);
+    return;
+  }
+  if (payload.kind === "continuity_thread_result") {
+    applySnapshot(payload.snapshot);
+    closeTemporarySurfaces();
+    surface.hidden = false;
+    surface.classList.remove("is-surface-concealed");
+    const result = payload.result;
+    if (result?.user_message) renderMessage(result.user_message);
+    if (result?.assistant_message) renderMessage(result.assistant_message);
+    activeConversationId = result?.conversation_id || activeConversationId;
+    setComposerState({ enabled: ready });
     scrollToLatestIfAppropriate(true);
     return;
   }
@@ -573,50 +1104,170 @@ newConversationButton.addEventListener("click", () => {
 
 recentToggle.addEventListener("click", () => {
   if (!ready || inFlight) return;
-  homeAttention.hidden = true;
-  document.documentElement.dataset.homeAttention = "closed";
-  homeAttentionTrigger.setAttribute("aria-expanded", "false");
-  commitmentsSurface.hidden = true;
-  document.documentElement.dataset.commitments = "closed";
-  commitmentsTrigger.setAttribute("aria-expanded", "false");
-  recentPanel.hidden = !recentPanel.hidden;
-  if (!recentPanel.hidden) bridge.loadRecentConversations();
+  const opening = recentPanel.hidden;
+  if (opening) {
+    // The shelf belongs to the conversation surface.  Make it readable first;
+    // never hide its parent while opening it.
+    recentPanel.hidden = false;
+    surface.classList.add("is-shelf-open");
+    recentToggle.setAttribute("aria-expanded", "true");
+    bridge.loadRecentConversations();
+  } else {
+    recentPanel.hidden = true;
+    surface.classList.remove("is-shelf-open");
+    recentToggle.setAttribute("aria-expanded", "false");
+    input.focus();
+  }
 });
 
 homeAttentionTrigger.addEventListener("click", () => {
   if (!ready || inFlight) return;
-  recentPanel.hidden = true;
-  commitmentsSurface.hidden = true;
-  document.documentElement.dataset.commitments = "closed";
-  commitmentsTrigger.setAttribute("aria-expanded", "false");
-  if (homeAttention.hidden) {
-    bridge.loadHomeAttention();
+  const opening = homeAttention.hidden;
+  if (opening) {
+    transitionToSurface(() => bridge.loadHomeAttention());
   } else {
-    homeAttention.hidden = true;
-    document.documentElement.dataset.homeAttention = "closed";
-    homeAttentionTrigger.setAttribute("aria-expanded", "false");
+    returnToConversation();
   }
 });
 
 commitmentsTrigger.addEventListener("click", () => {
   if (!ready || inFlight || pendingConfirmation) return;
-  recentPanel.hidden = true;
-  homeAttention.hidden = true;
-  document.documentElement.dataset.homeAttention = "closed";
-  if (commitmentsSurface.hidden) {
-    bridge.loadCommitments();
+  const opening = commitmentsSurface.hidden;
+  if (opening) {
+    transitionToSurface(() => bridge.loadCommitments());
   } else {
-    commitmentsSurface.hidden = true;
-    document.documentElement.dataset.commitments = "closed";
-    commitmentsTrigger.setAttribute("aria-expanded", "false");
+    returnToConversation();
   }
 });
 
 closeCommitments.addEventListener("click", () => {
+  returnToConversation();
+});
+
+addCommitment.addEventListener("click", () => {
   commitmentsSurface.hidden = true;
-  document.documentElement.dataset.commitments = "closed";
-  commitmentsTrigger.setAttribute("aria-expanded", "false");
-  input.focus();
+  commitmentCreateSurface.hidden = false;
+  commitmentTitle.value = "";
+  commitmentDue.value = "";
+  commitmentTitle.focus();
+});
+
+cancelCommitment.addEventListener("click", () => {
+  commitmentCreateSurface.hidden = true;
+  commitmentsSurface.hidden = false;
+});
+
+submitCommitment.addEventListener("click", () => {
+  const subject = commitmentTitle.value.trim();
+  if (!subject || inFlight) return;
+  const due = commitmentDue.value.trim();
+  commitmentCreateSurface.hidden = true;
+  closeTemporarySurfaces();
+  surface.hidden = false;
+  surface.classList.remove("is-surface-concealed");
+  setComposerState({ enabled: true, waiting: true });
+  bridge.submitMessage(`Добавь дело: ${due ? `${due} ` : ""}${subject}`);
+});
+
+activityTrigger.addEventListener("click", () => {
+  if (!ready || inFlight || pendingConfirmation) return;
+  const opening = activitySurface.hidden;
+  if (opening) transitionToSurface(() => bridge.loadAgentRuns());
+  else returnToConversation();
+});
+
+proactiveTrigger.addEventListener("click", () => {
+  if (!ready || inFlight || pendingConfirmation) return;
+  const opening = proactiveSurface.hidden;
+  if (opening) transitionToSurface(() => bridge.loadProactiveInteractions());
+  else returnToConversation();
+});
+
+continuityTrigger.addEventListener("click", () => {
+  if (!ready || inFlight || pendingConfirmation) return;
+  const opening = continuitySurface.hidden;
+  if (opening) transitionToSurface(() => bridge.loadSharedContinuity());
+  else returnToConversation();
+});
+
+reflectionsTrigger.addEventListener("click", () => {
+  if (!ready || inFlight || pendingConfirmation) return;
+  const opening = reflectionsSurface.hidden;
+  if (opening) transitionToSurface(() => bridge.loadReflectionWorkspace());
+  else returnToConversation();
+});
+
+workbenchTrigger.addEventListener("click", () => {
+  if (!ready || inFlight || pendingConfirmation) return;
+  const opening = workbenchSurface.hidden;
+  if (opening) transitionToSurface(() => bridge.loadWorkbench());
+  else returnToConversation();
+});
+
+closeActivity.addEventListener("click", () => {
+  returnToConversation();
+});
+
+closeProactive.addEventListener("click", () => {
+  returnToConversation();
+});
+
+closeContinuity.addEventListener("click", () => {
+  returnToConversation();
+});
+
+closeReflections.addEventListener("click", () => {
+  returnToConversation();
+});
+
+closeWorkbench.addEventListener("click", () => {
+  returnToConversation();
+});
+
+addSkill.addEventListener("click", () => {
+  if (!ready || inFlight) return;
+  bridge.chooseSkillPackage();
+});
+
+function openContinuityCreate(kind) {
+  continuityCreateKind = kind;
+  continuityCreateText.value = "";
+  continuityCreateEyebrow.textContent = kind === "moment" ? "наш момент" : "открытая нить";
+  continuityCreateTitle.textContent = kind === "moment" ? "Что останется с нами?" : "К чему вернуться позже?";
+  continuitySurface.hidden = true;
+  continuityCreateSurface.hidden = false;
+  continuityCreateText.focus();
+}
+
+addSharedMoment.addEventListener("click", () => openContinuityCreate("moment"));
+addContinuityThread.addEventListener("click", () => openContinuityCreate("thread"));
+cancelContinuity.addEventListener("click", () => {
+  continuityCreateKind = null;
+  continuityCreateSurface.hidden = true;
+  continuitySurface.hidden = false;
+});
+submitContinuity.addEventListener("click", () => {
+  const text = continuityCreateText.value.trim();
+  if (!ready || inFlight || !text || !continuityCreateKind) return;
+  const message = continuityCreateKind === "moment"
+    ? `Маша, запомни как часть нашей истории, что ${text}`
+    : `Оставь это как открытую нить: ${text}`;
+  continuityCreateKind = null;
+  closeTemporarySurfaces();
+  surface.hidden = false;
+  surface.classList.remove("is-surface-concealed");
+  setComposerState({ enabled: true, waiting: true });
+  bridge.submitMessage(message);
+});
+
+confirmSkillInstall.addEventListener("click", () => {
+  if (!pendingSkillInstall) return;
+  bridge.resolveSkillInstall(pendingSkillInstall.proposal_id, "confirm");
+});
+
+rejectSkillInstall.addEventListener("click", () => {
+  if (!pendingSkillInstall) return;
+  bridge.resolveSkillInstall(pendingSkillInstall.proposal_id, "reject");
 });
 
 safetyTrigger.addEventListener("click", () => {
@@ -644,13 +1295,19 @@ rejectOperation.addEventListener("click", () => {
 });
 
 closeOperation.addEventListener("click", () => {
-  hideOperationSurface();
-  input.focus();
+  returnToConversation();
 });
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
-    closeTemporarySurfaces();
+    if (!recentPanel.hidden) {
+      recentPanel.hidden = true;
+      surface.classList.remove("is-shelf-open");
+      recentToggle.setAttribute("aria-expanded", "false");
+      input.focus();
+      return;
+    }
+    returnToConversation();
     return;
   }
   if (event.ctrlKey && event.key.toLowerCase() === "h") {
@@ -666,7 +1323,8 @@ document.addEventListener("keydown", (event) => {
     input.focus();
   }
 });
-window.addEventListener("blur", closeTemporarySurfaces);
+// A native file picker legitimately unfocuses the Home window.  Surfaces are
+// application state, not browser popovers, so focus loss must not discard them.
 
 input.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;

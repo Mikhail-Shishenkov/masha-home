@@ -67,10 +67,53 @@ _EXPLICIT_INTENT = re.compile(
     r"^\s*(?:маша\s*,?\s*)?запомни(?:\s+как\s+(?P<kind>факт|решение(?:\s+проекта)?|обязательство|эпизод))?\s*,?\s*(?:что\s+)?(?P<body>.+?)\s*$",
     re.IGNORECASE,
 )
-_CONFIRM = re.compile(r"^\s*(?:да|подтверждаю|сохраняй|сохрани)(?:\s+(?P<id>[0-9a-f-]{36}))?\s*$", re.IGNORECASE)
-_REJECT = re.compile(r"^\s*(?:нет|не надо|не запоминай|отмена)(?:\s+(?P<id>[0-9a-f-]{36}))?\s*$", re.IGNORECASE)
+_CONFIRM = re.compile(
+    r"^\s*(?:да|подтверждаю|сохраняй|сохрани|сохраняем)(?:\s+(?P<id>[0-9a-f-]{36}))?\s*$",
+    re.IGNORECASE,
+)
+_REJECT = re.compile(r"^\s*(?:нет|не надо|не сейчас|не сохраняй|не запоминай|отмена)(?:\s+(?P<id>[0-9a-f-]{36}))?\s*$", re.IGNORECASE)
 _MEMORY_PREFIX = re.compile(r"^\s*(?:маша\s*,?\s*)?запомни\b", re.IGNORECASE)
 _COMPLETE = re.compile(r"^\s*(?:маша\s*,?\s*)?отметь\s+(?P<body>.+?)\s+выполненным\s*$", re.IGNORECASE)
+_SHOW_MEMORY = re.compile(
+    r"^\s*(?:маша\s*,?\s*)?(?:что\s+ты\s+(?:обо\s+мне\s+)?помнишь|"
+    r"что\s+ты\s+знаешь(?:\s+про\s+(?P<query>.+?))?|покажи\s+(?:мою\s+)?память)\s*\??\s*$",
+    re.IGNORECASE,
+)
+_LIST_COMMITMENTS = re.compile(
+    r"^\s*(?:маша\s*,?\s*)?(?:какие\s+(?:у\s+(?:меня|нас)\s+)?(?:сейчас\s+)?(?:дела|задачи|обязательства)|"
+    r"что\s+(?:у\s+(?:меня|нас)\s+)?(?:сейчас\s+)?(?:по\s+)?(?:делам|задачам|обязательствам)|"
+    r"покажи\s+(?:мои\s+)?(?:дела|задачи|обязательства))\s*\??\s*$",
+    re.IGNORECASE,
+)
+_CREATE_COMMITMENT = re.compile(
+    r"^\s*(?:маша\s*,?\s*)?(?:добавь(?:\s+в\s+наши\s+дела)?\s+(?:мне\s+)?(?:дело|задачу)?|"
+    r"создай\s+(?:мне\s+)?(?:дело|задачу)|запиши\s+нам\s+дело|напомни\s+(?:мне\s+)?)\s*[:,]?\s*(?P<body>.+?)\s*$",
+    re.IGNORECASE,
+)
+_FORGET = re.compile(
+    r"^\s*(?:маша\s*,?\s*)?(?:забудь|удали\s+из\s+памяти|это\s+больше\s+не\s+актуально,?\s+забудь)\s+(?P<body>.+?)\s*$",
+    re.IGNORECASE,
+)
+_UPDATE = re.compile(
+    r"^\s*(?:маша\s*,?\s*)?(?:обнови|измени)\s+(?:в\s+памяти\s+)?(?P<old>.+?)\s+на\s+(?P<new>.+?)\s*$",
+    re.IGNORECASE,
+)
+_COMPLETE_IMPLICIT = re.compile(r"^\s*(?:маша\s*,?\s*)?(?:я\s+)?(?:это\s+)?(?:сделал|сделала|выполнил|выполнила)\s*\.?\s*$", re.IGNORECASE)
+
+
+class ChatCapabilityAction(str, Enum):
+    """Finite, local actions recognised before the LLM is ever called.
+
+    This is deliberately a parser result, not a tool interface: the model never
+    receives a service object, SQL handle, or arbitrary callable.
+    """
+
+    SHOW_MEMORY = "show_memory"
+    LIST_COMMITMENTS = "list_commitments"
+    CREATE_COMMITMENT = "create_commitment"
+    FORGET = "forget"
+    UPDATE = "update"
+    COMPLETE = "complete"
 
 
 class ProposalStatus(str, Enum):
@@ -181,6 +224,18 @@ class MemoryIntentHandler:
         conversation_id: str,
         project_id: str,
     ) -> MemoryIntentResult:
+        # These read/proposal commands are deliberately resolved locally.  They
+        # cannot be hallucinated as a model capability and never expose storage.
+        if show := _SHOW_MEMORY.match(message):
+            return self._show_memory(show.group("query"), project_id)
+        if _LIST_COMMITMENTS.match(message):
+            return self._list_commitments(project_id)
+        if create := _CREATE_COMMITMENT.match(message):
+            return self._propose_commitment(create.group("body"), conversation_id, project_id)
+        if forget := _FORGET.match(message):
+            return self._propose_forget(forget.group("body"), conversation_id)
+        if update := _UPDATE.match(message):
+            return self._propose_update(update.group("old"), update.group("new"), conversation_id)
         if shared := _SHARED_MEMORY.match(message):
             return self._propose_shared_memory(
                 shared,
@@ -193,6 +248,11 @@ class MemoryIntentHandler:
             return self._propose_resolve_thread(thread.group("body"), conversation_id)
         if complete := _COMPLETE.match(message):
             return self._propose_completion(complete.group("body"), conversation_id)
+        if _COMPLETE_IMPLICIT.match(message):
+            return MemoryIntentResult(
+                handled=True,
+                response="Какое именно дело отметить выполненным? Назови его, чтобы я ничего не закрыла по догадке.",
+            )
         match = _EXPLICIT_INTENT.match(message)
         if match:
             return self._propose(match, conversation_id=conversation_id, project_id=project_id)
@@ -206,6 +266,112 @@ class MemoryIntentHandler:
                 response="Что именно сохранить и как: факт, решение, обязательство или эпизод?",
             )
         return MemoryIntentResult(handled=False)
+
+    def _show_memory(self, query: str | None, project_id: str) -> MemoryIntentResult:
+        if self.memory_management is None:
+            return MemoryIntentResult(handled=True, response="Сейчас не могу прочитать локальную память.")
+        records = self.memory_management.list(project_id=project_id, query=query, include_hidden=False)
+        visible = [item for item in records if item.record_type in {"fact", "decision", "episode"}]
+        if not visible:
+            suffix = " по этому поводу" if query else ""
+            return MemoryIntentResult(handled=True, response=f"В подтверждённой памяти{suffix} ничего не нашла.")
+        lines = ["Вот что у меня подтверждённо есть в памяти:"]
+        for item in visible[:6]:
+            lines.append(f"— {self._memory_line(item)}")
+        if len(visible) > 6:
+            lines.append(f"И ещё {len(visible) - 6}. Могу сузить вопрос.")
+        return MemoryIntentResult(handled=True, response="\n".join(lines))
+
+    def _list_commitments(self, project_id: str) -> MemoryIntentResult:
+        if self.memory_management is None:
+            return MemoryIntentResult(handled=True, response="Список дел сейчас недоступен.")
+        records = [
+            item for item in self.memory_management.list(record_type="commitment", project_id=project_id, include_hidden=False)
+            if item.payload.get("status") == "open"
+        ]
+        if not records:
+            return MemoryIntentResult(handled=True, response="Сейчас не вижу открытых дел.")
+        lines = ["Сейчас открыто:"]
+        for item in records[:8]:
+            due_at = item.payload.get("due_at")
+            due = " без срока" if due_at is None else f" — срок {due_at}"
+            lines.append(f"— {item.payload['text']}{due}")
+        return MemoryIntentResult(handled=True, response="\n".join(lines))
+
+    def _propose_commitment(self, body: str, conversation_id: str, project_id: str) -> MemoryIntentResult:
+        body = body.strip().rstrip(".")
+        if not body:
+            return MemoryIntentResult(handled=True, response="Какое именно дело добавить?")
+        body = re.sub(r"^через\s+два\s+часа\b", "через 2 часа", body, flags=re.IGNORECASE)
+        body, due = self.temporal_engine.extract_due(body)
+        if due is not None and due.ambiguity is not None:
+            return MemoryIntentResult(handled=True, response="Срок получился неоднозначным. Скажи дату и время точнее — я не буду угадывать.")
+        record = self._make_record("commitment", body, project_id, due_at=None if due is None else due.resolved_utc)
+        proposal = self.proposal_store.create(MemoryProposal(
+            id=str(uuid4()), conversation_id=conversation_id, record_type="commitment",
+            record_payload=record.model_dump(mode="json"), created_at=self._now(), status=ProposalStatus.PENDING,
+        ))
+        return MemoryIntentResult(handled=True, response=self._proposal_text(proposal, record))
+
+    def _propose_forget(self, query: str, conversation_id: str) -> MemoryIntentResult:
+        if query.strip().casefold() in {"это", "память", "всё", "все"}:
+            return MemoryIntentResult(
+                handled=True,
+                response="Уточни, какую именно запись забыть. Я не буду прятать память целиком по одной фразе.",
+            )
+        return self._propose_mutation(query, conversation_id, MemoryMutationOperation.FORGET)
+
+    def _propose_update(self, old: str, new: str, conversation_id: str) -> MemoryIntentResult:
+        if self.memory_management is None:
+            return MemoryIntentResult(handled=True, response="Изменение памяти сейчас недоступно.")
+        matches = self._find_memories(old)
+        if len(matches) != 1:
+            return self._mutation_lookup_problem(matches, "обновить")
+        view = matches[0]
+        if view.record_type != "fact":
+            return MemoryIntentResult(handled=True, response="Сейчас через разговор я умею уточнять только факты. Для решения или эпизода скажи, что именно нужно изменить.")
+        payload = dict(view.payload)
+        payload["value"] = new.strip().rstrip(".")
+        proposal = self.memory_management.propose(self.proposal_store, operation=MemoryMutationOperation.EDIT,
+            record_id=view.record_id, conversation_id=conversation_id, replacement_payload=payload)
+        return MemoryIntentResult(handled=True, response=(
+            f"Обновить факт «{self._memory_line(view)}» на «{payload['subject']}: {payload['key']} — {payload['value']}»?\n"
+            f"Подтверди: да {proposal.id}"
+        ))
+
+    def _propose_mutation(self, query: str, conversation_id: str, operation: MemoryMutationOperation) -> MemoryIntentResult:
+        if self.memory_management is None:
+            return MemoryIntentResult(handled=True, response="Изменение памяти сейчас недоступно.")
+        matches = self._find_memories(query)
+        if len(matches) != 1:
+            return self._mutation_lookup_problem(matches, "забыть")
+        view = matches[0]
+        proposal = self.memory_management.propose(self.proposal_store, operation=operation,
+            record_id=view.record_id, conversation_id=conversation_id)
+        return MemoryIntentResult(handled=True, response=(
+            f"Скрыть из активной памяти: «{self._memory_line(view)}»? Это не удалит историю безвозвратно.\n"
+            f"Подтверди: да {proposal.id}"
+        ))
+
+    def _find_memories(self, query: str):
+        assert self.memory_management is not None
+        cleaned = query.strip().strip("«»\"'").rstrip(".")
+        return [item for item in self.memory_management.list(include_hidden=False) if cleaned.casefold() in self._memory_line(item).casefold()]
+
+    @staticmethod
+    def _mutation_lookup_problem(matches, verb: str) -> MemoryIntentResult:
+        if not matches:
+            return MemoryIntentResult(handled=True, response=f"Не нашла в подтверждённой памяти то, что нужно {verb}.")
+        return MemoryIntentResult(handled=True, response=f"Нашла несколько похожих записей. Уточни, какую именно нужно {verb}.")
+
+    @staticmethod
+    def _memory_line(view) -> str:
+        payload = view.payload
+        if view.record_type == "fact":
+            return f"{payload['subject']}: {payload['key']} — {payload['value']}"
+        if view.record_type == "decision":
+            return f"решение: {payload['decision']}"
+        return payload.get("summary") or payload.get("text") or view.record_id
 
     def _propose_shared_memory(
         self,
@@ -379,7 +545,13 @@ class MemoryIntentHandler:
                 self.memory_management.confirm_proposal(proposal, self.proposal_store)
             except Exception:
                 return MemoryIntentResult(handled=True, response=f"Не смогла применить предложение {proposal.id}. Оно осталось ожидающим подтверждения.")
-            return MemoryIntentResult(handled=True, response="Готово, обязательство отмечено выполненным.")
+            if proposal.operation == MemoryMutationOperation.FORGET.value:
+                return MemoryIntentResult(handled=True, response="Готово. Эта запись больше не используется как активная память.")
+            if proposal.operation == MemoryMutationOperation.EDIT.value:
+                if proposal.record_type == "commitment" and proposal.record_payload.get("status") == "completed":
+                    return MemoryIntentResult(handled=True, response="Готово, обязательство отмечено выполненным.")
+                return MemoryIntentResult(handled=True, response="Готово. Подтверждённая память обновлена.")
+            return MemoryIntentResult(handled=True, response="Готово. Изменение применено.")
         try:
             self.confirmed_memory.confirm(
                 ExplicitMemoryConfirmation(
