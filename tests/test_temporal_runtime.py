@@ -104,3 +104,28 @@ def test_bounded_candidate_contains_only_event_source_and_decision(tmp_path, can
     assert candidate.candidate_id == f"{event.event_id}:remind"
     assert set(candidate.model_dump()) == {"candidate_id", "event", "source_commitment_id", "source_commitment_text", "temporal_context", "decision", "generated_at"}
     assert candidate.source_commitment_id == "commitment_001"
+
+
+def test_extract_due_supports_clear_leading_and_terminal_expressions():
+    engine = TemporalEngine(FixedClock(NOW))
+
+    leading_text, leading_due = engine.extract_due("через 2 минуты проверить чайник")
+    trailing_text, trailing_due = engine.extract_due("поставить чайник через 2 минуты")
+    tomorrow_text, tomorrow_due = engine.extract_due("проверить окно завтра в 10:30")
+
+    assert leading_text == "проверить чайник"
+    assert trailing_text == "поставить чайник"
+    assert leading_due.resolved_utc == trailing_due.resolved_utc == NOW + timedelta(minutes=2)
+    assert tomorrow_text == "проверить окно"
+    assert tomorrow_due.resolved_local.hour == 10
+    assert tomorrow_due.resolved_local.minute == 30
+
+
+def test_extract_due_leaves_unsupported_terminal_language_untouched():
+    engine = TemporalEngine(FixedClock(NOW))
+    text = "проверить окно завтра утром"
+
+    body, due = engine.extract_due(text)
+
+    assert body == text
+    assert due is None

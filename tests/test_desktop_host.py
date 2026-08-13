@@ -51,6 +51,7 @@ def test_production_frontend_keeps_desktop_composition_and_accessibility_contrac
     assert "safety-trigger" in html
     assert "recent-conversations" in html
     assert "load-more-conversations" in html
+    assert "renderer/interaction-safety.js" in html
     assert "operation-surface" in html
     assert "commitments-trigger" in html
     assert "commitments-surface" in html
@@ -94,6 +95,7 @@ def test_production_frontend_keeps_desktop_composition_and_accessibility_contrac
     assert "overflow-y: auto" in css
     assert "scrollbar-width: thin" in css
     assert "overscroll-behavior: contain" in css
+    assert ".recent-conversations" in css and "overflow-y: auto" in css
     assert 'event.key !== "Enter" || event.shiftKey || event.isComposing' in FRONTEND_ROOT.joinpath(
         "renderer", "app.js"
     ).read_text(encoding="utf-8")
@@ -103,6 +105,10 @@ def test_production_frontend_keeps_desktop_composition_and_accessibility_contrac
     assert 'window.addEventListener("blur", closeTemporarySurfaces)' not in app_source
     assert "bridge.loadWorkbench()" in app_source
     assert "bridge.loadMoreConversations(offset)" in app_source
+    assert "loadMoreConversations.hidden = !page?.has_more" in app_source
+    assert "interactionSafety.preserveComposer" in app_source
+    assert "interactionSafety.isBackgroundProactiveProjection" in app_source
+    assert app_source.count('input.value = "";') == 1
     assert "bridge.loadMoreCommitments(offset)" in app_source
     assert "bridge.useModelProfile(profile.profile_id)" in app_source
     assert "transitionToSurface" in app_source
@@ -1013,7 +1019,7 @@ def test_conversation_pagination_resets_after_new_conversation_lifecycle(tmp_pat
     )
     original = [
         application.send_message(f"Старый разговор {index}", project_id="project_masha_home")
-        for index in range(12)
+        for index in range(25)
     ]
     bridge = LocalConversationBridge(application)
     emitted: list[dict] = []
@@ -1021,7 +1027,13 @@ def test_conversation_pagination_resets_after_new_conversation_lifecycle(tmp_pat
     bridge.loadInitialState()
     bridge.loadRecentConversations()
     first = [item for item in emitted if item["kind"] == "recent_conversations"][-1]["recent"]
+    assert first["total"] == 25
+    assert first["has_more"] is True
+    assert first["next_offset"] == 10
     bridge.loadMoreConversations(first["next_offset"])
+    second = [item for item in emitted if item["kind"] == "recent_conversations"][-1]["recent"]
+    assert second["offset"] == 10
+    assert second["next_offset"] == 20
 
     bridge.startNewConversation()
     bridge.submitMessage("Первый ответ в новом разговоре")
@@ -1037,11 +1049,17 @@ def test_conversation_pagination_resets_after_new_conversation_lifecycle(tmp_pat
     reset = [item for item in emitted if item["kind"] == "recent_conversations"][-1]["recent"]
     assert reset["offset"] == 0
     assert reset["items"][0]["conversation_id"] == new_conversation_id
+    assert reset["total"] == 26
     assert reset["next_offset"] == 10
-    bridge.loadMoreConversations(reset["next_offset"])
-    tail = [item for item in emitted if item["kind"] == "recent_conversations"][-1]["recent"]
-    all_ids = [item["conversation_id"] for item in reset["items"] + tail["items"]]
-    assert len(all_ids) == len(set(all_ids)) == 13
+    pages = [reset]
+    while pages[-1]["has_more"]:
+        bridge.loadMoreConversations(pages[-1]["next_offset"])
+        pages.append([item for item in emitted if item["kind"] == "recent_conversations"][-1]["recent"])
+    all_items = [item for page in pages for item in page["items"]]
+    all_ids = [item["conversation_id"] for item in all_items]
+    assert [page["offset"] for page in pages] == [0, 10, 20]
+    assert pages[-1]["next_offset"] is None
+    assert len(all_ids) == len(set(all_ids)) == 26
     assert {item.conversation_id for item in original}.issubset(all_ids)
 
     old_conversation_id = original[0].conversation_id
@@ -1050,8 +1068,19 @@ def test_conversation_pagination_resets_after_new_conversation_lifecycle(tmp_pat
     assert opened["conversation"]["conversation_id"] == old_conversation_id
     bridge.loadRecentConversations()
     reopened = [item for item in emitted if item["kind"] == "recent_conversations"][-1]["recent"]
-    bridge.loadMoreConversations(reopened["next_offset"])
-    assert [item for item in emitted if item["kind"] == "recent_conversations"][-1]["recent"]["offset"] == 10
+    reopened_pages = [reopened]
+    while reopened_pages[-1]["has_more"]:
+        bridge.loadMoreConversations(reopened_pages[-1]["next_offset"])
+        reopened_pages.append(
+            [item for item in emitted if item["kind"] == "recent_conversations"][-1]["recent"]
+        )
+    reopened_ids = [
+        item["conversation_id"] for page in reopened_pages for item in page["items"]
+    ]
+    assert len(reopened_ids) == len(set(reopened_ids)) == 26
+    assert old_conversation_id in reopened_ids
+    assert len(opened["conversation"]["messages"]) == 2
+    assert reopened["revision"] > reset["revision"]
     bridge.close()
 
 

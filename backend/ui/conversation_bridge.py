@@ -28,6 +28,7 @@ class LocalConversationBridge(QObject):
         self._session = None
         self._session_lock = Lock()
         self._conversation_id: str | None = None
+        self._conversation_page_revision = 0
         self._turn_in_flight = False
         self._proactive_refresh_in_flight = False
         self._visible_proactive_ids: set[str] = set()
@@ -82,7 +83,7 @@ class LocalConversationBridge(QObject):
         self._emit(
             {
                 "kind": "recent_conversations",
-                "recent": self._conversation_page_payload(0),
+                "recent": self._reset_conversation_page_payload(),
                 "active_conversation_id": self._conversation_id,
                 "append": False,
             }
@@ -547,7 +548,7 @@ class LocalConversationBridge(QObject):
                 "kind": "conversation_opened",
                 "snapshot": snapshot.model_dump(mode="json"),
                 "conversation": conversation.model_dump(mode="json"),
-                "recent": self._conversation_page_payload(0),
+                "recent": self._reset_conversation_page_payload(),
                 "pending_confirmation": None if pending is None else pending.model_dump(mode="json"),
             }
         )
@@ -857,6 +858,10 @@ class LocalConversationBridge(QObject):
         return self._session.active_model_display_name
 
     def _recent_payload(self) -> dict:
+        return self._reset_conversation_page_payload()
+
+    def _reset_conversation_page_payload(self) -> dict:
+        self._conversation_page_revision += 1
         return self._conversation_page_payload(0)
 
     def _conversation_page_payload(self, offset: int) -> dict:
@@ -864,11 +869,14 @@ class LocalConversationBridge(QObject):
             return {
                 "items": [], "offset": 0, "page_size": OBJECT_PAGE_SIZE,
                 "total": 0, "has_more": False, "next_offset": None, "query": None,
+                "revision": self._conversation_page_revision,
             }
-        return self._application.conversation_page(
+        payload = self._application.conversation_page(
             offset=max(0, offset),
             limit=OBJECT_PAGE_SIZE,
         ).model_dump(mode="json")
+        payload["revision"] = self._conversation_page_revision
+        return payload
 
     def _continuity_count(self) -> int:
         if self._application is None:

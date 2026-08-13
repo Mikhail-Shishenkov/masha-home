@@ -115,11 +115,27 @@ class TemporalEngine:
         return self._parsed(text, value, method, precision)
 
     def extract_due(self, text: str) -> tuple[str, DueDateParseResult | None]:
-        """Extract only a leading unambiguous deadline from an explicit statement."""
-        match = re.match(r"^\s*(?:до\s+)?(?P<due>(?:сегодня|завтра|послезавтра|вчера)(?:\s+в\s+\d{1,2}:\d{2})?|через\s+\d+\s+(?:дн(?:я|ей)?|час(?:а|ов)?|минут(?:у|ы)?)|через\s+неделю)\s+(?:нужно\s+)?(?P<body>.+)$", text, re.IGNORECASE)
-        if not match:
-            return text, None
-        return match.group("body").strip(), self.parse_due(match.group("due"))
+        """Extract one clear leading or terminal deadline from an explicit statement."""
+        due = (
+            r"(?:сегодня|завтра|послезавтра|вчера)(?:\s+в\s+\d{1,2}:\d{2})?"
+            r"|через\s+\d+\s+(?:дн(?:я|ей)?|час(?:а|ов)?|минут(?:у|ы)?)"
+            r"|через\s+неделю"
+        )
+        leading = re.match(
+            rf"^\s*(?:до\s+)?(?P<due>{due})\s+(?:нужно\s+)?(?P<body>.+)$",
+            text,
+            re.IGNORECASE,
+        )
+        if leading:
+            return leading.group("body").strip(), self.parse_due(leading.group("due"))
+        trailing = re.match(
+            rf"^\s*(?P<body>.+?)\s+(?P<due>{due})\s*$",
+            text,
+            re.IGNORECASE,
+        )
+        if trailing:
+            return trailing.group("body").strip(), self.parse_due(trailing.group("due"))
+        return text, None
 
     @staticmethod
     def _parsed(source: str, local: datetime, method: str, precision: str) -> DueDateParseResult:

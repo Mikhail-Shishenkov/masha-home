@@ -16,8 +16,10 @@ from backend.memory.sqlite_repository import MemorySqliteRepository
 from backend.memory.working_memory import WorkingMemory
 from backend.memory.shared_continuity import SharedContinuityService
 from backend.temporal.temporal_engine import FixedClock, TemporalEngine
+from backend.temporal.proactive import ProactiveDecisionEngine, ProactivePolicy
+from backend.temporal.temporal_models import ProactiveDecision
 from backend.temporal.temporal_runtime import TemporalRuntime
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -318,3 +320,42 @@ def test_natural_minute_reminder_uses_temporal_engine_and_existing_commitment_co
         TemporalEngine(FixedClock(datetime(2026, 8, 12, 10, 3, tzinfo=timezone.utc))),
     ).recover()
     assert recovered.events[0].source_commitment_id == commitment.id
+
+
+def test_terminal_minute_reminder_flows_from_confirmation_to_due_event(tmp_path, memory_path):
+    service, store = _service(tmp_path, memory_path)
+    now = datetime(2026, 8, 12, 10, 0, tzinfo=timezone.utc)
+    engine = TemporalEngine(FixedClock(now))
+    service.temporal_engine = engine
+    service.memory_intent_handler.temporal_engine = engine
+
+    conversation_id, preview = _send(
+        service,
+        "Маша, напомни, чтобы я поставил чайник через 2 минуты",
+    )
+    assert "чтобы я поставил чайник" in preview
+    assert "через 2 минуты" not in preview
+    _send(service, "да", conversation_id)
+
+    commitment = next(
+        item for item in store.read_document().commitments
+        if "поставил чайник" in item.text
+    )
+    assert commitment.text == "чтобы я поставил чайник"
+    assert commitment.due_at == now + timedelta(minutes=2)
+    recovered = TemporalRuntime(
+        store,
+        TemporalEngine(FixedClock(now + timedelta(minutes=3))),
+    ).recover()
+    event = next(event for event in recovered.events if event.source_commitment_id == commitment.id)
+    decision = ProactiveDecisionEngine().decide(
+        event,
+        ProactivePolicy(
+            enabled=True,
+            proactive_level=1,
+            allow_commitment_reminders=True,
+            maximum_reminders=1,
+        ),
+        now=now + timedelta(minutes=3),
+    )
+    assert decision is ProactiveDecision.REMIND

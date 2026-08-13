@@ -1143,6 +1143,97 @@ def test_natural_resolve_routes_to_existing_thread_and_ambiguous_match_stays_ope
     ]
 
 
+def test_infinitive_continuity_resolve_keeps_typed_clarification_context(tmp_path):
+    _, provider, application = _application(tmp_path)
+    for summary in ("мяу и вечерний корм", "мяу и поездка к врачу"):
+        proposed = application.send_message(
+            f"Оставь это как открытую нить: {summary}", project_id=PROJECT_ID
+        )
+        application.resolve_confirmation(
+            conversation_id=proposed.conversation_id,
+            proposal_id=proposed.pending_confirmation.proposal_id,
+            decision="confirm",
+            project_id=PROJECT_ID,
+        )
+
+    ambiguous = application.send_message("Маша, удалить нить мяу", project_id=PROJECT_ID)
+    assert ambiguous.pending_confirmation is None
+    assert "несколько похожих нитей" in ambiguous.assistant_message.content
+    assert provider.last_request is None
+
+    still_ambiguous = application.send_message(
+        "мяу",
+        project_id=PROJECT_ID,
+        conversation_id=ambiguous.conversation_id,
+    )
+    assert still_ambiguous.pending_confirmation is None
+    assert "несколько похожих нитей" in still_ambiguous.assistant_message.content
+
+    refined = application.send_message(
+        "та, где про вечер",
+        project_id=PROJECT_ID,
+        conversation_id=still_ambiguous.conversation_id,
+    )
+    assert refined.pending_confirmation is not None
+    assert refined.pending_confirmation.subject == "мяу и вечерний корм"
+    assert provider.last_request is None
+    assert len(application.shared_continuity().open_threads) == 2
+
+    application.resolve_confirmation(
+        conversation_id=refined.conversation_id,
+        proposal_id=refined.pending_confirmation.proposal_id,
+        decision="confirm",
+        project_id=PROJECT_ID,
+    )
+    assert [item.summary for item in application.shared_continuity().open_threads] == [
+        "мяу и поездка к врачу"
+    ]
+
+
+def test_unrelated_explicit_action_clears_continuity_clarification(tmp_path):
+    _, provider, application = _application(tmp_path)
+    conversation_id = None
+    for summary in ("мяу вечером", "мяу утром"):
+        proposed = application.send_message(
+            f"Оставь это как открытую нить: {summary}",
+            project_id=PROJECT_ID,
+            conversation_id=conversation_id,
+        )
+        conversation_id = proposed.conversation_id
+        application.resolve_confirmation(
+            conversation_id=conversation_id,
+            proposal_id=proposed.pending_confirmation.proposal_id,
+            decision="confirm",
+            project_id=PROJECT_ID,
+        )
+
+    ambiguous = application.send_message(
+        "удалить нить мяу",
+        project_id=PROJECT_ID,
+        conversation_id=conversation_id,
+    )
+    assert "несколько похожих нитей" in ambiguous.assistant_message.content
+
+    commitment = application.send_message(
+        "Добавь дело купить чай",
+        project_id=PROJECT_ID,
+        conversation_id=conversation_id,
+    )
+    application.resolve_confirmation(
+        conversation_id=conversation_id,
+        proposal_id=commitment.pending_confirmation.proposal_id,
+        decision="reject",
+        project_id=PROJECT_ID,
+    )
+    ordinary = application.send_message(
+        "вечером",
+        project_id=PROJECT_ID,
+        conversation_id=conversation_id,
+    )
+    assert ordinary.pending_confirmation is None
+    assert ordinary.assistant_message.content == provider.response_text
+
+
 def test_resumed_continuity_context_keeps_deictic_follow_up_on_original_thread(tmp_path):
     _, _, application = _application(
         tmp_path, LocalProfileProvider(response_text="Давай спокойно продолжим эту тему.")

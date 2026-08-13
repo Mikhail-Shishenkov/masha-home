@@ -3,6 +3,7 @@
 // UI-05D talks only to the closed `mashaHome` WebChannel object. It has no
 // browser network access and no references to Python/domain services.
 document.documentElement.dataset.renderer = "local-shell";
+const interactionSafety = window.MashaInteractionSafety;
 
 const surface = document.getElementById("conversation-surface");
 const transcript = document.getElementById("transcript");
@@ -91,7 +92,7 @@ let provisionalUser = null;
 let activeSceneId = "scene.home.idle";
 let activeSceneLayer = 0;
 let activeConversationId = null;
-let recentPageState = { nextOffset: null, ids: new Set() };
+let recentPageState = { revision: -1, nextOffset: null, ids: new Set() };
 let sceneTransitionRevision = 0;
 let sceneTransitionTimer = null;
 let sceneSettleTimer = null;
@@ -714,15 +715,13 @@ function formatRecentTime(value) {
 
 function renderRecent(page, activeId = activeConversationId, { append = false } = {}) {
   const items = page?.items || [];
+  const revision = Number(page?.revision ?? -1);
+  if (!interactionSafety.acceptConversationPage(recentPageState, page, append)) return;
   if (!append) {
     recentList.replaceChildren();
     // A fresh Home/conversation snapshot is authoritative.  It invalidates
     // offsets from a previous shelf lifecycle before any later load-more.
-    recentPageState = { nextOffset: page?.next_offset ?? null, ids: new Set() };
-  } else if (page?.offset !== recentPageState.nextOffset) {
-    // Ignore a delayed stale page: offset pagination cannot safely merge it
-    // after a new snapshot has reordered the conversations.
-    return;
+    recentPageState = { revision, nextOffset: page?.next_offset ?? null, ids: new Set() };
   }
   surface.classList.toggle("has-conversations", Boolean(page?.total || items.length));
   if (!items.length && !append) {
@@ -901,6 +900,13 @@ function handleBridgeEvent(encoded) {
     return;
   }
   if (payload.kind === "proactive_interactions_loaded") {
+    if (interactionSafety.isBackgroundProactiveProjection(payload)) {
+      interactionSafety.preserveComposer(input, document, () => {
+        renderProactiveInteractions(payload.interactions);
+        proactiveTrigger.hidden = !(payload.interactions?.items?.length > 0);
+      });
+      return;
+    }
     applySnapshot(payload.snapshot);
     renderProactiveInteractions(payload.interactions);
     proactiveTrigger.hidden = !(payload.interactions?.items?.length > 0);
@@ -987,7 +993,9 @@ function handleBridgeEvent(encoded) {
     return;
   }
   if (payload.kind === "recent_conversations") {
-    renderRecent(payload.recent, payload.active_conversation_id, { append: Boolean(payload.append) });
+    interactionSafety.preserveComposer(input, document, () => {
+      renderRecent(payload.recent, payload.active_conversation_id, { append: Boolean(payload.append) });
+    });
     return;
   }
   if (payload.kind === "home_attention") {

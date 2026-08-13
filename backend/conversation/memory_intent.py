@@ -61,7 +61,8 @@ _OPEN_THREAD = re.compile(
     re.IGNORECASE,
 )
 _RESOLVE_THREAD = re.compile(
-    r"^\s*(?:маша\s*,?\s*)?(?:закрой|заверши|удали|убери)\s+(?:открытую\s+)?(?:нить|тему)"
+    r"^\s*(?:маша\s*,?\s*)?(?:закрой|закрыть|заверши|завершить|удали|удалить|убери|убрать)\s+"
+    r"(?:открытую\s+)?(?:нить|тему)"
     r"(?:\s+(?:про|о))?\s*[:,]?\s*"
     r"(?P<body>.+?)\s*$",
     re.IGNORECASE,
@@ -253,6 +254,16 @@ class MemoryIntentResult(BaseModel):
     response: str | None = None
 
 
+class ContinuityResolveClarification(BaseModel):
+    """Application-session context for one ambiguous human reference."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    conversation_id: str = Field(min_length=1)
+    candidate_thread_ids: tuple[str, ...] = Field(min_length=2)
+    original_query: str = Field(min_length=1)
+
+
 class MemoryIntentHandler:
     """Creates/cancels/confirms proposals; only ConfirmedMemoryService writes memory."""
 
@@ -272,6 +283,7 @@ class MemoryIntentHandler:
         self.memory_management = memory_management
         self.shared_continuity = shared_continuity
         self.capability_router = capability_router or NaturalLanguageCapabilityRouter()
+        self._continuity_clarifications: dict[str, ContinuityResolveClarification] = {}
 
     def handle(
         self,
@@ -284,10 +296,42 @@ class MemoryIntentHandler:
         # A plain human confirmation always resolves the single user-facing
         # slot. IDs remain an internal bridge compatibility detail.
         if confirm := _CONFIRM.match(message):
+            clarification = self._continuity_clarifications.get(conversation_id)
+            if (
+                clarification is not None
+                and confirm.group("id") is None
+                and self.proposal_store.current_for_conversation(conversation_id) is None
+            ):
+                return MemoryIntentResult(
+                    handled=True,
+                    response="Сначала уточни, какую именно нить закрыть — пока ничего не меняю.",
+                )
+            self._continuity_clarifications.pop(conversation_id, None)
             return self._confirm(confirm.group("id"), conversation_id)
         if reject := _REJECT.match(message):
+            clarification = self._continuity_clarifications.get(conversation_id)
+            if (
+                clarification is not None
+                and reject.group("id") is None
+                and self.proposal_store.current_for_conversation(conversation_id) is None
+            ):
+                self._continuity_clarifications.pop(conversation_id, None)
+                return MemoryIntentResult(
+                    handled=True,
+                    response="Хорошо, ничего не закрываю.",
+                )
+            self._continuity_clarifications.pop(conversation_id, None)
             return self._cancel(reject.group("id"), conversation_id)
         pending = self.proposal_store.current_for_conversation(conversation_id) is not None
+
+        clarification = self._continuity_clarifications.get(conversation_id)
+        if clarification is not None:
+            parsed_clarification = self.capability_router.route(message)
+            if parsed_clarification is None:
+                return self._refine_continuity_resolution(message, clarification)
+            # A new explicit action replaces the abandoned clarification.  A
+            # repeated resolve command starts a fresh candidate set below.
+            self._continuity_clarifications.pop(conversation_id, None)
 
         # A resumed thread is a real conversational context, not a one-turn
         # prompt trick.  Deictic follow-ups refer to that existing thread and
@@ -569,7 +613,10 @@ class MemoryIntentHandler:
 
     @staticmethod
     def _tokens(value: str) -> set[str]:
-        stop = {"я", "мне", "мой", "моя", "мои", "что", "это", "то", "у", "про", "как", "люблю"}
+        stop = {
+            "я", "мне", "мой", "моя", "мои", "что", "это", "то", "у", "про",
+            "как", "люблю", "та", "тот", "где", "которая", "который", "нить", "тема",
+        }
         return {
             MemoryIntentHandler._stem(token)
             for token in normalize_utterance(value).split()
@@ -627,10 +674,26 @@ class MemoryIntentHandler:
         query_tokens = cls._tokens(query)
         scored = []
         for row in rows:
-            score = len(query_tokens & cls._tokens(text_getter(row))) / max(1, len(query_tokens))
+            candidate_tokens = cls._tokens(text_getter(row))
+            overlap = len(query_tokens & candidate_tokens) / max(1, len(query_tokens))
+            fuzzy = (
+                sum(
+                    max(
+                        (SequenceMatcher(None, left, right).ratio() for right in candidate_tokens),
+                        default=0.0,
+                    )
+                    for left in query_tokens
+                )
+                / max(1, len(query_tokens))
+            )
+            score = max(overlap, fuzzy * 0.92)
             if score >= 0.5:
                 scored.append((score, row))
-        return [row for _, row in sorted(scored, key=lambda pair: pair[0], reverse=True)]
+        if not scored:
+            return []
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        best = scored[0][0]
+        return [row for score, row in scored if score >= max(0.5, best - 0.12)]
 
     @staticmethod
     def _mutation_lookup_problem(matches, verb: str) -> MemoryIntentResult:
@@ -731,25 +794,88 @@ class MemoryIntentHandler:
     ) -> MemoryIntentResult:
         if self.shared_continuity is None:
             return MemoryIntentResult(handled=True, response="Общие нити сейчас недоступны.")
+        matches = self._continuity_matches(body)
+        if not matches:
+            self._continuity_clarifications.pop(conversation_id, None)
+            return MemoryIntentResult(handled=True, response="Не нашла такую открытую нить.")
+        if len(matches) > 1:
+            self._continuity_clarifications[conversation_id] = ContinuityResolveClarification(
+                conversation_id=conversation_id,
+                candidate_thread_ids=tuple(item.id for item in matches),
+                original_query=body.strip(),
+            )
+            return self._continuity_clarification_response(matches)
+        selected = matches[0]
         try:
             proposal = self.shared_continuity.propose_resolve_thread(
                 self.proposal_store,
-                query=body,
+                query=selected.id,
                 conversation_id=conversation_id,
             )
-        except LookupError:
+        except (LookupError, ValueError):
+            self._continuity_clarifications.pop(conversation_id, None)
             return MemoryIntentResult(handled=True, response="Не нашла такую открытую нить.")
-        except ValueError:
-            return MemoryIntentResult(
-                handled=True,
-                response="Нашла несколько похожих нитей. Уточни формулировку.",
-            )
+        self._continuity_clarifications.pop(conversation_id, None)
         return MemoryIntentResult(
             handled=True,
             response=(
                 "Закрыть эту общую нить?\n"
-                f"«{(display_text or body).strip()}»\n"
+                f"«{(display_text or selected.summary).strip()}»\n"
                 "Подтверди обычным «да» или выбери «не сейчас»."
+            ),
+        )
+
+    def _refine_continuity_resolution(
+        self,
+        query: str,
+        clarification: ContinuityResolveClarification,
+    ) -> MemoryIntentResult:
+        matches = self._continuity_matches(
+            query,
+            candidate_ids=set(clarification.candidate_thread_ids),
+        )
+        if not matches:
+            self._continuity_clarifications.pop(clarification.conversation_id, None)
+            return MemoryIntentResult(handled=True, response="Не нашла среди этих нитей такую тему.")
+        if len(matches) > 1:
+            self._continuity_clarifications[clarification.conversation_id] = clarification.model_copy(
+                update={"candidate_thread_ids": tuple(item.id for item in matches)}
+            )
+            return self._continuity_clarification_response(matches)
+        return self._propose_resolve_thread(
+            matches[0].id,
+            clarification.conversation_id,
+            display_text=matches[0].summary,
+        )
+
+    def _continuity_matches(self, query: str, *, candidate_ids: set[str] | None = None):
+        if self.shared_continuity is None:
+            return []
+        rows = [
+            row
+            for row in self.shared_continuity.open_follow_ups()
+            if candidate_ids is None or row[1].id in candidate_ids
+        ]
+        exact_id = [row[1] for row in rows if row[1].id == query.strip()]
+        if exact_id:
+            return exact_id
+        return [
+            row[1]
+            for row in self._rank_text_rows(
+                rows,
+                query,
+                lambda row: f"{row[1].topic} {row[1].summary}",
+            )
+        ]
+
+    @staticmethod
+    def _continuity_clarification_response(matches) -> MemoryIntentResult:
+        descriptions = "\n".join(f"— {item.summary}" for item in matches[:5])
+        return MemoryIntentResult(
+            handled=True,
+            response=(
+                "Нашла несколько похожих нитей. Уточни, какую закрыть:\n"
+                f"{descriptions}"
             ),
         )
 
