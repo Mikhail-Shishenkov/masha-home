@@ -140,6 +140,35 @@ def test_ordinary_llm_turn_cannot_claim_unreceipted_mutation(tmp_path):
     assert application.conversation(result.conversation_id).messages[-1].content == result.assistant_message.content
 
 
+@pytest.mark.parametrize(
+    "claim",
+    (
+        "Эту нить удаляю.",
+        "Сейчас сохраню это как дело.",
+        "Закрываю задачу.",
+        "Я это уже изменила.",
+    ),
+)
+def test_ordinary_llm_turn_blocks_present_and_near_future_mutation_claims(tmp_path, claim):
+    _, _, application = _application(tmp_path, LocalProfileProvider(response_text=claim))
+
+    result = application.send_message("Расскажи, что ты думаешь", project_id=PROJECT_ID)
+
+    assert result.assistant_message is not None
+    assert "в этом сообщении Дом ничего не менял" in result.assistant_message.content
+
+
+def test_response_contract_allows_discussion_and_receipted_success():
+    from backend.conversation.response_contract import render_model_response
+
+    discussion = "Я думаю, стоит удалить эту тему, если ты этого захочешь."
+    execution = "Сейчас сохраню это как дело."
+
+    assert render_model_response(discussion) == discussion
+    assert render_model_response(execution) != execution
+    assert render_model_response(execution, application_receipts=("receipt",)) == execution
+
+
 def test_ambiguous_follow_up_neither_creates_nor_claims_commitment(tmp_path):
     _, provider, application = _application(tmp_path)
     before = application._conversation._conversation.memory_retriever.memory_store.read_document()
@@ -1074,6 +1103,101 @@ def test_open_continuity_threads_are_newest_first_and_restart_safe(tmp_path):
     ]
     restarted = build_masha_application(project_root=root, router=ModelRouter([provider]))
     assert restarted.shared_continuity().open_threads == application.shared_continuity().open_threads
+
+
+def test_natural_resolve_routes_to_existing_thread_and_ambiguous_match_stays_open(tmp_path):
+    _, _, application = _application(tmp_path)
+    created = []
+    for summary in ("мяу и вечерний корм", "мяу и поездка к врачу"):
+        proposed = application.send_message(
+            f"Оставь это как открытую нить: {summary}", project_id=PROJECT_ID
+        )
+        application.resolve_confirmation(
+            conversation_id=proposed.conversation_id,
+            proposal_id=proposed.pending_confirmation.proposal_id,
+            decision="confirm",
+            project_id=PROJECT_ID,
+        )
+        created.append(summary)
+
+    ambiguous = application.send_message("удали нить про мяу", project_id=PROJECT_ID)
+    assert ambiguous.pending_confirmation is None
+    assert "несколько похожих нитей" in ambiguous.assistant_message.content
+    assert [item.summary for item in application.shared_continuity().open_threads] == list(reversed(created))
+
+    unknown = application.send_message("убери нить про несуществующий маяк", project_id=PROJECT_ID)
+    assert unknown.pending_confirmation is None
+    assert "Не нашла такую открытую нить" in unknown.assistant_message.content
+
+    exact = application.send_message("заверши нить про вечерний корм", project_id=PROJECT_ID)
+    assert exact.pending_confirmation is not None
+    assert exact.pending_confirmation.subject == "мяу и вечерний корм"
+    application.resolve_confirmation(
+        conversation_id=exact.conversation_id,
+        proposal_id=exact.pending_confirmation.proposal_id,
+        decision="confirm",
+        project_id=PROJECT_ID,
+    )
+    assert [item.summary for item in application.shared_continuity().open_threads] == [
+        "мяу и поездка к врачу"
+    ]
+
+
+def test_resumed_continuity_context_keeps_deictic_follow_up_on_original_thread(tmp_path):
+    _, _, application = _application(
+        tmp_path, LocalProfileProvider(response_text="Давай спокойно продолжим эту тему.")
+    )
+    proposed = application.send_message(
+        "Оставь это как открытую нить: какую модель использовать для длинных разговоров",
+        project_id=PROJECT_ID,
+    )
+    application.resolve_confirmation(
+        conversation_id=proposed.conversation_id,
+        proposal_id=proposed.pending_confirmation.proposal_id,
+        decision="confirm",
+        project_id=PROJECT_ID,
+    )
+    original = application.shared_continuity().open_threads[0]
+
+    resumed = application.continue_continuity_thread(
+        original.thread_id,
+        conversation_id=None,
+        project_id=PROJECT_ID,
+    )
+    kept_open = application.send_message(
+        "Да, эту тему пока оставляем открытой",
+        project_id=PROJECT_ID,
+        conversation_id=resumed.conversation_id,
+    )
+
+    assert kept_open.pending_confirmation is None
+    assert "оставляем эту тему открытой" in kept_open.assistant_message.content
+    assert application.shared_continuity().open_threads == (original,)
+
+    resolve = application.send_message(
+        "С этой темой закончили",
+        project_id=PROJECT_ID,
+        conversation_id=resumed.conversation_id,
+    )
+    assert resolve.pending_confirmation is not None
+    assert resolve.pending_confirmation.subject == original.summary
+    application.resolve_confirmation(
+        conversation_id=resolve.conversation_id,
+        proposal_id=resolve.pending_confirmation.proposal_id,
+        decision="confirm",
+        project_id=PROJECT_ID,
+    )
+    assert application.shared_continuity().open_threads == ()
+
+
+def test_generic_continuity_reference_cannot_become_stored_follow_up(tmp_path):
+    _, _, application = _application(tmp_path)
+
+    result = application.send_message("Оставь эту тему", project_id=PROJECT_ID)
+
+    assert result.pending_confirmation is None
+    assert "Какую именно тему" in result.assistant_message.content
+    assert application.shared_continuity().open_threads == ()
 
 
 def test_human_catalogs_do_not_replace_machine_codes():

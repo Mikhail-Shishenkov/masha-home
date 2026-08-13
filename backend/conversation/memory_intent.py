@@ -61,10 +61,21 @@ _OPEN_THREAD = re.compile(
     re.IGNORECASE,
 )
 _RESOLVE_THREAD = re.compile(
-    r"^\s*(?:маша\s*,?\s*)?(?:закрой|заверши)\s+(?:открытую\s+)?нить\s*[:,]?\s*"
+    r"^\s*(?:маша\s*,?\s*)?(?:закрой|заверши|удали|убери)\s+(?:открытую\s+)?(?:нить|тему)"
+    r"(?:\s+(?:про|о))?\s*[:,]?\s*"
     r"(?P<body>.+?)\s*$",
     re.IGNORECASE,
 )
+_ACTIVE_CONTINUITY_KEEP_OPEN = re.compile(
+    r"^(?:да\s*,?\s*)?(?:эту\s+)?(?:тему|нить|ее|её)\s+"
+    r"(?:пока\s+)?(?:остав(?:им|ля(?:ем|ю))\s+открыт(?:ой|ую)|не\s+закрыва(?:ем|ю))$|"
+    r"^вернемся\s+потом$",
+    re.IGNORECASE,
+)
+_GENERIC_CONTINUITY_TEXT = {
+    "это", "эта", "эту", "ее", "её", "тема", "тему", "нить", "нитку",
+    "этот вопрос", "эту тему", "эту нить",
+}
 _EXPLICIT_INTENT = re.compile(
     r"^\s*(?:маша\s*,?\s*)?запомни(?:\s+как\s+(?P<kind>факт|решение(?:\s+проекта)?|обязательство|эпизод))?\s*,?\s*(?:что\s+)?(?P<body>.+?)\s*$",
     re.IGNORECASE,
@@ -268,6 +279,7 @@ class MemoryIntentHandler:
         *,
         conversation_id: str,
         project_id: str,
+        active_continuity_thread_id: str | None = None,
     ) -> MemoryIntentResult:
         # A plain human confirmation always resolves the single user-facing
         # slot. IDs remain an internal bridge compatibility detail.
@@ -276,6 +288,20 @@ class MemoryIntentHandler:
         if reject := _REJECT.match(message):
             return self._cancel(reject.group("id"), conversation_id)
         pending = self.proposal_store.current_for_conversation(conversation_id) is not None
+
+        # A resumed thread is a real conversational context, not a one-turn
+        # prompt trick.  Deictic follow-ups refer to that existing thread and
+        # must never become a new generic continuity record.
+        if (
+            active_continuity_thread_id is not None
+            and _ACTIVE_CONTINUITY_KEEP_OPEN.match(normalize_utterance(message))
+        ):
+            summary = self._active_thread_summary(active_continuity_thread_id)
+            if summary is not None:
+                return MemoryIntentResult(
+                    handled=True,
+                    response="Хорошо, оставляем эту тему открытой — вернёмся к ней позже.",
+                )
 
         # These read/proposal commands are deliberately resolved locally.  They
         # cannot be hallucinated as a model capability and never expose storage.
@@ -348,9 +374,15 @@ class MemoryIntentHandler:
                 CapabilityIntent.CREATE_COMMITMENT,
                 CapabilityIntent.COMPLETE_COMMITMENT,
                 CapabilityIntent.OPEN_CONTINUITY,
+                CapabilityIntent.RESOLVE_CONTINUITY,
             }:
                 return self._pending_conflict()
-            return self._handle_capability(parsed, conversation_id=conversation_id, project_id=project_id)
+            return self._handle_capability(
+                parsed,
+                conversation_id=conversation_id,
+                project_id=project_id,
+                active_continuity_thread_id=active_continuity_thread_id,
+            )
         return MemoryIntentResult(handled=False)
 
     @staticmethod
@@ -363,7 +395,14 @@ class MemoryIntentHandler:
             ),
         )
 
-    def _handle_capability(self, parsed: ParsedCapabilityIntent, *, conversation_id: str, project_id: str) -> MemoryIntentResult:
+    def _handle_capability(
+        self,
+        parsed: ParsedCapabilityIntent,
+        *,
+        conversation_id: str,
+        project_id: str,
+        active_continuity_thread_id: str | None = None,
+    ) -> MemoryIntentResult:
         if parsed.intent is CapabilityIntent.QUERY_MEMORY:
             return self._show_memory(parsed.entity, project_id)
         if parsed.intent is CapabilityIntent.FORGET_MEMORY:
@@ -380,6 +419,22 @@ class MemoryIntentHandler:
             if not parsed.entity:
                 return MemoryIntentResult(handled=True, response="Какую именно тему оставить открытой? Назови её — я не буду угадывать по истории чата.")
             return self._propose_open_thread(parsed.entity, conversation_id)
+        if parsed.intent is CapabilityIntent.RESOLVE_CONTINUITY:
+            if parsed.entity:
+                return self._propose_resolve_thread(parsed.entity, conversation_id)
+            if active_continuity_thread_id is None:
+                return MemoryIntentResult(
+                    handled=True,
+                    response="Какую именно открытую нить закрыть? Назови её, чтобы я ничего не изменила по догадке.",
+                )
+            summary = self._active_thread_summary(active_continuity_thread_id)
+            if summary is None:
+                return MemoryIntentResult(handled=True, response="Не нашла эту открытую нить.")
+            return self._propose_resolve_thread(
+                active_continuity_thread_id,
+                conversation_id,
+                display_text=summary,
+            )
         return MemoryIntentResult(handled=False)
 
     def _show_memory(self, query: str | None, project_id: str) -> MemoryIntentResult:
@@ -649,6 +704,11 @@ class MemoryIntentHandler:
     def _propose_open_thread(self, body: str, conversation_id: str) -> MemoryIntentResult:
         if self.shared_continuity is None:
             return MemoryIntentResult(handled=True, response="Общие нити сейчас недоступны.")
+        if normalize_utterance(body) in _GENERIC_CONTINUITY_TEXT:
+            return MemoryIntentResult(
+                handled=True,
+                response="Какую именно тему оставить открытой? Назови её — я не буду создавать отдельную нить из указательного слова.",
+            )
         proposal = self.shared_continuity.propose_open_thread(
             self.proposal_store,
             text=body,
@@ -662,7 +722,13 @@ class MemoryIntentHandler:
             ),
         )
 
-    def _propose_resolve_thread(self, body: str, conversation_id: str) -> MemoryIntentResult:
+    def _propose_resolve_thread(
+        self,
+        body: str,
+        conversation_id: str,
+        *,
+        display_text: str | None = None,
+    ) -> MemoryIntentResult:
         if self.shared_continuity is None:
             return MemoryIntentResult(handled=True, response="Общие нити сейчас недоступны.")
         try:
@@ -680,8 +746,20 @@ class MemoryIntentHandler:
             )
         return MemoryIntentResult(
             handled=True,
-            response=f"Закрыть эту общую нить?\n«{body.strip()}»\nПодтверди обычным «да» или выбери «не сейчас».",
+            response=(
+                "Закрыть эту общую нить?\n"
+                f"«{(display_text or body).strip()}»\n"
+                "Подтверди обычным «да» или выбери «не сейчас»."
+            ),
         )
+
+    def _active_thread_summary(self, thread_id: str) -> str | None:
+        if self.shared_continuity is None:
+            return None
+        for _, follow_up in self.shared_continuity.open_follow_ups():
+            if follow_up.id == thread_id:
+                return follow_up.summary
+        return None
 
     def _propose_completion(self, text: str, conversation_id: str) -> MemoryIntentResult:
         if self.memory_management is None:

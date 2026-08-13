@@ -91,6 +91,7 @@ let provisionalUser = null;
 let activeSceneId = "scene.home.idle";
 let activeSceneLayer = 0;
 let activeConversationId = null;
+let recentPageState = { nextOffset: null, ids: new Set() };
 let sceneTransitionRevision = 0;
 let sceneTransitionTimer = null;
 let sceneSettleTimer = null;
@@ -713,7 +714,16 @@ function formatRecentTime(value) {
 
 function renderRecent(page, activeId = activeConversationId, { append = false } = {}) {
   const items = page?.items || [];
-  if (!append) recentList.replaceChildren();
+  if (!append) {
+    recentList.replaceChildren();
+    // A fresh Home/conversation snapshot is authoritative.  It invalidates
+    // offsets from a previous shelf lifecycle before any later load-more.
+    recentPageState = { nextOffset: page?.next_offset ?? null, ids: new Set() };
+  } else if (page?.offset !== recentPageState.nextOffset) {
+    // Ignore a delayed stale page: offset pagination cannot safely merge it
+    // after a new snapshot has reordered the conversations.
+    return;
+  }
   surface.classList.toggle("has-conversations", Boolean(page?.total || items.length));
   if (!items.length && !append) {
     const empty = document.createElement("li");
@@ -724,6 +734,8 @@ function renderRecent(page, activeId = activeConversationId, { append = false } 
     return;
   }
   for (const item of items) {
+    if (recentPageState.ids.has(item.conversation_id)) continue;
+    recentPageState.ids.add(item.conversation_id);
     const entry = document.createElement("li");
     const button = document.createElement("button");
     button.type = "button";
@@ -747,7 +759,8 @@ function renderRecent(page, activeId = activeConversationId, { append = false } 
     recentList.append(entry);
   }
   loadMoreConversations.hidden = !page?.has_more;
-  loadMoreConversations.dataset.nextOffset = String(page?.next_offset ?? "");
+  recentPageState.nextOffset = page?.next_offset ?? null;
+  loadMoreConversations.dataset.nextOffset = String(recentPageState.nextOffset ?? "");
 }
 
 function applySnapshot(snapshot) {

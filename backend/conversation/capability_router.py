@@ -33,6 +33,7 @@ class CapabilityIntent(str, Enum):
     COMPLETE_COMMITMENT = "complete_commitment"
     QUERY_CONTINUITY = "query_continuity"
     OPEN_CONTINUITY = "open_continuity"
+    RESOLVE_CONTINUITY = "resolve_continuity"
 
 
 class ParsedCapabilityIntent(BaseModel):
@@ -97,6 +98,23 @@ class NaturalLanguageCapabilityRouter:
     def _deterministic(text: str) -> ParsedCapabilityIntent | None:
         # Explicit shared-continuity language wins over task-like nouns.  It
         # still creates only a proposal in MemoryIntentHandler.
+        resolve = re.match(
+            r"^(?:"
+            r"(?:закрой|заверши|удали|убери)\s+(?:открытую\s+)?(?:нить|тему)"
+            r"(?:\s+(?:про|о))?\s*(?P<named>.+)?|"
+            r"(?:эту\s+)?тему\s+можно\s+закрыть|"
+            r"с\s+этой\s+темой\s+(?:закончили|закончено)"
+            r")$",
+            text,
+        )
+        if resolve:
+            entity = (resolve.groupdict().get("named") or "").strip() or None
+            return ParsedCapabilityIntent(
+                intent=CapabilityIntent.RESOLVE_CONTINUITY,
+                confidence=0.99,
+                entity=entity,
+            )
+
         thread = re.match(
             r"^(?:давай\s+)?(?:"
             r"(?:к|к этому)\s+(?P<return>.+?)\s+потом\s+вернемся|"

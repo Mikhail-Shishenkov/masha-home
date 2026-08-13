@@ -1000,6 +1000,61 @@ def test_conversation_pagination_reaches_every_summary_and_preserves_selected_tr
     bridge.close()
 
 
+def test_conversation_pagination_resets_after_new_conversation_lifecycle(tmp_path):
+    from backend.application import build_masha_application
+    from backend.llm.model_router import ModelRouter
+    from backend.ui.conversation_bridge import LocalConversationBridge
+    from tests.test_application_boundary import LocalProfileProvider, _isolated_root
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    root = _isolated_root(tmp_path)
+    application = build_masha_application(
+        project_root=root, router=ModelRouter([LocalProfileProvider()])
+    )
+    original = [
+        application.send_message(f"Старый разговор {index}", project_id="project_masha_home")
+        for index in range(12)
+    ]
+    bridge = LocalConversationBridge(application)
+    emitted: list[dict] = []
+    bridge.event.connect(lambda encoded: emitted.append(json.loads(encoded)))
+    bridge.loadInitialState()
+    bridge.loadRecentConversations()
+    first = [item for item in emitted if item["kind"] == "recent_conversations"][-1]["recent"]
+    bridge.loadMoreConversations(first["next_offset"])
+
+    bridge.startNewConversation()
+    bridge.submitMessage("Первый ответ в новом разговоре")
+    deadline = time.monotonic() + 3
+    while not any(item["kind"] == "turn_result" for item in emitted) and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    new_conversation_id = [item for item in emitted if item["kind"] == "turn_result"][-1]["result"]["conversation_id"]
+
+    # This mirrors the renderer's fresh shelf snapshot after a turn.  Its
+    # next offset, not the page from the old shelf, is the only valid cursor.
+    bridge.loadRecentConversations()
+    reset = [item for item in emitted if item["kind"] == "recent_conversations"][-1]["recent"]
+    assert reset["offset"] == 0
+    assert reset["items"][0]["conversation_id"] == new_conversation_id
+    assert reset["next_offset"] == 10
+    bridge.loadMoreConversations(reset["next_offset"])
+    tail = [item for item in emitted if item["kind"] == "recent_conversations"][-1]["recent"]
+    all_ids = [item["conversation_id"] for item in reset["items"] + tail["items"]]
+    assert len(all_ids) == len(set(all_ids)) == 13
+    assert {item.conversation_id for item in original}.issubset(all_ids)
+
+    old_conversation_id = original[0].conversation_id
+    bridge.openConversation(old_conversation_id)
+    opened = [item for item in emitted if item["kind"] == "conversation_opened"][-1]
+    assert opened["conversation"]["conversation_id"] == old_conversation_id
+    bridge.loadRecentConversations()
+    reopened = [item for item in emitted if item["kind"] == "recent_conversations"][-1]["recent"]
+    bridge.loadMoreConversations(reopened["next_offset"])
+    assert [item for item in emitted if item["kind"] == "recent_conversations"][-1]["recent"]["offset"] == 10
+    bridge.close()
+
+
 def test_desktop_bridge_installs_a_valid_local_skill_and_restart_sees_it(tmp_path, monkeypatch):
     import shutil
 

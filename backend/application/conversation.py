@@ -33,6 +33,9 @@ class ConversationApplicationService:
     def __init__(self, *, conversation: ConversationService, models: ModelSettingsService):
         self._conversation = conversation
         self._models = models
+        # Session-scoped typed context; SharedContinuityService remains the
+        # owner of the actual thread and its lifecycle.
+        self._active_continuity_by_conversation: dict[str, str] = {}
 
     def conversation(self, conversation_id: str, *, limit: int | None = None) -> ConversationView:
         try:
@@ -121,8 +124,7 @@ class ConversationApplicationService:
             created_at=proposal.created_at,
         )
 
-    @staticmethod
-    def _confirmation_copy(proposal):
+    def _confirmation_copy(self, proposal):
         payload = proposal.record_payload
         if proposal.operation == "forget":
             return "memory_forget", "Убрать запись из активной памяти?", ConversationApplicationService._proposal_subject(proposal)
@@ -139,7 +141,24 @@ class ConversationApplicationService:
             return "shared_moment_create", "Сохранить наш общий момент?", str(text or payload.get("title") or "Наш момент")
         if proposal.record_type == "continuity_state":
             rows = payload.get("intended_follow_ups") or []
-            subject = rows[-1].get("summary") if rows else "Общая нить"
+            handler = self._conversation.memory_intent_handler
+            continuity = None if handler is None else handler.shared_continuity
+            open_ids = (
+                set()
+                if continuity is None
+                else {follow_up.id for _, follow_up in continuity.open_follow_ups()}
+            )
+            resolved = next(
+                (
+                    item
+                    for item in rows
+                    if item.get("status") == "resolved" and item.get("id") in open_ids
+                ),
+                None,
+            )
+            subject = (resolved or (rows[-1] if rows else {})).get("summary", "Общая нить")
+            if resolved is not None:
+                return "continuity_update", "Закрыть нашу общую нить?", str(subject)
             return "continuity_update", "Обновить нашу общую нить?", str(subject)
         if proposal.operation in {"edit", "supersede"}:
             return "memory_update", "Обновить подтверждённую память?", ConversationApplicationService._proposal_subject(proposal)
@@ -173,6 +192,15 @@ class ConversationApplicationService:
             confirm=decision == "confirm",
             project_id=project_id,
         )
+        active_thread_id = self._active_continuity_by_conversation.get(conversation_id)
+        if active_thread_id is not None:
+            handler = self._conversation.memory_intent_handler
+            continuity = None if handler is None else handler.shared_continuity
+            if continuity is None or not any(
+                follow_up.id == active_thread_id
+                for _, follow_up in continuity.open_follow_ups()
+            ):
+                self._active_continuity_by_conversation.pop(conversation_id, None)
         messages = self._conversation.history.messages(conversation_id, limit=2)
         user = next(item for item in messages if item.role is ConversationRole.USER)
         assistant = next(item for item in messages if item.role is ConversationRole.ASSISTANT)
@@ -198,15 +226,22 @@ class ConversationApplicationService:
         project_id: str,
         conversation_id: str | None = None,
         allow_capability_routing: bool = True,
+        active_continuity_thread_id: str | None = None,
     ) -> ConversationTurnResult:
         active_profile_id = self._models.current().profile_id
         resolved_id = conversation_id
+        active_thread_id = active_continuity_thread_id or (
+            None
+            if conversation_id is None
+            else self._active_continuity_by_conversation.get(conversation_id)
+        )
         try:
             resolved_id, _ = self._conversation.send(
                 content,
                 project_id=project_id,
                 conversation_id=conversation_id,
                 allow_capability_routing=allow_capability_routing,
+                active_continuity_thread_id=active_thread_id,
             )
         except ConversationUnavailableError as error:
             resolved_id = self._resolved_conversation_id(resolved_id)
@@ -255,6 +290,8 @@ class ConversationApplicationService:
                 profile_id=active_profile_id,
                 error_code=ApplicationErrorCode.CONVERSATION_FAILED,
             )
+        if active_continuity_thread_id is not None and resolved_id is not None:
+            self._active_continuity_by_conversation[resolved_id] = active_continuity_thread_id
         return self._result(
             content=content,
             conversation_id=resolved_id,

@@ -78,6 +78,7 @@ class ConversationService:
         project_id: str,
         conversation_id: str | None = None,
         allow_capability_routing: bool = True,
+        active_continuity_thread_id: str | None = None,
     ) -> tuple[str, str]:
         conversation = self.history.create() if conversation_id is None else self.history.get(conversation_id)
         last_interaction_at = self.history.last_interaction_at(conversation.id)
@@ -111,6 +112,7 @@ class ConversationService:
                 user_message,
                 conversation_id=conversation.id,
                 project_id=project_id,
+                active_continuity_thread_id=active_continuity_thread_id,
             )
             if intent.handled:
                 assert intent.response is not None

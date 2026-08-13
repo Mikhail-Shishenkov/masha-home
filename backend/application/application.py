@@ -118,6 +118,7 @@ class MashaApplication:
             project_id=project_id,
             conversation_id=conversation_id,
             allow_capability_routing=False,
+            active_continuity_thread_id=thread_id,
         )
 
     def reflection_workspace(self) -> ReflectionWorkspaceView:
