@@ -43,9 +43,9 @@ class ConversationStore:
             key=lambda message: (message.created_at, message.id),
         )
 
-    def recent(self, *, limit: int = 8) -> tuple[Conversation, ...]:
+    def recent(self, *, limit: int | None = 8) -> tuple[Conversation, ...]:
         """Return conversations ordered by the latest actual interaction."""
-        if limit < 1:
+        if limit is not None and limit < 1:
             return ()
         latest_by_conversation: dict[str, datetime] = {}
         for raw in self._data["messages"]:
@@ -78,14 +78,14 @@ class ConversationStore:
         self._save()
         return message
 
-    def messages(self, conversation_id: str, *, limit: int = 16) -> tuple[ConversationMessage, ...]:
+    def messages(self, conversation_id: str, *, limit: int | None = 16) -> tuple[ConversationMessage, ...]:
         self.get(conversation_id)
         messages = [
             ConversationMessage.model_validate(raw)
             for raw in self._data["messages"]
             if raw["conversation_id"] == conversation_id
         ]
-        return tuple(messages[-limit:])
+        return tuple(messages if limit is None else messages[-limit:])
 
     def last_interaction_at(self, conversation_id: str) -> datetime | None:
         messages = self.messages(conversation_id, limit=1)

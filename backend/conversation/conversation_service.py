@@ -16,6 +16,7 @@ from .context_compiler import ConversationContextCompiler
 from .conversation_store import ConversationStore
 from .memory_intent import MemoryIntentHandler
 from .reflection_intent import ReflectionIntentHandler
+from .response_contract import render_model_response
 
 
 class ConversationUnavailableError(RuntimeError):
@@ -153,8 +154,12 @@ class ConversationService:
             response = self.router.generate(request)
         except (ModelProviderUnavailableError, ModelTimeoutError) as error:
             raise ConversationUnavailableError("Локальная модель сейчас недоступна.") from error
-        self.history.append(conversation.id, ConversationRole.ASSISTANT, response.text)
-        return conversation.id, response.text
+        # This branch is an ordinary model turn: no application/domain
+        # mutation receipt can exist here. Enforce that contract before the
+        # text enters history or crosses the desktop boundary.
+        rendered = render_model_response(response.text, application_receipts=())
+        self.history.append(conversation.id, ConversationRole.ASSISTANT, rendered)
+        return conversation.id, rendered
 
     def resolve_memory_proposal(
         self,

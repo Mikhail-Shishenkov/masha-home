@@ -89,6 +89,9 @@ def test_production_frontend_keeps_desktop_composition_and_accessibility_contrac
     assert "max-height: 112px" in css
     assert "resize: none" in css
     assert "textarea::-webkit-resizer { display: none; }" in css
+    assert "overflow-y: auto" in css
+    assert "scrollbar-width: thin" in css
+    assert "overscroll-behavior: contain" in css
     assert 'event.key !== "Enter" || event.shiftKey || event.isComposing' in FRONTEND_ROOT.joinpath(
         "renderer", "app.js"
     ).read_text(encoding="utf-8")
@@ -690,12 +693,20 @@ def test_open_home_refresh_projects_new_live_reminder_once(tmp_path):
             daily_message_limit=2,
             cooldown_seconds=0,
             runtime_mode="background",
+            cycle_interval_seconds=10,
         )
     )
     bridge = LocalConversationBridge(application)
     emitted: list[dict] = []
     bridge.event.connect(lambda encoded: emitted.append(json.loads(encoded)))
     bridge.loadInitialState()
+    # Home is already open and its fast projection pulse has observed one
+    # policy cycle before the new reminder exists.
+    bridge.refreshProactiveInteractions()
+    deadline = time.monotonic() + 3
+    while bridge._proactive_refresh_in_flight and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
 
     proposed = application.send_message(
         "Напомни через две минуты сказать мяу",
@@ -728,6 +739,72 @@ def test_open_home_refresh_projects_new_live_reminder_once(tmp_path):
     assert live[0]["delivery_origin"] == "local_runtime"
     assert live[0]["interactions"]["items"][0]["message"] == "Миша, пора сказать мяу."
     assert ProactiveInteractionStore(repository).list()[0]["state"] == "delivered"
+    assert len(application._proactive._journal.list()) == 2
+    assert application.status().proactive_reason_code == "authorised"
+    bridge.close()
+
+
+def test_desktop_boundary_forgets_relationship_memory_with_preview_audit_and_restart(tmp_path):
+    from backend.application import build_masha_application
+    from backend.llm.model_router import ModelRouter
+    from backend.memory.memory_management import MemoryManagementService
+    from backend.memory.sqlite_repository import MemorySqliteRepository
+    from backend.ui.conversation_bridge import LocalConversationBridge
+    from tests.test_application_boundary import LocalProfileProvider, _isolated_root
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    root = _isolated_root(tmp_path)
+    provider = LocalProfileProvider()
+    application = build_masha_application(
+        project_root=root,
+        router=ModelRouter([provider]),
+    )
+    saved = application.send_message(
+        "Маша, запомни как часть нашей истории, что сегодня мы запустили первый MVP Дома",
+        project_id="project_masha_home",
+    )
+    application.resolve_confirmation(
+        conversation_id=saved.conversation_id,
+        proposal_id=saved.pending_confirmation.proposal_id,
+        decision="confirm",
+        project_id="project_masha_home",
+    )
+    moment_id = application.shared_continuity().moments[0].moment_id
+
+    bridge = LocalConversationBridge(application)
+    events: list[dict] = []
+    bridge.event.connect(lambda encoded: events.append(json.loads(encoded)))
+    bridge.loadInitialState()
+    bridge.submitMessage("Забудь, что сегодня мы запустили первый MVP Дома")
+    deadline = time.monotonic() + 3
+    while not any(item["kind"] == "turn_result" for item in events) and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+
+    turn = next(item for item in events if item["kind"] == "turn_result")["result"]
+    pending = turn["pending_confirmation"]
+    assert turn["status"] == "completed"
+    assert pending["confirmation_type"] == "memory_forget"
+    assert pending["subject"] == "сегодня мы запустили первый MVP Дома"
+    assert application.shared_continuity().moments[0].moment_id == moment_id
+
+    bridge.resolveConfirmation(pending["proposal_id"], "confirm")
+    deadline = time.monotonic() + 3
+    while not any(item["kind"] == "confirmation_result" for item in events) and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    resolution = next(
+        item for item in events if item["kind"] == "confirmation_result"
+    )["result"]
+    assert resolution["status"] == "confirmed"
+    assert application.shared_continuity().moments == ()
+
+    repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")
+    hidden = MemoryManagementService(repository).get(moment_id)
+    assert hidden.payload["visibility"] == "hidden"
+    assert any(event["action"] == "memory_forget" for event in hidden.audit_events)
+    restarted = build_masha_application(project_root=root, router=ModelRouter([provider]))
+    assert restarted.shared_continuity().moments == ()
     bridge.close()
 
 

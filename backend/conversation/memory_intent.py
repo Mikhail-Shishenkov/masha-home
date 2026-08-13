@@ -88,12 +88,18 @@ _LIST_COMMITMENTS = re.compile(
     re.IGNORECASE,
 )
 _CREATE_COMMITMENT = re.compile(
-    r"^\s*(?:маша\s*,?\s*)?(?:добавь(?:\s+в\s+наши\s+дела)?\s+(?:мне\s+)?(?:дело|задачу)?|"
-    r"создай\s+(?:мне\s+)?(?:дело|задачу)|запиши\s+нам\s+дело|напомни\s+(?:мне\s+)?)\s*[:,]?\s*(?P<body>.+?)\s*$",
+    r"^\s*(?:маша\s*,?\s*)?(?:"
+    r"добавь(?:\s+в\s+наши\s+дела)?\s+(?:(?:мне|нам)\s+)?(?:дело|задачу|обязательство)?|"
+    r"создай\s+(?:(?:мне|нам)\s+)?(?:дело|задачу|обязательство)|"
+    r"запиши\s+(?:нам\s+)?(?:дело|задачу|обязательство)|"
+    r"(?:дело|задачу|обязательство)\s+(?:добавь|запиши)|"
+    r"(?:и\s+)?ещ[её]\s+(?:одн[ау]\s+)?(?:задача|дело|обязательство)|"
+    r"напомни\s+(?:мне\s+)?"
+    r")\s*[:,—-]?\s*(?P<body>.+?)\s*$",
     re.IGNORECASE,
 )
 _FORGET = re.compile(
-    r"^\s*(?:маша\s*,?\s*)?(?:забудь|удали\s+из\s+памяти|это\s+больше\s+не\s+актуально,?\s+забудь)\s+(?P<body>.+?)\s*$",
+    r"^\s*(?:маша\s*,?\s*)?(?:забудь|удали\s+из\s+памяти|это\s+больше\s+не\s+актуально,?\s+забудь)\s*[,!:—-]?\s*(?P<body>.+?)\s*$",
     re.IGNORECASE,
 )
 _UPDATE = re.compile(
@@ -103,6 +109,10 @@ _UPDATE = re.compile(
 _COMPLETE_IMPLICIT = re.compile(r"^\s*(?:маша\s*,?\s*)?(?:я\s+)?(?:это\s+)?(?:сделал|сделала|выполнил|выполнила)\s*\.?\s*$", re.IGNORECASE)
 _COMMITMENT_REFERENCE_QUERY = re.compile(
     r"^\s*(?:маш(?:а|енька)?\s*[,!:-]?\s*)?что(?:\s+там)?\s+с\s+(?P<body>.+?)\s*\??\s*$",
+    re.IGNORECASE,
+)
+_AMBIGUOUS_COMMITMENT_FOLLOW_UP = re.compile(
+    r"^\s*(?:и\s+)?ещ[её]\s+(?:одно|одна)\b",
     re.IGNORECASE,
 )
 
@@ -273,6 +283,14 @@ class MemoryIntentHandler:
                 handled=True,
                 response="Что именно сохранить и как: факт, решение, обязательство или эпизод?",
             )
+        if _AMBIGUOUS_COMMITMENT_FOLLOW_UP.match(message):
+            return MemoryIntentResult(
+                handled=True,
+                response=(
+                    "Это похоже на продолжение мысли, но не на явную команду. "
+                    "Если хочешь добавить дело, скажи прямо — пока ничего не добавляю."
+                ),
+            )
         if reference := _COMMITMENT_REFERENCE_QUERY.match(message):
             records = self._matching_open_commitments(reference.group("body"), project_id)
             if records:
@@ -329,7 +347,9 @@ class MemoryIntentHandler:
             records = [
                 item for item in records
                 if item.payload.get("due_at") is not None
-                and datetime.fromisoformat(item.payload["due_at"]).astimezone(local_now.tzinfo).date() == local_now.date()
+                and datetime.fromisoformat(
+                    str(item.payload["due_at"]).replace("Z", "+00:00")
+                ).astimezone(local_now.tzinfo).date() == local_now.date()
             ]
         if not records:
             return MemoryIntentResult(handled=True, response="Сейчас не вижу открытых дел.")
@@ -365,6 +385,12 @@ class MemoryIntentHandler:
 
     def _propose_commitment(self, body: str, conversation_id: str, project_id: str) -> MemoryIntentResult:
         body = body.strip().rstrip(".")
+        body = re.sub(
+            r"^(?:дело|задач[ау]|обязательство)\s*[:,—-]?\s+",
+            "",
+            body,
+            flags=re.IGNORECASE,
+        )
         if not body:
             return MemoryIntentResult(handled=True, response="Какое именно дело добавить?")
         body = re.sub(r"^через\s+(?:два|две)\s+", "через 2 ", body, flags=re.IGNORECASE)

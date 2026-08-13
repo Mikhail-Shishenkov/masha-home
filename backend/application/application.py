@@ -68,14 +68,14 @@ class MashaApplication:
     def send_message(self, content: str, *, project_id: str, conversation_id: str | None = None) -> ConversationTurnResult:
         return self._conversation.send_message(content, project_id=project_id, conversation_id=conversation_id)
 
-    def conversation(self, conversation_id: str, *, limit: int = 16) -> ConversationView:
+    def conversation(self, conversation_id: str, *, limit: int | None = None) -> ConversationView:
         return self._conversation.conversation(conversation_id, limit=limit)
 
-    def latest_conversation(self, *, limit: int = 16) -> ConversationView | None:
+    def latest_conversation(self, *, limit: int | None = None) -> ConversationView | None:
         """Read the transcript with the latest actual interaction, if one exists."""
         return self._conversation.latest_conversation(limit=limit)
 
-    def recent_conversations(self, *, limit: int = 8) -> tuple[ConversationSummaryView, ...]:
+    def recent_conversations(self, *, limit: int | None = None) -> tuple[ConversationSummaryView, ...]:
         return self._conversation.recent_conversations(limit=limit)
 
     def commitments(self, *, limit: int = 12) -> CommitmentListView:
@@ -171,7 +171,7 @@ class MashaApplication:
             active_conversation = next(
                 (
                     item
-                    for item in self._conversation.recent_conversations(limit=8)
+                    for item in self._conversation.recent_conversations()
                     if item.conversation_id == conversation_id
                 ),
                 None,

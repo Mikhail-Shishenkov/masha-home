@@ -38,12 +38,26 @@ def test_fixed_allowlist_router_uses_composable_patterns_not_sentence_dictionary
         "Забудь, что я люблю чай": CapabilityIntent.FORGET_MEMORY,
         "К чему мы хотели вернуться?": CapabilityIntent.QUERY_CONTINUITY,
         "Напомни через две минуты сказать мяу": CapabilityIntent.CREATE_COMMITMENT,
+        "дело добавь купить билеты": CapabilityIntent.CREATE_COMMITMENT,
+        "добавь обязательство купить билеты": CapabilityIntent.CREATE_COMMITMENT,
+        "добавь нам дело купить билеты": CapabilityIntent.CREATE_COMMITMENT,
+        "и ещё задача купить билеты": CapabilityIntent.CREATE_COMMITMENT,
     }
     for phrase, expected in cases.items():
         parsed = router.route(phrase)
         assert parsed is not None
         assert parsed.intent is expected
         assert parsed.confidence >= router.CONFIDENCE_THRESHOLD
+
+
+def test_forget_wins_over_broad_today_query_and_keeps_reference_text():
+    parsed = NaturalLanguageCapabilityRouter().route(
+        "Забудь, что сегодня мы запустили первый MVP Дома"
+    )
+
+    assert parsed is not None
+    assert parsed.intent is CapabilityIntent.FORGET_MEMORY
+    assert parsed.entity == "сегодня мы запустили первый mvp дома"
 
 
 def test_generic_what_about_reference_requires_real_record_context():

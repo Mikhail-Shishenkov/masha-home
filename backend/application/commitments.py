@@ -29,7 +29,7 @@ class CommitmentApplicationService:
             return CommitmentListView(observed_at=self._now(), items=())
         engine = self._conversation.temporal_engine
         observed_at = engine.clock.now_utc()
-        items = []
+        rows = []
         for commitment in document.commitments:
             if commitment.visibility is not Visibility.VISIBLE:
                 continue
@@ -40,25 +40,32 @@ class CommitmentApplicationService:
                 and commitment.due_at.astimezone(timezone.utc) > observed_at
                 else domain_status
             )
-            items.append(
-                CommitmentView(
+            rows.append(
+                (CommitmentView(
                     commitment_id=commitment.id,
                     text=commitment.text,
                     status=status,
                     due_at=commitment.due_at,
                     completed_at=commitment.completed_at,
                     can_propose_completion=domain_status == "open",
-                )
+                ), commitment)
             )
-        rank = {"overdue": 0, "open": 1, "upcoming": 2, "completed": 3, "cancelled": 4}
-        items.sort(
-            key=lambda item: (
-                rank[item.status],
-                item.due_at or item.completed_at or self._far_future(),
-                item.text.casefold(),
-            )
-        )
+        rows.sort(key=self._sort_key)
+        items = [view for view, _ in rows]
         return CommitmentListView(observed_at=observed_at, items=tuple(items[:limit]))
+
+    @staticmethod
+    def _sort_key(row):
+        view, commitment = row
+        if view.status == "overdue":
+            return (0, view.due_at.timestamp(), commitment.id)
+        if view.status == "upcoming":
+            return (1, view.due_at.timestamp(), commitment.id)
+        if view.status == "open":
+            return (2, -commitment.created_at.timestamp(), commitment.id)
+        if view.status == "completed":
+            return (3, -view.completed_at.timestamp(), commitment.id)
+        return (4, -commitment.updated_at.timestamp(), commitment.id)
 
     def propose_completion(
         self,
@@ -109,9 +116,3 @@ class CommitmentApplicationService:
 
     def _now(self):
         return self._conversation.temporal_engine.clock.now_utc()
-
-    @staticmethod
-    def _far_future():
-        from datetime import datetime
-
-        return datetime.max.replace(tzinfo=timezone.utc)

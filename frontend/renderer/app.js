@@ -753,6 +753,7 @@ function applySnapshot(snapshot) {
   const pieces = ["Локально", activeModel.display_name];
   if (!status.model_available) pieces.push("модель недоступна");
   if (status.emergency_stop_engaged) pieces.push("автономность на паузе");
+  if (status.proactive_reason_label) pieces.push(status.proactive_reason_label);
   runtimeTruth.textContent = pieces.join(" · ");
   applySafety(status.emergency_stop_engaged);
 }

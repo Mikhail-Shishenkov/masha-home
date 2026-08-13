@@ -23,7 +23,7 @@ from backend.memory.shared_continuity import SharedContinuityService
 from backend.memory.sqlite_repository import MemorySqliteRepository
 from backend.memory.working_memory import WorkingMemory
 from backend.runtime.health import RuntimeHealthService
-from backend.runtime.daily_runtime import DailyRuntime
+from backend.runtime.daily_runtime import DailyRuntime, DailyRuntimeJournal
 from backend.runtime.safety import AutonomySafetyService, AutonomySafetyStore
 from backend.skills.agent_loop import AgentRunStore
 from backend.skills.autonomy import ActionAutonomyPolicyStore, ActionAutonomyService
@@ -74,6 +74,7 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
     config = core.project_root / "local-data" / "config"
     runtime = core.project_root / "local-data" / "runtime"
     proactive_policy = ProactivePolicyStore(config / "proactive-policy.json")
+    runtime_journal = DailyRuntimeJournal(runtime / "daily-runtime-receipts.json")
     daemon = ProactiveDaemon(core.project_root)
     safety = AutonomySafetyService(store=AutonomySafetyStore(config / "autonomy-safety.json"))
     interactions = ProactiveInteractionStore(core.repository)
@@ -117,6 +118,7 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
         safety=safety,
         permissions=permissions_snapshot,
         proactive_interactions=interactions,
+        proactive_journal=runtime_journal,
     )
     visuals = VisualIdentityResolver(project_root=core.project_root, identity_kernel=core.identity)
     return MashaApplication(
@@ -133,6 +135,8 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
             store=interactions,
             clock=core.conversation.temporal_engine.clock,
             policy_store=proactive_policy,
+            journal=runtime_journal,
+            daemon=daemon,
             runtime=DailyRuntime(
                 history=core.conversation.history,
                 temporal_engine=core.conversation.temporal_engine,

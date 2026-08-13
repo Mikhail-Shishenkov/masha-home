@@ -63,6 +63,7 @@ PROACTIVE_REASON_LABELS = {
     "cycle_delivery_limit": "В этом цикле сообщение уже было отправлено",
     "local_model_unavailable": "Локальная модель недоступна",
     "background_disabled": "Фоновый режим выключен",
+    "manual_runtime": "Напоминания запускаются только вручную",
     "emergency_stop_engaged": "Включена аварийная остановка",
     "no_events": "Нет событий для сообщения",
 }

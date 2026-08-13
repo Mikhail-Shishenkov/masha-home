@@ -1,6 +1,6 @@
 """Human projection and explicit lifecycle actions for delivered initiative."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from backend.temporal.proactive_interaction import ProactiveInteractionStore
 
@@ -10,18 +10,43 @@ from .contracts import ProactiveInteractionListView, ProactiveInteractionView
 class ProactiveApplicationService:
     """Expose only already-delivered local messages and their existing actions."""
 
-    def __init__(self, *, store: ProactiveInteractionStore, clock, runtime=None, policy_store=None):
+    def __init__(self, *, store: ProactiveInteractionStore, clock, runtime=None, policy_store=None, journal=None, daemon=None):
         self._store = store
         self._clock = clock
         self._runtime = runtime
         self._policy_store = policy_store
+        self._journal = journal
+        self._daemon = daemon
+        self._next_runtime_cycle_at = None
+        self._runtime_interval_seconds = None
 
     def refresh(self, *, limit: int = 6) -> ProactiveInteractionListView:
-        """Run the existing background policy cycle, then return its projection."""
+        """Project deliveries; run the existing runtime only at policy cadence."""
         if self._runtime is not None and self._policy_store is not None:
             policy = self._policy_store.load()
-            if policy.runtime_mode == "background":
-                self._runtime.run_cycle(policy)
+            if policy.runtime_mode == "background" and (
+                self._daemon is None or not self._daemon.is_running()
+            ):
+                now = self._clock.now_utc()
+                if self._runtime_interval_seconds != policy.cycle_interval_seconds:
+                    self._runtime_interval_seconds = policy.cycle_interval_seconds
+                    self._next_runtime_cycle_at = None
+                if self._next_runtime_cycle_at is None:
+                    latest = None if self._journal is None else self._journal.latest()
+                    self._next_runtime_cycle_at = (
+                        now
+                        if latest is None
+                        else latest.finished_at + timedelta(seconds=policy.cycle_interval_seconds)
+                    )
+                if now >= self._next_runtime_cycle_at:
+                    # Reserve the cadence before model work so a fast UI
+                    # heartbeat cannot enqueue overlapping heavy cycles.
+                    self._next_runtime_cycle_at = now + timedelta(
+                        seconds=policy.cycle_interval_seconds
+                    )
+                    receipt = self._runtime.run_cycle(policy)
+                    if self._journal is not None:
+                        self._journal.append(receipt)
         return self.list(limit=limit)
 
     def list(self, *, limit: int = 6) -> ProactiveInteractionListView:

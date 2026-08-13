@@ -61,15 +61,20 @@ class SharedContinuityService:
     def open_follow_ups(self) -> tuple[tuple[str, ContinuityFollowUp], ...]:
         document = self._document()
         rows = [
-            (state.id, follow_up)
+            (state.id, follow_up, state.updated_at, position)
             for state in document.continuity_states
-            for follow_up in state.intended_follow_ups
+            for position, follow_up in enumerate(state.intended_follow_ups)
             if follow_up.status == FollowUpStatus.OPEN
             and not is_legacy_developer_follow_up(follow_up)
             and is_readable_continuity_text(follow_up.summary)
             and is_readable_continuity_text(follow_up.reason_to_return)
         ]
-        return tuple(sorted(rows, key=lambda row: row[1].priority, reverse=True))
+        ordered = sorted(
+            rows,
+            key=lambda row: (row[2], row[3], row[1].id),
+            reverse=True,
+        )
+        return tuple((state_id, follow_up) for state_id, follow_up, _, _ in ordered)
 
     def quarantined_count(self) -> int:
         document = self._document()

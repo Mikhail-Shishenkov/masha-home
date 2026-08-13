@@ -11,7 +11,7 @@ from backend.temporal.proactive import ProactivePolicyStore
 from backend.temporal.proactive_daemon import ProactiveDaemon
 from backend.temporal.proactive_interaction import ProactiveInteractionStore
 
-from .catalogs import RUNTIME_STATUS_LABELS
+from .catalogs import RUNTIME_STATUS_LABELS, proactive_reason_label
 from .contracts import MashaStatusView, SafetyView
 from .model_settings import ModelSettingsService
 
@@ -27,6 +27,7 @@ class MashaStatusService:
         safety: AutonomySafetyService,
         permissions: Callable[[], PermissionsSnapshot],
         proactive_interactions: ProactiveInteractionStore,
+        proactive_journal,
     ):
         self._health = health
         self._models = models
@@ -35,6 +36,7 @@ class MashaStatusService:
         self._safety = safety
         self._permissions = permissions
         self._proactive_interactions = proactive_interactions
+        self._proactive_journal = proactive_journal
 
     def snapshot(self) -> MashaStatusView:
         health = self._health.inspect()
@@ -46,6 +48,20 @@ class MashaStatusService:
             item["state"] in {"candidate", "delivered"}
             for item in self._proactive_interactions.list()
         )
+        latest_cycle = self._proactive_journal.latest()
+        daemon_status = self._daemon.status()
+        if safety.emergency_stop_engaged:
+            proactive_reason = "emergency_stop_engaged"
+        elif not policy.enabled:
+            proactive_reason = "proactive_disabled"
+        elif policy.runtime_mode == "manual":
+            proactive_reason = "manual_runtime"
+        else:
+            proactive_reason = (
+                latest_cycle.reason
+                if latest_cycle is not None
+                else daemon_status.get("last_reason")
+            )
         return MashaStatusView(
             runtime_status=health.status,
             runtime_label=RUNTIME_STATUS_LABELS[health.status],
@@ -63,6 +79,13 @@ class MashaStatusService:
             safety_label="Аварийная остановка включена" if safety.emergency_stop_engaged else "Аварийная остановка выключена",
             pending_decisions_count=len(permissions.pending),
             pending_interactions_count=pending_interactions,
+            proactive_reason_code=proactive_reason,
+            proactive_reason_label=(
+                None if proactive_reason is None else proactive_reason_label(proactive_reason)
+            ),
+            proactive_last_cycle_at=(
+                None if latest_cycle is None else latest_cycle.finished_at
+            ),
         )
 
     def engage_emergency_stop(self, reason: str = "manual_emergency_stop") -> SafetyView:

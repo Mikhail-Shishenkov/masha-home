@@ -394,3 +394,6 @@ class MashaStatusView(UiContract):
     safety_label: str
     pending_decisions_count: int = Field(ge=0)
     pending_interactions_count: int = Field(ge=0)
+    proactive_reason_code: str | None = None
+    proactive_reason_label: str | None = None
+    proactive_last_cycle_at: datetime | None = None

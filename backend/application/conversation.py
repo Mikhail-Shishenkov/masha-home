@@ -33,7 +33,7 @@ class ConversationApplicationService:
         self._conversation = conversation
         self._models = models
 
-    def conversation(self, conversation_id: str, *, limit: int = 16) -> ConversationView:
+    def conversation(self, conversation_id: str, *, limit: int | None = None) -> ConversationView:
         try:
             conversation = self._conversation.history.get(conversation_id)
             messages = self._conversation.history.messages(conversation_id, limit=limit)
@@ -45,14 +45,14 @@ class ConversationApplicationService:
             messages=tuple(self._message(item) for item in messages),
         )
 
-    def latest_conversation(self, *, limit: int = 16) -> ConversationView | None:
+    def latest_conversation(self, *, limit: int | None = None) -> ConversationView | None:
         """Return the conversation owning the latest actual message, if any."""
         latest_message = self._conversation.history.latest_message()
         if latest_message is None:
             return None
         return self.conversation(latest_message.conversation_id, limit=limit)
 
-    def recent_conversations(self, *, limit: int = 8) -> tuple[ConversationSummaryView, ...]:
+    def recent_conversations(self, *, limit: int | None = None) -> tuple[ConversationSummaryView, ...]:
         """Return short human-readable summaries without duplicating history."""
         summaries: list[ConversationSummaryView] = []
         for conversation in self._conversation.history.recent(limit=limit):
@@ -97,6 +97,8 @@ class ConversationApplicationService:
     @staticmethod
     def _confirmation_copy(proposal):
         payload = proposal.record_payload
+        if proposal.operation == "forget":
+            return "memory_forget", "Убрать запись из активной памяти?", ConversationApplicationService._proposal_subject(proposal)
         if proposal.record_type == "commitment":
             completion = proposal.operation != "create"
             return (
@@ -112,8 +114,6 @@ class ConversationApplicationService:
             rows = payload.get("intended_follow_ups") or []
             subject = rows[-1].get("summary") if rows else "Общая нить"
             return "continuity_update", "Обновить нашу общую нить?", str(subject)
-        if proposal.operation == "forget":
-            return "memory_forget", "Убрать запись из активной памяти?", ConversationApplicationService._proposal_subject(proposal)
         if proposal.operation in {"edit", "supersede"}:
             return "memory_update", "Обновить подтверждённую память?", ConversationApplicationService._proposal_subject(proposal)
         return "memory_create", "Сохранить это в память?", ConversationApplicationService._proposal_subject(proposal)

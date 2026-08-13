@@ -39,7 +39,7 @@ class LocalConversationBridge(QObject):
             return
         self._session = self._application.open_home_session()
         snapshot = self._session_snapshot("opened")
-        conversation = self._application.latest_conversation(limit=16)
+        conversation = self._application.latest_conversation()
         if conversation is not None:
             self._conversation_id = conversation.conversation_id
         pending = (
@@ -499,7 +499,7 @@ class LocalConversationBridge(QObject):
             self._emit({"kind": "turn_rejected", "reason": "turn_in_flight"})
             return
         try:
-            conversation = self._application.conversation(conversation_id, limit=16)
+            conversation = self._application.conversation(conversation_id)
         except Exception:
             self._emit({"kind": "conversation_unavailable"})
             return
@@ -810,7 +810,7 @@ class LocalConversationBridge(QObject):
         conversation = (
             None
             if result is None or result.conversation_id is None
-            else self._application.conversation(result.conversation_id, limit=16)
+            else self._application.conversation(result.conversation_id)
         )
         self._emit(
             {
@@ -834,7 +834,7 @@ class LocalConversationBridge(QObject):
     def _recent_payload(self) -> list[dict]:
         if self._application is None:
             return []
-        return [item.model_dump(mode="json") for item in self._application.recent_conversations(limit=8)]
+        return [item.model_dump(mode="json") for item in self._application.recent_conversations()]
 
     def _continuity_count(self) -> int:
         if self._application is None:

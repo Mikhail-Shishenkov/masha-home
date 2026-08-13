@@ -112,6 +112,34 @@ class NaturalLanguageCapabilityRouter:
                 entity = None
             return ParsedCapabilityIntent(intent=CapabilityIntent.OPEN_CONTINUITY, confidence=0.98, entity=entity)
 
+        # Explicit writes win over broad read questions such as "что
+        # сегодня...". They still produce proposals only.
+        forget = re.match(
+            r"^(?:забудь|не помни|убери из памяти)\s+(?:то\s+)?(?:что\s+)?(?P<body>.+)$",
+            text,
+        )
+        if forget:
+            return ParsedCapabilityIntent(
+                intent=CapabilityIntent.FORGET_MEMORY,
+                confidence=0.99,
+                entity=forget.group("body"),
+            )
+        create = re.match(
+            r"^(?:"
+            r"(?:добавь|запиши|внеси)(?:\s+мне|\s+нам)?(?:\s+в)?(?:\s+наши)?\s+(?:дело|дела|задачу|обязательство)|"
+            r"(?:дело|задачу|обязательство)\s+(?:добавь|запиши)|"
+            r"(?:и\s+)?еще\s+(?:одна\s+)?(?:задача|дело|обязательство)|"
+            r"надо\s+не\s+забыть|нужно\s+не\s+забыть|напомни(?:\s+мне)?"
+            r")\s+(?P<body>.+)$",
+            text,
+        )
+        if create:
+            return ParsedCapabilityIntent(
+                intent=CapabilityIntent.CREATE_COMMITMENT,
+                confidence=0.98,
+                entity=create.group("body"),
+            )
+
         # Read routes.
         if re.search(r"\b(?:к чему|что|какие)\b.*\b(?:вернут|продолжа|не закончил|нить|тем|наш(?:а|ей) истор)\w*\b", text):
             return ParsedCapabilityIntent(intent=CapabilityIntent.QUERY_CONTINUITY, confidence=0.97)
@@ -124,16 +152,6 @@ class NaturalLanguageCapabilityRouter:
             return ParsedCapabilityIntent(intent=CapabilityIntent.QUERY_MEMORY, confidence=0.96)
 
         # Writes: these only lead to proposals in MemoryIntentHandler.
-        forget = re.match(r"^(?:забудь|не помни|убери из памяти)\s+(?:то\s+)?(?:что\s+)?(?P<body>.+)$", text)
-        if forget:
-            return ParsedCapabilityIntent(intent=CapabilityIntent.FORGET_MEMORY, confidence=0.99, entity=forget.group("body"))
-        create = re.match(
-            r"^(?:(?:добавь|запиши|внеси)(?:\s+мне|\s+нам)?(?:\s+в)?(?:\s+наши)?\s+(?:дело|дела|задачу)|"
-            r"надо\s+не\s+забыть|нужно\s+не\s+забыть|напомни(?:\s+мне)?)\s+(?P<body>.+)$",
-            text,
-        )
-        if create:
-            return ParsedCapabilityIntent(intent=CapabilityIntent.CREATE_COMMITMENT, confidence=0.98, entity=create.group("body"))
         complete = re.match(r"^(?:с\s+)?(?P<body>.+?)\s+(?:закончили|закончил|готово|сделано)$", text)
         if complete:
             return ParsedCapabilityIntent(intent=CapabilityIntent.COMPLETE_COMMITMENT, confidence=0.91, entity=complete.group("body"))

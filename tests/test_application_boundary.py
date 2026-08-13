@@ -119,6 +119,65 @@ def test_completed_turn_returns_ui_safe_messages_and_survives_restart(tmp_path):
     assert restarted.conversation(result.conversation_id) == view
 
 
+def test_ordinary_llm_turn_cannot_claim_unreceipted_mutation(tmp_path):
+    provider = LocalProfileProvider(
+        response_text="Сохранила второе обязательство — купить билеты на фестиваль."
+    )
+    _, _, application = _application(tmp_path, provider)
+    before = application._conversation._conversation.memory_retriever.memory_store.read_document()
+
+    result = application.send_message(
+        "Как тебе идея фестиваля?",
+        project_id=PROJECT_ID,
+    )
+
+    assert result.status is ConversationTurnStatus.COMPLETED
+    assert result.pending_confirmation is None
+    assert result.assistant_message is not None
+    assert "в этом сообщении Дом ничего не менял" in result.assistant_message.content
+    after = application._conversation._conversation.memory_retriever.memory_store.read_document()
+    assert after.commitments == before.commitments
+    assert application.conversation(result.conversation_id).messages[-1].content == result.assistant_message.content
+
+
+def test_ambiguous_follow_up_neither_creates_nor_claims_commitment(tmp_path):
+    _, provider, application = _application(tmp_path)
+    before = application._conversation._conversation.memory_retriever.memory_store.read_document()
+
+    result = application.send_message(
+        "и ещё одно — купить билеты на фестиваль",
+        project_id=PROJECT_ID,
+    )
+
+    assert result.pending_confirmation is None
+    assert "пока ничего не добавляю" in result.assistant_message.content
+    assert provider.last_request is None
+    after = application._conversation._conversation.memory_retriever.memory_store.read_document()
+    assert after.commitments == before.commitments
+
+
+def test_natural_commitment_variants_strip_service_words_and_require_confirmation(tmp_path):
+    _, _, application = _application(tmp_path)
+    phrases = (
+        "дело добавь купить билеты в Москву",
+        "добавь обязательство купить билеты в Москву",
+        "добавь нам дело купить билеты в Москву",
+        "и ещё задача купить билеты в Москву",
+    )
+
+    for phrase in phrases:
+        result = application.send_message(phrase, project_id=PROJECT_ID)
+        assert result.pending_confirmation is not None
+        assert result.pending_confirmation.confirmation_type == "commitment_create"
+        assert result.pending_confirmation.subject == "купить билеты в Москву"
+        application.resolve_confirmation(
+            conversation_id=result.conversation_id,
+            proposal_id=result.pending_confirmation.proposal_id,
+            decision="reject",
+            project_id=PROJECT_ID,
+        )
+
+
 @pytest.mark.parametrize(
     ("provider", "status", "code"),
     [
@@ -210,6 +269,8 @@ def test_status_keeps_proactive_stop_and_model_failure_distinct(tmp_path):
 
     initial = application.status()
     assert initial.proactive_enabled is False
+    assert initial.proactive_reason_code == "proactive_disabled"
+    assert initial.proactive_reason_label == "Инициативность выключена"
     assert initial.emergency_stop_engaged is False
     assert initial.model_available is True
 
@@ -221,6 +282,7 @@ def test_status_keeps_proactive_stop_and_model_failure_distinct(tmp_path):
     assert stopped.emergency_stop_engaged is True
     assert stopped.model_available is False
     assert stopped.model_availability_code is ModelAvailabilityCode.PROVIDER_UNAVAILABLE
+    assert stopped.proactive_reason_code == "emergency_stop_engaged"
     assert stopped.safety_label != stopped.proactive_label
     assert not any(
         forbidden in stopped.model_dump_json().casefold()
@@ -838,6 +900,102 @@ def test_recent_conversation_summaries_use_existing_history_order(tmp_path):
         first.conversation_id,
     ]
     assert recent[0].preview == "Привет, Миша."
+
+
+def test_conversation_projection_exposes_full_scrollable_history_and_all_summaries(tmp_path):
+    _, _, application = _application(tmp_path)
+    turns = []
+    for index in range(12):
+        turns.append(application.send_message(f"Разговор {index}", project_id=PROJECT_ID))
+
+    first_id = turns[0].conversation_id
+    for index in range(10):
+        application.send_message(
+            f"Продолжение {index}",
+            project_id=PROJECT_ID,
+            conversation_id=first_id,
+        )
+
+    recent = application.recent_conversations()
+    assert len(recent) == 12
+    assert recent[0].conversation_id == first_id
+    assert len(application.conversation(first_id).messages) == 22
+
+
+def test_commitment_projection_has_explicit_group_and_recency_order(tmp_path):
+    _, _, application = _application(tmp_path)
+    repository = application._conversation._conversation.memory_retriever.memory_store
+    document = repository.read_document()
+    template = document.commitments[0]
+    now = datetime(2026, 8, 13, 10, 0, tzinfo=timezone.utc)
+    rows = [
+        template.model_copy(update={"id": "overdue", "text": "Просрочено", "due_at": now - timedelta(minutes=1)}),
+        template.model_copy(update={"id": "due-later", "text": "Позже", "due_at": now + timedelta(hours=2)}),
+        template.model_copy(update={"id": "due-near", "text": "Ближе", "due_at": now + timedelta(minutes=10)}),
+        template.model_copy(update={"text": "Без срока старое", "due_at": None, "created_at": now - timedelta(days=2), "updated_at": now - timedelta(days=2)}),
+        template.model_copy(update={"id": "open-new", "text": "Без срока новое", "due_at": None, "created_at": now - timedelta(days=1), "updated_at": now - timedelta(days=1)}),
+        template.model_copy(update={"id": "done-old", "text": "Готово старое", "status": CommitmentStatus.COMPLETED, "due_at": None, "completed_at": now - timedelta(days=2), "updated_at": now - timedelta(days=2)}),
+        template.model_copy(update={"id": "done-new", "text": "Готово новое", "status": CommitmentStatus.COMPLETED, "due_at": None, "completed_at": now - timedelta(days=1), "updated_at": now - timedelta(days=1)}),
+    ]
+    repository.replace_document(
+        document.model_copy(update={"commitments": rows}),
+        action="test_deterministic_projection_order",
+    )
+    application._commitments._conversation.temporal_engine = TemporalEngine(FixedClock(now))
+
+    assert [item.commitment_id for item in application.commitments().items] == [
+        "overdue",
+        "due-near",
+        "due-later",
+        "open-new",
+        template.id,
+        "done-new",
+        "done-old",
+    ]
+
+
+def test_today_query_accepts_production_utc_z_timestamps(tmp_path):
+    _, _, application = _application(tmp_path)
+    repository = application._conversation._conversation.memory_retriever.memory_store
+    document = repository.read_document()
+    now = datetime(2026, 8, 13, 10, 0, tzinfo=timezone.utc)
+    commitment = document.commitments[0].model_copy(
+        update={"text": "Проверить UTC", "due_at": now + timedelta(hours=1)}
+    )
+    repository.replace_document(
+        document.model_copy(update={"commitments": [commitment]}),
+        action="test_utc_z_query",
+    )
+    engine = TemporalEngine(FixedClock(now))
+    application._conversation._conversation.temporal_engine = engine
+    application._conversation._conversation.memory_intent_handler.temporal_engine = engine
+
+    result = application.send_message("Что у нас сегодня?", project_id=PROJECT_ID)
+
+    assert result.status is ConversationTurnStatus.COMPLETED
+    assert "Проверить UTC" in result.assistant_message.content
+
+
+def test_open_continuity_threads_are_newest_first_and_restart_safe(tmp_path):
+    root, provider, application = _application(tmp_path)
+    for text in ("первая открытая тема", "вторая открытая тема"):
+        proposed = application.send_message(
+            f"Оставь это как открытую нить: {text}",
+            project_id=PROJECT_ID,
+        )
+        application.resolve_confirmation(
+            conversation_id=proposed.conversation_id,
+            proposal_id=proposed.pending_confirmation.proposal_id,
+            decision="confirm",
+            project_id=PROJECT_ID,
+        )
+
+    assert [item.summary for item in application.shared_continuity().open_threads[:2]] == [
+        "вторая открытая тема",
+        "первая открытая тема",
+    ]
+    restarted = build_masha_application(project_root=root, router=ModelRouter([provider]))
+    assert restarted.shared_continuity().open_threads == application.shared_continuity().open_threads
 
 
 def test_human_catalogs_do_not_replace_machine_codes():

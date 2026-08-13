@@ -36,7 +36,7 @@ html[data-home-attention="active"] .conversation-surface.is-surface-concealed { 
 .message-assistant { align-self: flex-start; border-left-color: rgba(226,188,126,.18); background: rgba(18,15,12,.27); }
 .message.is-provisional { opacity: .68; }
 .composer { display: grid; flex: 0 0 auto; grid-template-columns: minmax(0, 1fr) auto; align-items: end; min-width: 0; gap: 14px; padding-top: 15px; border-top: 1px solid rgba(248,237,224,.14); }
-.recent-conversations { position: absolute; top: 52px; right: -8px; left: -8px; z-index: 6; max-height: min(52vh, 460px); padding: 23px 26px 28px; overflow-y: auto; border: 0; border-top: 1px solid rgba(226,188,126,.25); background: linear-gradient(155deg, rgba(27,20,14,.98), rgba(14,13,12,.96)); box-shadow: 0 34px 76px rgba(0,0,0,.42); }
+.recent-conversations { position: absolute; top: 52px; right: -8px; left: -8px; z-index: 6; max-height: min(52vh, 460px); padding: 23px 26px 28px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgba(222,181,116,.38) transparent; border: 0; border-top: 1px solid rgba(226,188,126,.25); background: linear-gradient(155deg, rgba(27,20,14,.98), rgba(14,13,12,.96)); box-shadow: 0 34px 76px rgba(0,0,0,.42); }
 .shelf-line { position: absolute; left: 22px; right: 22px; bottom: 18px; height: 1px; background: linear-gradient(90deg, transparent, rgba(216,170,105,.35) 14%, rgba(216,170,105,.16) 84%, transparent); box-shadow: 0 8px 18px rgba(0,0,0,.5); }
 .recent-heading { margin: 0 0 12px; color: #d6ad70; text-transform: uppercase; letter-spacing: .14em; font: 600 10px/1.2 system-ui, sans-serif; }
 .recent-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; margin: 0; padding: 0 0 5px; list-style: none; }
