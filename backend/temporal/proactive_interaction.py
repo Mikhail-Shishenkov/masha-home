@@ -1,7 +1,7 @@
 """Local, policy-authorised proactive interaction; no scheduler or fallback."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
 
 from backend.conversation.context_compiler import ConversationContextCompiler
 from backend.identity.identity_kernel import IdentityKernel
@@ -11,7 +11,8 @@ from backend.llm.model_router import ModelRouter
 from backend.llm.model_profiles import ModelProfileStore
 
 from .proactive_events import ProactiveEventState, ProactiveEventStore
-from .temporal_engine import MOSCOW
+from .temporal_engine import FixedClock, TemporalEngine
+from .timezone_provider import HomeTimeZoneConfig, HomeTimeZoneProvider
 from .temporal_models import CheckInCandidate, ProactiveCandidate, ProactiveDecision
 
 
@@ -20,7 +21,9 @@ class ProactiveInteractionUnavailableError(RuntimeError):
 
 
 class ProactiveInteractionStore:
-    def __init__(self, repository): self.repository = repository
+    def __init__(self, repository, *, home_timezone: tzinfo | None = None):
+        self.repository = repository
+        self.home_timezone = home_timezone or datetime.now().astimezone().tzinfo
 
     def ensure_candidate(self, candidate: ProactiveCandidate | CheckInCandidate):
         is_checkin = isinstance(candidate, CheckInCandidate)
@@ -82,7 +85,7 @@ class ProactiveInteractionStore:
 
     def delivery_stats(self, now: datetime) -> tuple[int, datetime | None]:
         """Return today's delivered count and latest local delivery timestamp."""
-        start = now.astimezone(MOSCOW).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+        start = now.astimezone(self.home_timezone).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
         with self.repository._connection() as c:
             rows = c.execute(
                 "SELECT delivered_at FROM proactive_interactions WHERE delivered_at IS NOT NULL"
@@ -119,8 +122,20 @@ class ProactiveInteractionService:
         is_checkin = isinstance(candidate, CheckInCandidate)
         temporal_context = candidate.current_local_time if is_checkin else candidate.temporal_context
         if is_checkin:
-            from .temporal_engine import TemporalContext
-            temporal_context = TemporalContext(current_utc_time=candidate.current_local_time.astimezone(timezone.utc), current_local_time=candidate.current_local_time, last_interaction_at=candidate.last_message_at, absence_duration_seconds=candidate.absence_duration_seconds)
+            offset = candidate.current_local_time.utcoffset()
+            if offset is None:
+                raise ValueError("check-in timezone must be resolved")
+            engine = TemporalEngine(
+                FixedClock(candidate.current_local_time),
+                HomeTimeZoneProvider(
+                    HomeTimeZoneConfig(
+                        timezone=candidate.timezone,
+                        fallback_utc_offset_minutes=int(offset.total_seconds() // 60),
+                    ),
+                    zone_loader=lambda _name: candidate.current_local_time.tzinfo,
+                ),
+            )
+            temporal_context = engine.context(candidate.last_message_at)
         request = self.compiler.compile(
             messages=(ModelMessage(role="user", content=("Сформулируй одно короткое тёплое человеческое сообщение Мише. Это разрешённый check-in после отсутствия, не диагноз. Не дави, не требуй ответа и не придумывай причины отсутствия." if is_checkin else "Сформулируй одно короткое тёплое напоминание только по разрешённому событию. Не заявляй о выполнении действий.")),),
             identity_context=self.identity_kernel.build_context(), working_memory=[],

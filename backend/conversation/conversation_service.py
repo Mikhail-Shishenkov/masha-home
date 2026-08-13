@@ -11,6 +11,7 @@ from backend.llm.model_profiles import ModelProfileStore
 from backend.memory.memory_retriever import ContextLens, MemoryRetrievalRequest, MemoryRetriever
 from backend.memory.working_memory import WorkingMemory
 from backend.temporal.temporal_engine import TemporalEngine
+from backend.temporal.temporal_intent import temporal_readout
 
 from .conversation_models import ConversationMessageOrigin, ConversationRole
 from .context_compiler import ConversationContextCompiler
@@ -18,6 +19,7 @@ from .conversation_store import ConversationStore
 from .memory_intent import MemoryIntentHandler
 from .reflection_intent import ReflectionIntentHandler
 from .response_contract import render_model_response
+from .temporal_consistency import enforce_temporal_consistency
 
 
 class ConversationUnavailableError(RuntimeError):
@@ -141,10 +143,23 @@ class ConversationService:
     ) -> tuple[str, str]:
         conversation = self.history.create() if conversation_id is None else self.history.get(conversation_id)
         last_interaction_at = self.history.last_interaction_at(conversation.id)
-        temporal_context = self.temporal_engine.context(last_interaction_at)
+        temporal_context = self.temporal_engine.context(
+            last_interaction_at,
+            user_message=user_message,
+        )
         user_history_message = self.history.append(conversation.id, ConversationRole.USER, user_message)
         if self.proactive_interactions is not None:
             self.proactive_interactions.resolve_check_ins_for_user_message(user_history_message.created_at)
+
+        readout = temporal_readout(user_message, temporal_context)
+        if readout is not None:
+            self.history.append(
+                conversation.id,
+                ConversationRole.ASSISTANT,
+                readout.response,
+                origin=ConversationMessageOrigin.APPLICATION,
+            )
+            return conversation.id, readout.response
 
         if self.reflection_intent_handler is not None:
             reflection_intent = self.reflection_intent_handler.handle(
@@ -228,7 +243,12 @@ class ConversationService:
         # This branch is an ordinary model turn: no application/domain
         # mutation receipt can exist here. Enforce that contract before the
         # text enters history or crosses the desktop boundary.
-        rendered = render_model_response(response.text, application_receipts=())
+        grounded_response = enforce_temporal_consistency(
+            response.text,
+            user_message=user_message,
+            context=temporal_context,
+        )
+        rendered = render_model_response(grounded_response, application_receipts=())
         self.history.append(conversation.id, ConversationRole.ASSISTANT, rendered)
         return conversation.id, rendered
 

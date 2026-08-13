@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, time
+from datetime import datetime, time, tzinfo
 from enum import Enum
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .temporal_engine import MOSCOW, TemporalContext
+from .temporal_engine import TemporalContext
 from .temporal_models import CommitmentDueEvent, ProactiveCandidate, ProactiveDecision
 
 
@@ -54,6 +54,9 @@ class ProactivePolicy(BaseModel):
 
 class ProactiveDecisionEngine:
     """Returns permission only; it never creates text, sends, or mutates."""
+
+    def __init__(self, *, home_timezone: tzinfo | None = None):
+        self.home_timezone = home_timezone or datetime.now().astimezone().tzinfo
 
     @staticmethod
     def external_boundary(origin: ProactiveEventOrigin) -> tuple[ProactiveDecision | None, str]:
@@ -132,11 +135,10 @@ class ProactiveDecisionEngine:
             generated_at=generated_at,
         )
 
-    @staticmethod
-    def _in_quiet_hours(now: datetime, policy: ProactivePolicy) -> bool:
+    def _in_quiet_hours(self, now: datetime, policy: ProactivePolicy) -> bool:
         if policy.quiet_hours_start is None or policy.quiet_hours_end is None:
             return False
-        current = now.astimezone(MOSCOW).timetz().replace(tzinfo=None)
+        current = now.astimezone(self.home_timezone).timetz().replace(tzinfo=None)
         start, end = policy.quiet_hours_start, policy.quiet_hours_end
         if start == end:
             return True

@@ -79,6 +79,15 @@ class ConversationContextCompiler:
                     "говорить живо, спорить и органично материться; не делай её стерильным "
                     "корпоративным психологом."
                 ),
+                "temporal_contract": {
+                    "authority": "temporal_context_is_application_owned",
+                    "visibility": "internal_do_not_quote_or_explain",
+                    "greetings": "social_signal_not_clock_evidence",
+                    "absence": "elapsed_without_interaction_not_sleep_wake_or_rest_evidence",
+                    "recent_interaction": "same_local_date_must_not_be_called_yesterday",
+                    "calendar_transition": "local_day_delta_and_elapsed_time_are_both_true",
+                    "relative_language": "interpret_against_home_timezone_and_local_date",
+                },
                 "current_local_time": (temporal_context.current_local_time if temporal_context else self._clock()).isoformat(),
                 "temporal_context": (temporal_context.model_dump(mode="json") if temporal_context else None),
                 "memory_context": [self._memory_record(item) for item in working_memory],
