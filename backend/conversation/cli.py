@@ -14,7 +14,7 @@ from backend.identity.identity_kernel import IdentityMemoryVersionMismatchError
 from backend.memory.memory_management import MemoryManagementService, MemoryMutationOperation
 from backend.memory.memory_presentation import detail, history, list_views, preview, summary
 from backend.memory.reflection import ReflectionUnavailableError
-from backend.temporal.temporal_engine import MOSCOW, TemporalEngine
+from backend.temporal.temporal_engine import TemporalEngine
 from backend.temporal.temporal_runtime import TemporalRuntime
 from backend.temporal.proactive import ProactiveDecisionEngine, ProactivePolicy, ProactivePolicyStore
 from backend.temporal.proactive_interaction import ProactiveInteractionService, ProactiveInteractionStore, ProactiveInteractionUnavailableError
@@ -443,12 +443,12 @@ def _run_time_command(command: str, *, service: ConversationService, conversatio
         return
     local = context.current_local_time.strftime("%d.%m.%Y, %H:%M")
     utc = context.current_utc_time.strftime("%d.%m.%Y, %H:%M")
-    lines = ["Время:", f"Москва: {local}", f"UTC: {utc}"]
+    lines = ["Время:", f"{context.timezone}: {local}", f"UTC: {utc}"]
     if context.last_interaction_at is None:
         lines.append("Последнего разговора пока нет.")
     else:
         minutes = context.absence_duration_seconds // 60
-        lines += [f"Последний разговор: {context.last_interaction_at.astimezone(MOSCOW).strftime('%d.%m.%Y, %H:%M')}", f"Тебя не было: {minutes // 60} ч {minutes % 60} мин"]
+        lines += [f"Последний разговор: {context.last_interaction_local_time.strftime('%d.%m.%Y, %H:%M')}", f"Тебя не было: {minutes // 60} ч {minutes % 60} мин"]
     output_fn("\n".join(lines))
 
 
@@ -504,11 +504,11 @@ _PROACTIVE_REASONS = {
 }
 
 
-def _local_time_label(value: str | None) -> str:
+def _local_time_label(value: str | None, home_timezone) -> str:
     if not value:
         return "ещё не было"
-    moment = datetime.fromisoformat(value).astimezone(MOSCOW)
-    now = datetime.now(MOSCOW)
+    moment = datetime.fromisoformat(value).astimezone(home_timezone)
+    now = datetime.now(home_timezone)
     return f"сегодня в {moment:%H:%M}" if moment.date() == now.date() else moment.strftime("%d.%m.%Y в %H:%M")
 
 
@@ -528,7 +528,10 @@ def _interaction_state(state: str) -> str:
 
 
 def _run_proactive_command_legacy(command: str, *, service: ConversationService, output_fn: Callable[[str], None]) -> None:
-    store = ProactiveInteractionStore(service.memory_retriever.memory_store)
+    store = ProactiveInteractionStore(
+        service.memory_retriever.memory_store,
+        home_timezone=service.temporal_engine.home_timezone.tzinfo,
+    )
     parts = command.split()
     action = parts[0] if parts else "status"
     policy_store = ProactivePolicyStore(service.model_profiles.path.parent / "proactive-policy.json")
@@ -609,7 +612,9 @@ def _run_proactive_command_legacy(command: str, *, service: ConversationService,
         delivered = []
         reminders_sent, last_delivery_at = store.delivery_stats(context.generated_at)
         for event in context.events:
-            decision_engine = ProactiveDecisionEngine()
+            decision_engine = ProactiveDecisionEngine(
+                home_timezone=service.temporal_engine.home_timezone.tzinfo
+            )
             decision = decision_engine.decide(
                 event,
                 policy,
@@ -660,7 +665,8 @@ def _run_proactive_command(command: str, *, service: ConversationService, output
     action = parts[0] if parts else "status"
     raw = "--raw" in parts
     repository = service.memory_retriever.memory_store
-    store = ProactiveInteractionStore(repository)
+    home_timezone = service.temporal_engine.home_timezone.tzinfo
+    store = ProactiveInteractionStore(repository, home_timezone=home_timezone)
     policy = ProactivePolicyStore(service.model_profiles.path.parent / "proactive-policy.json").load()
     daemon = ProactiveDaemon(service.model_profiles.path.parents[2])
     journal = DailyRuntimeJournal(service.model_profiles.path.parents[2] / "local-data" / "runtime" / "daily-runtime-receipts.json")
@@ -680,7 +686,7 @@ def _run_proactive_command(command: str, *, service: ConversationService, output
             f"Напоминания: {'включены' if policy.allow_commitment_reminders else 'выключены'}",
             f"Daemon: {'работает' if daemon.is_running() else 'не запущен'}",
             "",
-            f"Последняя проверка: {_local_time_label(state.get('last_cycle'))}",
+            f"Последняя проверка: {_local_time_label(state.get('last_cycle'), home_timezone)}",
             f"Результат: {result}",
         ]
         reason = _PROACTIVE_REASONS.get(state.get("last_reason"), state.get("last_reason"))
@@ -706,7 +712,7 @@ def _run_proactive_command(command: str, *, service: ConversationService, output
         blocks = []
         for index, row in enumerate(rows, 1):
             detail = row.get("message_text") or ("Давно не было сообщений" if row.get("proactive_event_id") else "Напоминание подготовлено")
-            blocks.append(f"{index}. {_interaction_kind(row)}\n   {detail}\n   Создано: {_local_time_label(row['created_at'])}\n   Статус: {_interaction_state(row['state'])}")
+            blocks.append(f"{index}. {_interaction_kind(row)}\n   {detail}\n   Создано: {_local_time_label(row['created_at'], home_timezone)}\n   Статус: {_interaction_state(row['state'])}")
         output_fn("Ожидают реакции:\n\n" + "\n\n".join(blocks))
         return
 
@@ -726,7 +732,7 @@ def _run_proactive_command(command: str, *, service: ConversationService, output
             reason = _PROACTIVE_REASONS.get(payload.get("reason"), payload.get("reason", "детерминированное правило runtime"))
             interaction = interactions.get(trace["entity_id"])
             kind = _interaction_kind(interaction) if interaction else ("Напоминание" if trace["entity_type"] == "temporal_event" else "Check-in")
-            blocks.append(f"{index}. Событие: {kind}\n   Решение: {decision}\n   Время: {_local_time_label(trace['occurred_at'])}\n   Причина: {reason}\n   Профиль модели: {payload.get('model_profile', 'не применялся')}")
+            blocks.append(f"{index}. Событие: {kind}\n   Решение: {decision}\n   Время: {_local_time_label(trace['occurred_at'], home_timezone)}\n   Причина: {reason}\n   Профиль модели: {payload.get('model_profile', 'не применялся')}")
         output_fn("История решений:\n\n" + "\n\n".join(blocks))
         return
 
@@ -768,7 +774,7 @@ def _run_commitments_command(command: str, *, service: ConversationService, outp
         output_fn(json.dumps([{"id": item.id, "status": status, "due_at": item.due_at.isoformat() if item.due_at else None} for item, status in rows], ensure_ascii=False)); return
     if not rows:
         output_fn("Обязательств не нашла."); return
-    output_fn("Обязательства:\n" + "\n".join(f"{index}. {item.text}\n   До: {item.due_at.astimezone(MOSCOW).strftime('%d.%m.%Y, %H:%M') if item.due_at else 'без срока'}\n   Статус: {status}" for index, (item, status) in enumerate(rows, 1)))
+    output_fn("Обязательства:\n" + "\n".join(f"{index}. {item.text}\n   До: {item.due_at.astimezone(engine.home_timezone.tzinfo).strftime('%d.%m.%Y, %H:%M') if item.due_at else 'без срока'}\n   Статус: {status}" for index, (item, status) in enumerate(rows, 1)))
 
 
 def main() -> None:

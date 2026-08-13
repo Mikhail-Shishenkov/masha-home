@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from .checkin_detection import CheckInDetector
 from .checkin_lifecycle import CheckInLifecycleRuntime
 from .proactive import ProactivePolicy
+from .proactive import ProactiveDecisionEngine
 from .proactive_events import ProactiveEventStore
 from .proactive_interaction import ProactiveInteractionService, ProactiveInteractionStore
 from .temporal_models import CheckInCandidate, ProactiveDecision
@@ -27,7 +28,10 @@ class ControlledProactiveRuntime:
         self.temporal_engine = temporal_engine
         self.repository = repository
         self.event_store = ProactiveEventStore(repository)
-        self.interaction_store = ProactiveInteractionStore(repository)
+        self.interaction_store = ProactiveInteractionStore(
+            repository,
+            home_timezone=temporal_engine.home_timezone.tzinfo,
+        )
         self.interactions = ProactiveInteractionService(store=self.interaction_store, identity_kernel=identity_kernel, router=router, model_profiles=model_profiles)
 
     def run_checkin_cycle(self, policy: ProactivePolicy, *, reminder_pending: bool | None = None) -> ProactiveCycleResult:
@@ -42,12 +46,17 @@ class ControlledProactiveRuntime:
                 for item in TemporalRuntime(self.repository, self.temporal_engine).recover().events
             )
         sent, last_delivery = self.interaction_store.delivery_stats(now)
-        evaluation = CheckInLifecycleRuntime(self.event_store).evaluate(event.event_id, policy, now=now, reminders_sent=sent, last_delivery_at=last_delivery, reminder_pending=reminder_pending)
+        evaluation = CheckInLifecycleRuntime(
+            self.event_store,
+            decisions=ProactiveDecisionEngine(
+                home_timezone=self.temporal_engine.home_timezone.tzinfo
+            ),
+        ).evaluate(event.event_id, policy, now=now, reminders_sent=sent, last_delivery_at=last_delivery, reminder_pending=reminder_pending)
         self.record_decision(event.event_id, evaluation.decision.value, evaluation.reason, entity_type="proactive_event")
         if evaluation.decision is not ProactiveDecision.CHECK_IN:
             return ProactiveCycleResult("suppress", reason=evaluation.reason, event_id=event.event_id)
         payload = evaluation.event.payload
-        candidate = CheckInCandidate(event_id=evaluation.event.event_id, absence_duration_seconds=int(payload["absence_seconds"]), last_message_at=payload["anchor_created_at"], current_local_time=self.temporal_engine.clock.now_local(), proactive_level=policy.proactive_level)
+        candidate = CheckInCandidate(event_id=evaluation.event.event_id, absence_duration_seconds=int(payload["absence_seconds"]), last_message_at=payload["anchor_created_at"], current_local_time=self.temporal_engine.now_local(), timezone=self.temporal_engine.home_timezone.name, proactive_level=policy.proactive_level)
         interaction = self.interactions.formulate(candidate)
         return ProactiveCycleResult(interaction["state"], message=interaction.get("message_text"), reason=evaluation.reason, event_id=event.event_id)
 

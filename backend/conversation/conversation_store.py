@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 from uuid import uuid4
 
 from .conversation_models import (
@@ -16,9 +17,15 @@ from .conversation_models import (
 class ConversationStore:
     """Portable JSON history. It is separate from long-term memory."""
 
-    def __init__(self, file_path: str | Path):
+    def __init__(
+        self,
+        file_path: str | Path,
+        *,
+        clock: Callable[[], datetime] | None = None,
+    ):
         self.file_path = Path(file_path)
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._data = self._load()
 
     def create(self) -> Conversation:
@@ -125,6 +132,8 @@ class ConversationStore:
         )
         temporary.replace(self.file_path)
 
-    @staticmethod
-    def _now() -> datetime:
-        return datetime.now(timezone.utc)
+    def _now(self) -> datetime:
+        value = self._clock()
+        if value.tzinfo is None:
+            raise ValueError("conversation clock must be timezone-aware")
+        return value.astimezone(timezone.utc)

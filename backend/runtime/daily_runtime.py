@@ -116,7 +116,9 @@ class DailyRuntime:
             router=router,
             model_profiles=model_profiles,
         )
-        self.decisions = ProactiveDecisionEngine()
+        self.decisions = ProactiveDecisionEngine(
+            home_timezone=temporal_engine.home_timezone.tzinfo
+        )
 
     def run_cycle(self, policy: ProactivePolicy) -> DailyCycleReceipt:
         started_at = self.temporal_engine.clock.now_utc()

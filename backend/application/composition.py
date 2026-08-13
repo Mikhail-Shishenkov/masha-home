@@ -33,6 +33,8 @@ from backend.skills.registry import SkillRegistry
 from backend.temporal.proactive import ProactivePolicyStore
 from backend.temporal.proactive_daemon import ProactiveDaemon
 from backend.temporal.proactive_interaction import ProactiveInteractionStore
+from backend.temporal.temporal_engine import TemporalEngine
+from backend.temporal.timezone_provider import HomeTimeZoneProvider, HomeTimeZoneStore
 
 from .application import MashaApplication
 from .activities import ActivityApplicationService
@@ -77,7 +79,10 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
     runtime_journal = DailyRuntimeJournal(runtime / "daily-runtime-receipts.json")
     daemon = ProactiveDaemon(core.project_root)
     safety = AutonomySafetyService(store=AutonomySafetyStore(config / "autonomy-safety.json"))
-    interactions = ProactiveInteractionStore(core.repository)
+    interactions = ProactiveInteractionStore(
+        core.repository,
+        home_timezone=core.conversation.temporal_engine.home_timezone.tzinfo,
+    )
 
     registry = SkillRegistry(
         skills_root=core.project_root / "local-data" / "skills",
@@ -165,6 +170,10 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
 
 def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
     root = Path(project_root)
+    timezone_provider = HomeTimeZoneProvider.from_store(
+        HomeTimeZoneStore(root / "local-data" / "config" / "home-timezone.json")
+    )
+    temporal_engine = TemporalEngine(timezone_provider=timezone_provider)
     repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")
     identity = IdentityKernel(IdentityStore(root / "identity" / "masha.identity.json"))
     identity.validate_memory_identity(repository)
@@ -184,12 +193,16 @@ def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
         memory_retriever=MemoryRetriever(repository),
         working_memory=WorkingMemory(max_items=6),
         router=selected_router,
-        history=ConversationStore(root / "local-data" / "conversations" / "history.json"),
+        history=ConversationStore(
+            root / "local-data" / "conversations" / "history.json",
+            clock=temporal_engine.clock.now_utc,
+        ),
         memory_intent_handler=MemoryIntentHandler(
             proposal_store=MemoryProposalStore(root / "local-data" / "memory-proposals.json"),
             confirmed_memory=ConfirmedMemoryService(repository),
             memory_management=memory_management,
             shared_continuity=shared_continuity,
+            temporal_engine=temporal_engine,
             capability_router=NaturalLanguageCapabilityRouter(
                 LocalSemanticIntentClassifier(
                     router=selected_router,
@@ -199,7 +212,11 @@ def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
             ),
         ),
         model_profiles=profiles,
-        proactive_interactions=ProactiveInteractionStore(repository),
+        proactive_interactions=ProactiveInteractionStore(
+            repository,
+            home_timezone=temporal_engine.home_timezone.tzinfo,
+        ),
+        temporal_engine=temporal_engine,
         shared_continuity=shared_continuity,
         reflection_intent_handler=ReflectionIntentHandler(reflection),
         reflection_service=reflection,

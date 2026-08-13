@@ -7,11 +7,12 @@ from backend.memory.memory_models import Commitment, CommitmentStatus, IdentityC
 NOW = datetime(2026, 8, 11, 7, 42, tzinfo=timezone.utc)
 
 
-def test_fixed_clock_builds_moscow_context_and_absence():
+def test_fixed_clock_builds_saratov_context_and_absence():
     engine = TemporalEngine(FixedClock(NOW))
     context = engine.context(datetime(2026, 8, 11, 6, 42, tzinfo=timezone.utc))
-    assert context.current_local_time.hour == 10
-    assert context.timezone == "Europe/Moscow"
+    assert context.current_local_time.hour == 11
+    assert context.timezone == "Europe/Saratov"
+    assert context.timezone_resolution in {"named_zone", "configured_offset_fallback"}
     assert context.absence_duration_seconds == 3600
     assert engine.context(None).absence_duration_seconds is None
 
@@ -21,7 +22,7 @@ def test_due_parser_supports_deliberately_limited_russian_forms():
     assert engine.parse_due("завтра в 10:00").resolved_local.hour == 10
     assert engine.parse_due("послезавтра").resolved_local.day == 13
     assert engine.parse_due("через 3 дня").resolved_local.day == 14
-    assert engine.parse_due("через 2 часа").resolved_local.hour == 12
+    assert engine.parse_due("через 2 часа").resolved_local.hour == 13
     assert engine.parse_due("до 12.08.2026").resolved_local.day == 12
     assert engine.parse_due("в пятницу").ambiguity is not None
 

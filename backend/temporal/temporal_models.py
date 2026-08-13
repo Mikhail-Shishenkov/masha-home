@@ -63,6 +63,6 @@ class CheckInCandidate(BaseModel):
     absence_duration_seconds: int = Field(ge=0)
     last_message_at: datetime
     current_local_time: datetime
-    timezone: str = "Europe/Moscow"
+    timezone: str = "system-local"
     proactive_level: int = Field(ge=2, le=5)
     decision: ProactiveDecision = ProactiveDecision.CHECK_IN

@@ -586,7 +586,7 @@ class MemoryIntentHandler:
         if query:
             records = self._rank_records(records, query, lambda item: item.payload.get("text", ""))
         if temporal_scope == "today":
-            local_now = self.temporal_engine.clock.now_local()
+            local_now = self.temporal_engine.now_local()
             records = [
                 item for item in records
                 if item.payload.get("due_at") is not None
