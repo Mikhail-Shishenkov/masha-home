@@ -23,16 +23,46 @@ class ConversationUnavailableError(RuntimeError):
     """Controlled application error; callers should present it without a traceback."""
 
 
+_LENS_SPACE = re.compile(r"\s+")
+_LENS_PUNCTUATION = re.compile(r"[^\w\s'-]+", re.UNICODE)
 _SHARED_CONTINUITY_QUERY = re.compile(
     r"\b(?:между\s+нами|наш(?:а|ей|у)\s+истори(?:я|и|ю)|общ(?:ая|ей|ую)\s+истори(?:я|и|ю)|"
-    r"открыт(?:ая|ые|ую)\s+нит(?:ь|и)|что\s+у\s+нас\s+продолжается)\b",
-    re.IGNORECASE,
+    r"открыт(?:ая|ые|ую)\s+нит(?:ь|и)|что\s+у\s+нас\s+продолжается)\b"
 )
 _PERSPECTIVE_QUERY = re.compile(
-    r"\b(?:что\s+ты\s+думаешь|как\s+изменилось\s+тво[её]\s+мнение|"
-    r"ты\s+вс[её]\s+ещ[её]\s+так\s+считаешь|тво[иия]\s+рефлекси)\b",
-    re.IGNORECASE,
+    r"\b(?:"
+    r"что\s+ты(?:\s+сама)?\s+думаешь|"
+    r"ты(?:\s+сама)?\s+что\s+думаешь|"
+    r"каково\s+твое\s+мнение|"
+    r"как\s+изменилось\s+твое\s+мнение|"
+    r"ты\s+все\s+еще\s+так\s+считаешь|"
+    r"тво(?:е\s+мнение|и\s+рефлекси\w*)"
+    r")\b"
 )
+
+
+def _normalized_lens_query(value: str) -> str:
+    text = value.casefold().replace("ё", "е")
+    return _LENS_SPACE.sub(" ", _LENS_PUNCTUATION.sub(" ", text)).strip()
+
+
+def select_context_lens(user_message: str) -> ContextLens:
+    """Classify only the three established context lenses, deterministically."""
+    query = _normalized_lens_query(user_message)
+    if _SHARED_CONTINUITY_QUERY.search(query):
+        return ContextLens.SHARED_CONTINUITY
+    if _PERSPECTIVE_QUERY.search(query):
+        return ContextLens.MASHA_PERSPECTIVE
+    return ContextLens.GENERAL
+
+
+def _retrieval_query(user_message: str, lens: ContextLens) -> str:
+    """Remove only lens framing so it cannot masquerade as topical evidence."""
+    if lens is not ContextLens.MASHA_PERSPECTIVE:
+        return user_message
+    normalized = _normalized_lens_query(user_message)
+    topic = _LENS_SPACE.sub(" ", _PERSPECTIVE_QUERY.sub(" ", normalized)).strip()
+    return topic
 
 
 class ConversationService:
@@ -119,14 +149,10 @@ class ConversationService:
                 self.history.append(conversation.id, ConversationRole.ASSISTANT, intent.response)
                 return conversation.id, intent.response
 
-        context_lens = ContextLens.GENERAL
-        if _SHARED_CONTINUITY_QUERY.search(user_message):
-            context_lens = ContextLens.SHARED_CONTINUITY
-        elif _PERSPECTIVE_QUERY.search(user_message):
-            context_lens = ContextLens.MASHA_PERSPECTIVE
+        context_lens = select_context_lens(user_message)
         memories = self.memory_retriever.retrieve(
             MemoryRetrievalRequest(
-                query=user_message,
+                query=_retrieval_query(user_message, context_lens),
                 project_id=project_id,
                 limit=self.memory_limit,
                 lens=context_lens,

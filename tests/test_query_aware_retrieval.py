@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from backend.conversation.conversation_service import ConversationService
+from backend.conversation.conversation_service import ConversationService, select_context_lens
 from backend.conversation.conversation_store import ConversationStore
 from backend.conversation.memory_intent import MemoryIntentHandler, MemoryProposalStore
 from backend.identity.identity_kernel import IdentityKernel
@@ -293,6 +293,103 @@ def test_conversation_retrieves_different_context_per_turn_and_can_send_empty(
     assert [item["id"] for item in drink_context] == ["D_coffee_preference"]
     assert greeting_context == []
     assert all("components" not in item and "total_score" not in item for item in model_context)
+
+
+@pytest.mark.parametrize(
+    "message",
+    (
+        "Что ты думаешь о выборе модели?",
+        "Что ты сама думаешь о выборе модели?",
+        "А ты сама что думаешь о модели?",
+        "Каково твоё мнение о выборе модели?",
+        "Ты всё ещё так считаешь насчёт модели?",
+    ),
+)
+def test_natural_perspective_variants_select_perspective_lens(message: str):
+    assert select_context_lens(message) is ContextLens.MASHA_PERSPECTIVE
+
+
+def _conversation_service(
+    tmp_path: Path,
+    store: MemoryStore,
+) -> tuple[ConversationService, FakeProvider]:
+    provider = FakeProvider(provider_id="ollama-local", response_text="Я здесь.")
+    service = ConversationService(
+        identity_kernel=IdentityKernel(
+            IdentityStore(PROJECT_ROOT / "identity" / "masha.identity.json")
+        ),
+        memory_retriever=MemoryRetriever(store),
+        working_memory=WorkingMemory(),
+        router=ModelRouter([provider]),
+        history=ConversationStore(tmp_path / "lens-history.json"),
+    )
+    return service, provider
+
+
+def test_conversation_automatically_keeps_perspective_distinct_from_general_memory(
+    tmp_path: Path,
+    query_retrieval_store: MemoryStore,
+):
+    service, provider = _conversation_service(tmp_path, query_retrieval_store)
+
+    conversation_id, _ = service.send(
+        "Что ты сама думаешь о выборе модели?",
+        project_id=PROJECT_ID,
+    )
+    perspective_request = provider.last_request
+    service.send(
+        "Что мы решили о выборе модели?",
+        project_id=PROJECT_ID,
+        conversation_id=conversation_id,
+    )
+    general_request = provider.last_request
+
+    assert perspective_request.private_context["context_lens"] == "masha_perspective"
+    assert [
+        item["id"] for item in perspective_request.private_context["memory_context"]
+    ] == ["H_model_perspective"]
+    assert general_request.private_context["context_lens"] == "general"
+    general_context = general_request.private_context["memory_context"]
+    assert {item["record_type"] for item in general_context} & {"decision", "episode"}
+    assert "H_model_perspective" not in {item["id"] for item in general_context}
+
+
+def test_conversation_automatically_selects_shared_continuity_only_context(
+    tmp_path: Path,
+    query_retrieval_store: MemoryStore,
+):
+    service, provider = _conversation_service(tmp_path, query_retrieval_store)
+    service.memory_intent_handler = MemoryIntentHandler(
+        proposal_store=MemoryProposalStore(tmp_path / "shared-proposals.json"),
+        confirmed_memory=ConfirmedMemoryService(query_retrieval_store),
+    )
+
+    service.send("Наша история?", project_id=PROJECT_ID)
+
+    request = provider.last_request
+    assert request is not None
+    assert request.private_context["context_lens"] == "shared_continuity"
+    assert {item["id"] for item in request.private_context["memory_context"]} == {
+        "F_first_mvp",
+        "G_model_long_context_thread",
+    }
+    assert {item["record_type"] for item in request.private_context["memory_context"]} == {
+        "relationship_memory",
+        "continuity_state",
+    }
+
+
+def test_conversation_perspective_no_match_does_not_fall_back_to_general_memory(
+    tmp_path: Path,
+    query_retrieval_store: MemoryStore,
+):
+    service, provider = _conversation_service(tmp_path, query_retrieval_store)
+
+    service.send("Что ты сама думаешь о погоде?", project_id=PROJECT_ID)
+
+    request = provider.last_request
+    assert request.private_context["context_lens"] == "masha_perspective"
+    assert request.private_context["memory_context"] == []
 
 
 @pytest.mark.parametrize(
