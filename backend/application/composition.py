@@ -17,6 +17,8 @@ from backend.llm.ollama_provider import OllamaProvider
 from backend.llm.model_profiles import ModelProfileStore
 from backend.memory.confirmed_memory_service import ConfirmedMemoryService
 from backend.memory.memory_management import MemoryManagementService
+from backend.memory.candidate_lifecycle import PassiveMemoryService
+from backend.memory.passive_detection import PassiveMemoryCandidateDetector
 from backend.memory.memory_retriever import MemoryRetriever
 from backend.memory.reflection import ReflectionService
 from backend.memory.shared_continuity import SharedContinuityService
@@ -43,6 +45,7 @@ from .commitments import CommitmentApplicationService
 from .continuity import ContinuityApplicationService
 from .home_snapshot import HomeSnapshotService
 from .model_settings import ModelSettingsService
+from .memory_candidates import MemoryCandidateApplicationService
 from .proactive import ProactiveApplicationService
 from .reflections import ReflectionApplicationService
 from .status import MashaStatusService
@@ -165,6 +168,9 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
             permissions=permissions_snapshot,
             installer=installer,
         ),
+        memory_candidates=MemoryCandidateApplicationService(
+            core.conversation.passive_memory_service
+        ),
     )
 
 
@@ -187,6 +193,11 @@ def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
         memory_retriever=MemoryRetriever(repository),
         router=selected_router,
         model_profiles=profiles,
+    )
+    passive_memory = PassiveMemoryService(
+        repository=repository,
+        detector=PassiveMemoryCandidateDetector(temporal_engine),
+        clock=temporal_engine.clock.now_utc,
     )
     conversation = ConversationService(
         identity_kernel=identity,
@@ -220,6 +231,7 @@ def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
         shared_continuity=shared_continuity,
         reflection_intent_handler=ReflectionIntentHandler(reflection),
         reflection_service=reflection,
+        passive_memory_service=passive_memory,
     )
     return _Core(
         project_root=root,

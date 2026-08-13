@@ -19,5 +19,8 @@ class MemoryDocumentRepository(Protocol):
         *,
         action: str = "replace_document",
         audit_payload: dict | None = None,
+        audit_entity_type: str = "memory_document",
+        audit_entity_id: str | None = None,
+        additional_audit_events: tuple[dict, ...] = (),
     ) -> None:
         ...

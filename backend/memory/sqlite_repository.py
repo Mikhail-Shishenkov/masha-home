@@ -99,6 +99,9 @@ class MemorySqliteRepository:
         *,
         action: str = "replace_document",
         audit_payload: dict[str, Any] | None = None,
+        audit_entity_type: str = "memory_document",
+        audit_entity_id: str | None = None,
+        additional_audit_events: tuple[dict[str, Any], ...] = (),
     ) -> None:
         validated = MemoryDocument.model_validate(document)
         payload = validated.model_dump(mode="json")
@@ -167,7 +170,8 @@ class MemorySqliteRepository:
                 self._insert_audit_event(
                     connection,
                     action=action,
-                    entity_type="memory_document",
+                    entity_type=audit_entity_type,
+                    entity_id=audit_entity_id,
                     payload={
                         "schema_version": payload["schema_version"],
                         "record_count": sum(
@@ -177,6 +181,14 @@ class MemorySqliteRepository:
                         **(audit_payload or {}),
                     },
                 )
+                for event in additional_audit_events:
+                    self._insert_audit_event(
+                        connection,
+                        action=event["action"],
+                        entity_type=event.get("entity_type"),
+                        entity_id=event.get("entity_id"),
+                        payload=event.get("payload", {}),
+                    )
                 connection.execute("COMMIT")
             except Exception:
                 connection.execute("ROLLBACK")

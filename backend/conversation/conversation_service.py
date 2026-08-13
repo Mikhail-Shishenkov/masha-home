@@ -9,6 +9,7 @@ from backend.llm.model_provider import ModelProviderUnavailableError, ModelTimeo
 from backend.llm.model_router import ModelRouter
 from backend.llm.model_profiles import ModelProfileStore
 from backend.memory.memory_retriever import ContextLens, MemoryRetrievalRequest, MemoryRetriever
+from backend.memory.passive_detection import MemoryCandidateDetectionRequest
 from backend.memory.working_memory import WorkingMemory
 from backend.temporal.temporal_engine import TemporalEngine
 from backend.temporal.temporal_intent import temporal_readout
@@ -115,6 +116,7 @@ class ConversationService:
         shared_continuity=None,
         reflection_intent_handler: ReflectionIntentHandler | None = None,
         reflection_service=None,
+        passive_memory_service=None,
     ):
         self.identity_kernel = identity_kernel
         self.memory_retriever = memory_retriever
@@ -131,6 +133,7 @@ class ConversationService:
         self.shared_continuity = shared_continuity
         self.reflection_intent_handler = reflection_intent_handler
         self.reflection_service = reflection_service
+        self.passive_memory_service = passive_memory_service
 
     def send(
         self,
@@ -250,6 +253,16 @@ class ConversationService:
         )
         rendered = render_model_response(grounded_response, application_receipts=())
         self.history.append(conversation.id, ConversationRole.ASSISTANT, rendered)
+        if allow_capability_routing and self.passive_memory_service is not None:
+            self.passive_memory_service.observe_safely(
+                MemoryCandidateDetectionRequest(
+                    conversation_id=conversation.id,
+                    project_id=project_id,
+                    current_user_message=user_history_message,
+                    recent_messages=self.history.messages(conversation.id, limit=8),
+                    temporal_context=temporal_context,
+                )
+            )
         return conversation.id, rendered
 
     def resolve_memory_proposal(
