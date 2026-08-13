@@ -77,6 +77,7 @@ class ConversationService:
         *,
         project_id: str,
         conversation_id: str | None = None,
+        allow_capability_routing: bool = True,
     ) -> tuple[str, str]:
         conversation = self.history.create() if conversation_id is None else self.history.get(conversation_id)
         last_interaction_at = self.history.last_interaction_at(conversation.id)
@@ -105,7 +106,7 @@ class ConversationService:
                 )
                 return conversation.id, reflection_intent.response
 
-        if self.memory_intent_handler is not None:
+        if allow_capability_routing and self.memory_intent_handler is not None:
             intent = self.memory_intent_handler.handle(
                 user_message,
                 conversation_id=conversation.id,

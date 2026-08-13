@@ -13,6 +13,7 @@ const newConversationButton = document.getElementById("new-conversation");
 const recentToggle = document.getElementById("recent-conversations-toggle");
 const recentPanel = document.getElementById("recent-conversations");
 const recentList = document.getElementById("recent-list");
+const loadMoreConversations = document.getElementById("load-more-conversations");
 const title = document.getElementById("conversation-title");
 const surfaceStatus = document.getElementById("surface-status");
 const runtimeTruth = document.getElementById("runtime-truth");
@@ -37,6 +38,7 @@ const commitmentsTrigger = document.getElementById("commitments-trigger");
 const commitmentsCount = document.getElementById("commitments-count");
 const commitmentsSurface = document.getElementById("commitments-surface");
 const commitmentsList = document.getElementById("commitments-list");
+const loadMoreCommitments = document.getElementById("load-more-commitments");
 const closeCommitments = document.getElementById("close-commitments");
 const activityTrigger = document.getElementById("activity-trigger");
 const activitySurface = document.getElementById("activity-surface");
@@ -538,15 +540,16 @@ const commitmentStatusLabels = {
   cancelled: "отменено",
 };
 
-function renderCommitments(view) {
+function renderCommitments(view, { append = false } = {}) {
   const items = view?.items || [];
-  commitmentsCount.textContent = String(items.filter((item) => item.can_propose_completion).length);
-  commitmentsList.replaceChildren();
-  if (!items.length) {
+  commitmentsCount.textContent = String(view?.actionable_total ?? view?.total ?? items.length);
+  if (!append) commitmentsList.replaceChildren();
+  if (!items.length && !append) {
     const empty = document.createElement("li");
     empty.className = "commitment-empty";
     empty.textContent = "Сейчас здесь спокойно — открытых обязательств нет.";
     commitmentsList.append(empty);
+    loadMoreCommitments.hidden = true;
     return;
   }
   for (const item of items) {
@@ -578,6 +581,8 @@ function renderCommitments(view) {
     }
     commitmentsList.append(row);
   }
+  loadMoreCommitments.hidden = !view?.has_more;
+  loadMoreCommitments.dataset.nextOffset = String(view?.next_offset ?? "");
 }
 
 function hideOperationSurface() {
@@ -706,14 +711,16 @@ function formatRecentTime(value) {
   return new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" }).format(date);
 }
 
-function renderRecent(items, activeId = activeConversationId) {
-  recentList.replaceChildren();
-  surface.classList.toggle("has-conversations", Boolean(items?.length));
-  if (!items?.length) {
+function renderRecent(page, activeId = activeConversationId, { append = false } = {}) {
+  const items = page?.items || [];
+  if (!append) recentList.replaceChildren();
+  surface.classList.toggle("has-conversations", Boolean(page?.total || items.length));
+  if (!items.length && !append) {
     const empty = document.createElement("li");
     empty.className = "recent-empty";
     empty.textContent = "Здесь появятся наши разговоры.";
     recentList.append(empty);
+    loadMoreConversations.hidden = true;
     return;
   }
   for (const item of items) {
@@ -739,6 +746,8 @@ function renderRecent(items, activeId = activeConversationId) {
     entry.append(button);
     recentList.append(entry);
   }
+  loadMoreConversations.hidden = !page?.has_more;
+  loadMoreConversations.dataset.nextOffset = String(page?.next_offset ?? "");
 }
 
 function applySnapshot(snapshot) {
@@ -847,7 +856,7 @@ function handleBridgeEvent(encoded) {
   }
   if (payload.kind === "commitments_loaded") {
     applySnapshot(payload.snapshot);
-    renderCommitments(payload.commitments);
+    renderCommitments(payload.commitments, { append: Boolean(payload.append) });
     commitmentsSurface.hidden = false;
     document.documentElement.dataset.commitments = "active";
     commitmentsTrigger.setAttribute("aria-expanded", "true");
@@ -965,7 +974,7 @@ function handleBridgeEvent(encoded) {
     return;
   }
   if (payload.kind === "recent_conversations") {
-    renderRecent(payload.recent, payload.active_conversation_id);
+    renderRecent(payload.recent, payload.active_conversation_id, { append: Boolean(payload.append) });
     return;
   }
   if (payload.kind === "home_attention") {
@@ -1119,6 +1128,18 @@ recentToggle.addEventListener("click", () => {
     recentToggle.setAttribute("aria-expanded", "false");
     input.focus();
   }
+});
+
+loadMoreConversations.addEventListener("click", () => {
+  const offset = Number(loadMoreConversations.dataset.nextOffset);
+  if (!ready || inFlight || !Number.isInteger(offset)) return;
+  bridge.loadMoreConversations(offset);
+});
+
+loadMoreCommitments.addEventListener("click", () => {
+  const offset = Number(loadMoreCommitments.dataset.nextOffset);
+  if (!ready || inFlight || !Number.isInteger(offset)) return;
+  bridge.loadMoreCommitments(offset);
 });
 
 homeAttentionTrigger.addEventListener("click", () => {

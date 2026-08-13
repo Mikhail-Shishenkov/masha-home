@@ -16,6 +16,7 @@ from .contracts import (
     ConversationTurnStatus,
     ConfirmationResolutionResult,
     ConfirmationResolutionStatus,
+    ConversationPageView,
     ConversationSummaryView,
     ConversationView,
     MessageView,
@@ -74,14 +75,40 @@ class ConversationApplicationService:
             )
         return tuple(summaries)
 
+    def conversation_page(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 10,
+        query: str | None = None,
+    ) -> ConversationPageView:
+        """Bounded summary page; `query` reserves the future search boundary."""
+        if offset < 0 or limit < 1:
+            raise ValueError("invalid conversation page")
+        rows = self.recent_conversations()
+        # Search is intentionally not implemented in this stabilization pass.
+        if query not in {None, ""}:
+            raise ValueError("conversation search is not available")
+        page = rows[offset : offset + limit]
+        next_offset = offset + len(page)
+        has_more = next_offset < len(rows)
+        return ConversationPageView(
+            items=page,
+            offset=offset,
+            page_size=limit,
+            total=len(rows),
+            has_more=has_more,
+            next_offset=next_offset if has_more else None,
+            query=None,
+        )
+
     def pending_confirmation(self, conversation_id: str) -> PendingConfirmationView | None:
         handler = self._conversation.memory_intent_handler
         if handler is None:
             return None
-        proposals = handler.proposal_store.pending_for_conversation(conversation_id)
-        if len(proposals) != 1:
+        proposal = handler.proposal_store.current_for_conversation(conversation_id)
+        if proposal is None:
             return None
-        proposal = proposals[0]
         payload = proposal.record_payload
         confirmation_type, title, subject = self._confirmation_copy(proposal)
         return PendingConfirmationView(
@@ -170,6 +197,7 @@ class ConversationApplicationService:
         *,
         project_id: str,
         conversation_id: str | None = None,
+        allow_capability_routing: bool = True,
     ) -> ConversationTurnResult:
         active_profile_id = self._models.current().profile_id
         resolved_id = conversation_id
@@ -178,6 +206,7 @@ class ConversationApplicationService:
                 content,
                 project_id=project_id,
                 conversation_id=conversation_id,
+                allow_capability_routing=allow_capability_routing,
             )
         except ConversationUnavailableError as error:
             resolved_id = self._resolved_conversation_id(resolved_id)

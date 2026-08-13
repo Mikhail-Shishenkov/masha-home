@@ -23,10 +23,12 @@ class CommitmentApplicationService:
     def __init__(self, *, conversation: ConversationService):
         self._conversation = conversation
 
-    def list(self, *, limit: int = 12) -> CommitmentListView:
+    def list(self, *, limit: int | None = 10, offset: int = 0) -> CommitmentListView:
+        if offset < 0 or (limit is not None and limit < 1):
+            raise ValueError("invalid commitment page")
         document = self._conversation.memory_retriever.memory_store.read_document()
         if document is None:
-            return CommitmentListView(observed_at=self._now(), items=())
+            return CommitmentListView(observed_at=self._now(), items=(), offset=offset)
         engine = self._conversation.temporal_engine
         observed_at = engine.clock.now_utc()
         rows = []
@@ -52,7 +54,29 @@ class CommitmentApplicationService:
             )
         rows.sort(key=self._sort_key)
         items = [view for view, _ in rows]
-        return CommitmentListView(observed_at=observed_at, items=tuple(items[:limit]))
+        page = items[offset:] if limit is None else items[offset : offset + limit]
+        next_offset = offset + len(page)
+        has_more = next_offset < len(items)
+        return CommitmentListView(
+            observed_at=observed_at,
+            items=tuple(page),
+            offset=offset,
+            page_size=max(1, len(page)) if limit is None else limit,
+            total=len(items),
+            actionable_total=sum(item.can_propose_completion for item in items),
+            has_more=has_more,
+            next_offset=next_offset if has_more else None,
+        )
+
+    def get(self, commitment_id: str) -> CommitmentView | None:
+        return next(
+            (
+                item
+                for item in self.list(limit=None).items
+                if item.commitment_id == commitment_id
+            ),
+            None,
+        )
 
     @staticmethod
     def _sort_key(row):

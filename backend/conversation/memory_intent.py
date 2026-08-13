@@ -138,6 +138,10 @@ class ProposalStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class PendingProposalConflict(ValueError):
+    """A conversation already owns the one user-facing confirmation slot."""
+
+
 class MemoryProposal(BaseModel):
     """Local pending state only; this is deliberately not a MemoryDocument record."""
 
@@ -164,6 +168,8 @@ class MemoryProposalStore:
     def create(self, proposal: MemoryProposal) -> MemoryProposal:
         if proposal.id in self._proposals:
             raise ValueError(f"proposal already exists: {proposal.id}")
+        if self.pending_for_conversation(proposal.conversation_id):
+            raise PendingProposalConflict("a confirmation is already pending")
         self._proposals[proposal.id] = proposal
         self._save()
         return proposal
@@ -177,6 +183,27 @@ class MemoryProposalStore:
             for proposal in self._proposals.values()
             if proposal.conversation_id == conversation_id and proposal.status == ProposalStatus.PENDING
         )
+
+    def current_for_conversation(self, conversation_id: str) -> MemoryProposal | None:
+        """Recover one deterministic UI slot from legacy competing proposals.
+
+        Older proposals are cancelled, never applied. This migration touches
+        transient proposal state only and makes a plain confirmation safe.
+        """
+        pending = sorted(
+            self.pending_for_conversation(conversation_id),
+            key=lambda item: (item.created_at, item.id),
+        )
+        if not pending:
+            return None
+        current = pending[-1]
+        if len(pending) > 1:
+            for stale in pending[:-1]:
+                self._proposals[stale.id] = stale.model_copy(
+                    update={"status": ProposalStatus.CANCELLED}
+                )
+            self._save()
+        return current
 
     def set_status(self, proposal_id: str, status: ProposalStatus) -> MemoryProposal:
         proposal = self._proposals[proposal_id]
@@ -242,6 +269,14 @@ class MemoryIntentHandler:
         conversation_id: str,
         project_id: str,
     ) -> MemoryIntentResult:
+        # A plain human confirmation always resolves the single user-facing
+        # slot. IDs remain an internal bridge compatibility detail.
+        if confirm := _CONFIRM.match(message):
+            return self._confirm(confirm.group("id"), conversation_id)
+        if reject := _REJECT.match(message):
+            return self._cancel(reject.group("id"), conversation_id)
+        pending = self.proposal_store.current_for_conversation(conversation_id) is not None
+
         # These read/proposal commands are deliberately resolved locally.  They
         # cannot be hallucinated as a model capability and never expose storage.
         if show := _SHOW_MEMORY.match(message):
@@ -249,22 +284,36 @@ class MemoryIntentHandler:
         if _LIST_COMMITMENTS.match(message):
             return self._list_commitments(project_id)
         if create := _CREATE_COMMITMENT.match(message):
+            if pending:
+                return self._pending_conflict()
             return self._propose_commitment(create.group("body"), conversation_id, project_id)
         if forget := _FORGET.match(message):
+            if pending:
+                return self._pending_conflict()
             return self._propose_forget(forget.group("body"), conversation_id)
         if update := _UPDATE.match(message):
+            if pending:
+                return self._pending_conflict()
             return self._propose_update(update.group("old"), update.group("new"), conversation_id)
         if shared := _SHARED_MEMORY.match(message):
+            if pending:
+                return self._pending_conflict()
             return self._propose_shared_memory(
                 shared,
                 conversation_id=conversation_id,
                 project_id=project_id,
             )
         if thread := _OPEN_THREAD.match(message):
+            if pending:
+                return self._pending_conflict()
             return self._propose_open_thread(thread.group("body"), conversation_id)
         if thread := _RESOLVE_THREAD.match(message):
+            if pending:
+                return self._pending_conflict()
             return self._propose_resolve_thread(thread.group("body"), conversation_id)
         if complete := _COMPLETE.match(message):
+            if pending:
+                return self._pending_conflict()
             return self._propose_completion(complete.group("body"), conversation_id)
         if _COMPLETE_IMPLICIT.match(message):
             return MemoryIntentResult(
@@ -273,11 +322,9 @@ class MemoryIntentHandler:
             )
         match = _EXPLICIT_INTENT.match(message)
         if match:
+            if pending:
+                return self._pending_conflict()
             return self._propose(match, conversation_id=conversation_id, project_id=project_id)
-        if confirm := _CONFIRM.match(message):
-            return self._confirm(confirm.group("id"), conversation_id)
-        if reject := _REJECT.match(message):
-            return self._cancel(reject.group("id"), conversation_id)
         if _MEMORY_PREFIX.match(message):
             return MemoryIntentResult(
                 handled=True,
@@ -296,8 +343,25 @@ class MemoryIntentHandler:
             if records:
                 return self._render_commitments(records)
         if parsed := self.capability_router.route(message):
+            if pending and parsed.intent in {
+                CapabilityIntent.FORGET_MEMORY,
+                CapabilityIntent.CREATE_COMMITMENT,
+                CapabilityIntent.COMPLETE_COMMITMENT,
+                CapabilityIntent.OPEN_CONTINUITY,
+            }:
+                return self._pending_conflict()
             return self._handle_capability(parsed, conversation_id=conversation_id, project_id=project_id)
         return MemoryIntentResult(handled=False)
+
+    @staticmethod
+    def _pending_conflict() -> MemoryIntentResult:
+        return MemoryIntentResult(
+            handled=True,
+            response=(
+                "Сначала решим текущее предложение: подтверди его или выбери «не сейчас». "
+                "Новое пока не создаю."
+            ),
+        )
 
     def _handle_capability(self, parsed: ParsedCapabilityIntent, *, conversation_id: str, project_id: str) -> MemoryIntentResult:
         if parsed.intent is CapabilityIntent.QUERY_MEMORY:
@@ -427,7 +491,7 @@ class MemoryIntentHandler:
             record_id=view.record_id, conversation_id=conversation_id, replacement_payload=payload)
         return MemoryIntentResult(handled=True, response=(
             f"Обновить факт «{self._memory_line(view)}» на «{payload['subject']}: {payload['key']} — {payload['value']}»?\n"
-            f"Подтверди: да {proposal.id}"
+            "Подтверди обычным «да» или выбери «не сейчас»."
         ))
 
     def _propose_mutation(self, query: str, conversation_id: str, operation: MemoryMutationOperation) -> MemoryIntentResult:
@@ -441,7 +505,7 @@ class MemoryIntentHandler:
             record_id=view.record_id, conversation_id=conversation_id)
         return MemoryIntentResult(handled=True, response=(
             f"Скрыть из активной памяти: «{self._memory_line(view)}»? Это не удалит историю безвозвратно.\n"
-            f"Подтверди: да {proposal.id}"
+            "Подтверди обычным «да» или выбери «не сейчас»."
         ))
 
     def _find_memories(self, query: str):
@@ -594,7 +658,7 @@ class MemoryIntentHandler:
             handled=True,
             response=(
                 "Оставить это открытой нитью между разговорами?\n"
-                f"«{body.strip().rstrip('.')}»\nПодтверди: да {proposal.id}"
+                f"«{body.strip().rstrip('.')}»\nПодтверди обычным «да» или выбери «не сейчас»."
             ),
         )
 
@@ -616,7 +680,7 @@ class MemoryIntentHandler:
             )
         return MemoryIntentResult(
             handled=True,
-            response=f"Закрыть эту общую нить?\n«{body.strip()}»\nПодтверди: да {proposal.id}",
+            response=f"Закрыть эту общую нить?\n«{body.strip()}»\nПодтверди обычным «да» или выбери «не сейчас».",
         )
 
     def _propose_completion(self, text: str, conversation_id: str) -> MemoryIntentResult:
@@ -646,7 +710,7 @@ class MemoryIntentHandler:
         now = self.temporal_engine.clock.now_utc()
         payload.update(status="completed", completed_at=now.isoformat(), updated_at=now.isoformat())
         proposal = self.memory_management.propose(self.proposal_store, operation=MemoryMutationOperation.EDIT, record_id=view.record_id, conversation_id=conversation_id, replacement_payload=payload)
-        return MemoryIntentResult(handled=True, response=f"Отметить обязательство выполненным?\n«{view.payload['text']}»\nСтатус: открыто → выполнено.\nПодтверди: да {proposal.id}")
+        return MemoryIntentResult(handled=True, response=f"Отметить обязательство выполненным?\n«{view.payload['text']}»\nСтатус: открыто → выполнено.\nПодтверди обычным «да» или выбери «не сейчас».")
 
     def _propose(self, match: re.Match[str], *, conversation_id: str, project_id: str) -> MemoryIntentResult:
         body = match.group("body").strip().rstrip(".")
@@ -694,7 +758,7 @@ class MemoryIntentHandler:
             except Exception:
                 return MemoryIntentResult(
                     handled=True,
-                    response=f"Не смогла применить предложение {proposal.id}. Оно осталось ожидающим подтверждения.",
+                    response="Не смогла применить изменение. Оно осталось ожидающим подтверждения.",
                 )
             return MemoryIntentResult(
                 handled=True,
@@ -706,7 +770,7 @@ class MemoryIntentHandler:
             try:
                 self.memory_management.confirm_proposal(proposal, self.proposal_store)
             except Exception:
-                return MemoryIntentResult(handled=True, response=f"Не смогла применить предложение {proposal.id}. Оно осталось ожидающим подтверждения.")
+                return MemoryIntentResult(handled=True, response="Не смогла применить изменение. Оно осталось ожидающим подтверждения.")
             if proposal.operation == MemoryMutationOperation.FORGET.value:
                 return MemoryIntentResult(handled=True, response="Готово. Эта запись больше не используется как активная память.")
             if proposal.operation == MemoryMutationOperation.EDIT.value:
@@ -724,7 +788,7 @@ class MemoryIntentHandler:
         except Exception:
             return MemoryIntentResult(
                 handled=True,
-                response=f"Не смогла сохранить предложение {proposal.id}. Оно осталось ожидающим подтверждения.",
+                response="Не смогла сохранить изменение. Оно осталось ожидающим подтверждения.",
             )
         self.proposal_store.set_status(proposal.id, ProposalStatus.CONFIRMED)
         return MemoryIntentResult(handled=True, response="Готово, сохранила.")
@@ -745,13 +809,11 @@ class MemoryIntentHandler:
             if proposal is None or proposal.conversation_id != conversation_id:
                 return None, "Не вижу такого предложения в этом разговоре."
             return proposal, None
-        pending = self.proposal_store.pending_for_conversation(conversation_id)
-        if len(pending) == 1:
-            return pending[0], None
-        if not pending:
+        pending = self.proposal_store.current_for_conversation(conversation_id)
+        if pending is not None:
+            return pending, None
+        if pending is None:
             return None, "Сейчас нет предложения памяти, которое можно подтвердить."
-        ids = ", ".join(item.id for item in pending)
-        return None, f"Есть несколько предложений. Подтверди или отмени конкретное: да <id>. IDs: {ids}"
 
     @staticmethod
     def _record_type(kind: str | None) -> MemoryRecordType:
@@ -865,7 +927,7 @@ class MemoryIntentHandler:
             description = f"Могу сохранить это как эпизод: {record.summary}."
         else:
             description = f"Могу сохранить это как часть нашей истории: {record.content}."
-        return f"{description} Источник — твоё явное утверждение. Сохраняем? ID предложения: {proposal.id}"
+        return f"{description} Источник — твоё явное утверждение. Сохраняем?"
 
     @staticmethod
     def _now() -> datetime:

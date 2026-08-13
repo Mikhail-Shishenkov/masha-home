@@ -50,9 +50,11 @@ def test_production_frontend_keeps_desktop_composition_and_accessibility_contrac
     assert "home-attention-trigger" in html
     assert "safety-trigger" in html
     assert "recent-conversations" in html
+    assert "load-more-conversations" in html
     assert "operation-surface" in html
     assert "commitments-trigger" in html
     assert "commitments-surface" in html
+    assert "load-more-commitments" in html
     assert "activity-trigger" in html
     assert "activity-surface" in html
     assert "proactive-trigger" in html
@@ -100,6 +102,8 @@ def test_production_frontend_keeps_desktop_composition_and_accessibility_contrac
     assert "clearTimeout(sceneTransitionTimer)" in app_source
     assert 'window.addEventListener("blur", closeTemporarySurfaces)' not in app_source
     assert "bridge.loadWorkbench()" in app_source
+    assert "bridge.loadMoreConversations(offset)" in app_source
+    assert "bridge.loadMoreCommitments(offset)" in app_source
     assert "bridge.useModelProfile(profile.profile_id)" in app_source
     assert "transitionToSurface" in app_source
     assert "humanizeContinuityText" not in app_source
@@ -141,8 +145,10 @@ def test_webchannel_bridge_exposes_only_typed_allowlisted_slots():
     assert slots == {
         "loadInitialState",
         "loadRecentConversations",
+        "loadMoreConversations",
         "loadHomeAttention",
         "loadCommitments",
+        "loadMoreCommitments",
         "loadAgentRuns",
             "loadProactiveInteractions",
             "refreshProactiveInteractions",
@@ -204,7 +210,7 @@ def test_local_conversation_bridge_serializes_one_real_isolated_turn(tmp_path):
 
     bridge.loadRecentConversations()
     recent = next(item for item in events if item["kind"] == "recent_conversations")
-    assert recent["recent"][0]["conversation_id"] == result["result"]["conversation_id"]
+    assert recent["recent"]["items"][0]["conversation_id"] == result["result"]["conversation_id"]
     bridge.openConversation(result["result"]["conversation_id"])
     assert any(item["kind"] == "conversation_opened" for item in events)
 
@@ -831,6 +837,7 @@ def test_desktop_bridge_continues_a_real_confirmed_thread(tmp_path):
         project_id="masha-home",
     )
     thread = application.shared_continuity().open_threads[0]
+    before_threads = application.shared_continuity().open_threads
 
     bridge = LocalConversationBridge(application)
     events: list[dict] = []
@@ -849,6 +856,147 @@ def test_desktop_bridge_continues_a_real_confirmed_thread(tmp_path):
         "выбрать свет для комнаты" in message.content
         for message in application.conversation(conversation_id).messages
     )
+    assert result["result"]["pending_confirmation"] is None
+    assert application.shared_continuity().open_threads == before_threads
+    assert application.pending_confirmation(conversation_id) is None
+    restarted = build_masha_application(project_root=root, router=ModelRouter([LocalProfileProvider()]))
+    assert restarted.shared_continuity().open_threads == before_threads
+    bridge.close()
+
+
+def test_production_bridge_keeps_one_pending_confirmation_and_plain_yes_resolves_it(tmp_path):
+    import re
+
+    from backend.application import build_masha_application
+    from backend.llm.model_router import ModelRouter
+    from backend.ui.conversation_bridge import LocalConversationBridge
+    from tests.test_application_boundary import LocalProfileProvider, _isolated_root
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    root = _isolated_root(tmp_path)
+    application = build_masha_application(
+        project_root=root,
+        router=ModelRouter([LocalProfileProvider()]),
+    )
+    bridge = LocalConversationBridge(application)
+    events: list[dict] = []
+    bridge.event.connect(lambda encoded: events.append(json.loads(encoded)))
+    bridge.loadInitialState()
+
+    def submit(text):
+        before = len([item for item in events if item["kind"] == "turn_result"])
+        bridge.submitMessage(text)
+        deadline = time.monotonic() + 3
+        while len([item for item in events if item["kind"] == "turn_result"]) == before and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.01)
+        return [item for item in events if item["kind"] == "turn_result"][-1]["result"]
+
+    first = submit("Добавь дело купить корм собаке")
+    pending = first["pending_confirmation"]
+    assert pending is not None
+    uuid_pattern = re.compile(r"[0-9a-f]{8}-[0-9a-f-]{27}", re.IGNORECASE)
+    assert uuid_pattern.search(first["assistant_message"]["content"]) is None
+    assert uuid_pattern.search(pending["title"]) is None
+    assert uuid_pattern.search(pending["subject"]) is None
+
+    second = submit("Добавь дело заказать корм кошке")
+    assert "Сначала решим текущее предложение" in second["assistant_message"]["content"]
+    assert second["pending_confirmation"]["proposal_id"] == pending["proposal_id"]
+    handler = application._conversation._conversation.memory_intent_handler
+    assert len(handler.proposal_store.pending_for_conversation(first["conversation_id"])) == 1
+
+    confirmed = submit("да")
+    assert confirmed["pending_confirmation"] is None
+    assert confirmed["assistant_message"]["content"] == "Готово, сохранила."
+    texts = [item.text for item in application.commitments(limit=None).items]
+    assert "купить корм собаке" in texts
+    assert "заказать корм кошке" not in texts
+    bridge.close()
+
+
+def test_commitment_pagination_keeps_old_records_actionable_by_id(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    from backend.application import build_masha_application
+    from backend.llm.model_router import ModelRouter
+    from backend.memory.sqlite_repository import MemorySqliteRepository
+    from backend.ui.conversation_bridge import LocalConversationBridge
+    from tests.test_application_boundary import LocalProfileProvider, _isolated_root
+
+    root = _isolated_root(tmp_path)
+    application = build_masha_application(project_root=root, router=ModelRouter([LocalProfileProvider()]))
+    repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")
+    document = repository.read_document()
+    template = document.commitments[0]
+    now = datetime(2026, 8, 13, 10, 0, tzinfo=timezone.utc)
+    commitments = [
+        template.model_copy(update={
+            "id": template.id if index == 0 else f"commitment_page_{index:02d}",
+            "text": f"Дело {index:02d}",
+            "due_at": None,
+            "created_at": now - timedelta(days=index),
+            "updated_at": now - timedelta(days=index),
+        })
+        for index in range(15)
+    ]
+    repository.replace_document(document.model_copy(update={"commitments": commitments}))
+
+    bridge = LocalConversationBridge(application)
+    emitted: list[dict] = []
+    bridge.event.connect(lambda encoded: emitted.append(json.loads(encoded)))
+    bridge.loadInitialState()
+    bridge.loadCommitments()
+    first = [item for item in emitted if item["kind"] == "commitments_loaded"][-1]
+    assert len(first["commitments"]["items"]) == 10
+    assert first["commitments"]["has_more"] is True
+    bridge.loadMoreCommitments(first["commitments"]["next_offset"])
+    second = [item for item in emitted if item["kind"] == "commitments_loaded"][-1]
+    assert len(second["commitments"]["items"]) == 5
+    oldest = second["commitments"]["items"][-1]
+
+    bridge.proposeCommitmentCompletion(oldest["commitment_id"])
+    proposed = [item for item in emitted if item["kind"] == "commitment_completion_proposed"][-1]
+    assert proposed["result"]["pending_confirmation"]["subject"] == oldest["text"]
+    bridge.resolveConfirmation(proposed["result"]["pending_confirmation"]["proposal_id"], "confirm")
+    deadline = time.monotonic() + 3
+    while not any(item["kind"] == "confirmation_result" for item in emitted) and time.monotonic() < deadline:
+        (QCoreApplication.instance() or QCoreApplication([])).processEvents()
+        time.sleep(0.01)
+    stored = next(item for item in repository.read_document().commitments if item.id == oldest["commitment_id"])
+    assert stored.status.value == "completed"
+    bridge.close()
+
+
+def test_conversation_pagination_reaches_every_summary_and_preserves_selected_transcript(tmp_path):
+    from backend.application import build_masha_application
+    from backend.llm.model_router import ModelRouter
+    from backend.ui.conversation_bridge import LocalConversationBridge
+    from tests.test_application_boundary import LocalProfileProvider, _isolated_root
+
+    root = _isolated_root(tmp_path)
+    application = build_masha_application(project_root=root, router=ModelRouter([LocalProfileProvider()]))
+    turns = [application.send_message(f"Разговор {index}", project_id="project_masha_home") for index in range(15)]
+    selected_id = turns[0].conversation_id
+    for index in range(12):
+        application.send_message(f"Продолжение {index}", project_id="project_masha_home", conversation_id=selected_id)
+
+    bridge = LocalConversationBridge(application)
+    emitted: list[dict] = []
+    bridge.event.connect(lambda encoded: emitted.append(json.loads(encoded)))
+    bridge.loadInitialState()
+    bridge.loadRecentConversations()
+    first = [item for item in emitted if item["kind"] == "recent_conversations"][-1]["recent"]
+    assert len(first["items"]) == 10
+    assert first["items"][0]["conversation_id"] == selected_id
+    bridge.loadMoreConversations(first["next_offset"])
+    second = [item for item in emitted if item["kind"] == "recent_conversations"][-1]["recent"]
+    assert len(second["items"]) == 5
+    all_ids = {item["conversation_id"] for item in first["items"] + second["items"]}
+    assert len(all_ids) == 15
+    bridge.openConversation(selected_id)
+    opened = [item for item in emitted if item["kind"] == "conversation_opened"][-1]
+    assert len(opened["conversation"]["messages"]) == 26
     bridge.close()
 
 

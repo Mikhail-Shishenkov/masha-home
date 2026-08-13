@@ -12,7 +12,7 @@ from backend.temporal.proactive_daemon import ProactiveDaemon
 from backend.temporal.proactive_interaction import ProactiveInteractionStore
 
 from .catalogs import RUNTIME_STATUS_LABELS, proactive_reason_label
-from .contracts import MashaStatusView, SafetyView
+from .contracts import MashaStatusView, ProactiveDiagnosticView, SafetyView
 from .model_settings import ModelSettingsService
 
 
@@ -85,6 +85,20 @@ class MashaStatusService:
             ),
             proactive_last_cycle_at=(
                 None if latest_cycle is None else latest_cycle.finished_at
+            ),
+            proactive_diagnostics=(
+                ()
+                if latest_cycle is None
+                else tuple(
+                    ProactiveDiagnosticView(
+                        kind=item.kind,
+                        decision=item.decision,
+                        state=item.state,
+                        reason_code=item.reason,
+                        reason_label=proactive_reason_label(item.reason),
+                    )
+                    for item in latest_cycle.items
+                )
             ),
         )
 

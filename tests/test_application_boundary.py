@@ -178,6 +178,34 @@ def test_natural_commitment_variants_strip_service_words_and_require_confirmatio
         )
 
 
+def test_command_typo_can_use_semantic_fallback_but_bare_action_is_not_a_command(tmp_path):
+    semantic = LocalProfileProvider(response_text=json.dumps({
+        "intent": "create_commitment",
+        "confidence": 0.93,
+        "entity": "купить корм собаке",
+        "temporal_scope": None,
+    }, ensure_ascii=False))
+    _, _, application = _application(tmp_path / "typo", semantic)
+    repository = application._conversation._conversation.memory_retriever.memory_store
+    before = repository.read_document()
+
+    typo = application.send_message("добвь задачу купить корм собаке", project_id=PROJECT_ID)
+
+    assert typo.pending_confirmation is not None
+    assert typo.pending_confirmation.subject == "купить корм собаке"
+    assert repository.read_document().commitments == before.commitments
+
+    ordinary_provider = LocalProfileProvider(response_text="Звучит как понятное дело.")
+    _, _, ordinary_application = _application(tmp_path / "bare", ordinary_provider)
+    ordinary_repository = ordinary_application._conversation._conversation.memory_retriever.memory_store
+    ordinary_before = ordinary_repository.read_document()
+    bare = ordinary_application.send_message("купить корм собаке", project_id=PROJECT_ID)
+
+    assert bare.pending_confirmation is None
+    assert bare.assistant_message.content == "Звучит как понятное дело."
+    assert ordinary_repository.read_document().commitments == ordinary_before.commitments
+
+
 @pytest.mark.parametrize(
     ("provider", "status", "code"),
     [
@@ -974,6 +1002,56 @@ def test_today_query_accepts_production_utc_z_timestamps(tmp_path):
 
     assert result.status is ConversationTurnStatus.COMPLETED
     assert "Проверить UTC" in result.assistant_message.content
+
+
+def test_proactive_status_explains_second_due_reminder_suppression(tmp_path):
+    from backend.temporal.proactive import ProactivePolicy, ProactivePolicyStore
+
+    root, _, application = _application(
+        tmp_path,
+        LocalProfileProvider(response_text="Миша, это первое напоминание."),
+    )
+    repository = application._conversation._conversation.memory_retriever.memory_store
+    document = repository.read_document()
+    template = document.commitments[0]
+    now = datetime(2026, 8, 13, 8, 0, tzinfo=timezone.utc)
+    first = template.model_copy(update={"text": "Первое дело", "due_at": now - timedelta(minutes=1)})
+    second = template.model_copy(update={"id": "commitment_second_due", "text": "Второе дело", "due_at": now + timedelta(minutes=5)})
+    repository.replace_document(document.model_copy(update={"commitments": [first, second]}))
+    clock = FixedClock(now)
+    engine = TemporalEngine(clock)
+    conversation = application._conversation._conversation
+    conversation.temporal_engine = engine
+    conversation.memory_intent_handler.temporal_engine = engine
+    application._proactive._clock = clock
+    application._proactive._runtime.temporal_engine = engine
+    application._proactive._runtime.controlled.temporal_engine = engine
+    ProactivePolicyStore(root / "local-data" / "config" / "proactive-policy.json").save(
+        ProactivePolicy(
+            enabled=True,
+            proactive_level=1,
+            allow_commitment_reminders=True,
+            maximum_reminders=1,
+            daily_message_limit=1,
+            cooldown_seconds=0,
+            runtime_mode="background",
+            cycle_interval_seconds=10,
+        )
+    )
+
+    delivered = application.refresh_proactive_interactions()
+    assert len(delivered.items) == 1
+    application.resolve_proactive(delivered.items[0].interaction_id, "acknowledge")
+    clock.value = now + timedelta(minutes=6)
+    second_projection = application.refresh_proactive_interactions()
+
+    assert second_projection.items == ()
+    status = application.status()
+    reasons = [item.reason_code for item in status.proactive_diagnostics]
+    assert "daily_limit" in reasons
+    suppressed = next(item for item in status.proactive_diagnostics if item.reason_code == "daily_limit")
+    assert suppressed.state == "suppressed"
+    assert suppressed.reason_label == "Дневной лимит сообщений исчерпан"
 
 
 def test_open_continuity_threads_are_newest_first_and_restart_safe(tmp_path):

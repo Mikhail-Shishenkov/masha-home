@@ -14,6 +14,7 @@ from backend.application import ConversationTurnStatus, MashaApplication
 
 HOME_PROJECT_ID = "project_masha_home"
 MAX_MESSAGE_CHARACTERS = 4_000
+OBJECT_PAGE_SIZE = 10
 
 
 class LocalConversationBridge(QObject):
@@ -63,7 +64,7 @@ class LocalConversationBridge(QObject):
                 "recent": self._recent_payload(),
                 "commitments_count": sum(
                     item.can_propose_completion
-                    for item in self._application.commitments(limit=12).items
+                    for item in self._application.commitments(limit=None).items
                 ),
                 "agent_runs_count": len(self._application.agent_runs(limit=8).items),
                 "proactive_interactions_count": len(proactive.items),
@@ -81,10 +82,22 @@ class LocalConversationBridge(QObject):
         self._emit(
             {
                 "kind": "recent_conversations",
-                "recent": self._recent_payload(),
+                "recent": self._conversation_page_payload(0),
                 "active_conversation_id": self._conversation_id,
+                "append": False,
             }
         )
+
+    @Slot(int)
+    def loadMoreConversations(self, offset: int):  # noqa: N802
+        if self._application is None or self._turn_in_flight:
+            return
+        self._emit({
+            "kind": "recent_conversations",
+            "recent": self._conversation_page_payload(offset),
+            "active_conversation_id": self._conversation_id,
+            "append": True,
+        })
 
     @Slot()
     def loadHomeAttention(self):  # noqa: N802 - Qt slot name is part of the JS contract
@@ -105,13 +118,13 @@ class LocalConversationBridge(QObject):
         if self._application is None or self._turn_in_flight:
             self._emit({"kind": "commitments_unavailable"})
             return
-        commitments = self._application.commitments(limit=12)
+        commitments = self._application.commitments(limit=OBJECT_PAGE_SIZE, offset=0)
         if self._session is None:
             self._session = self._application.open_home_session()
         summary = (
             "Открытых дел нет"
             if not commitments.items
-            else f"Дел рядом: {len(commitments.items)}"
+            else f"Дел рядом: {commitments.total}"
         )
         snapshot = self._session_snapshot("commitments_opened", summary=summary)
         self._emit(
@@ -119,8 +132,24 @@ class LocalConversationBridge(QObject):
                 "kind": "commitments_loaded",
                 "commitments": commitments.model_dump(mode="json"),
                 "snapshot": snapshot.model_dump(mode="json"),
+                "append": False,
             }
         )
+
+    @Slot(int)
+    def loadMoreCommitments(self, offset: int):  # noqa: N802
+        if self._application is None or self._turn_in_flight:
+            return
+        commitments = self._application.commitments(
+            limit=OBJECT_PAGE_SIZE,
+            offset=max(0, offset),
+        )
+        self._emit({
+            "kind": "commitments_loaded",
+            "commitments": commitments.model_dump(mode="json"),
+            "snapshot": None,
+            "append": True,
+        })
 
     @Slot()
     def loadAgentRuns(self):  # noqa: N802 - Qt slot name is part of the JS contract
@@ -518,7 +547,7 @@ class LocalConversationBridge(QObject):
                 "kind": "conversation_opened",
                 "snapshot": snapshot.model_dump(mode="json"),
                 "conversation": conversation.model_dump(mode="json"),
-                "recent": self._recent_payload(),
+                "recent": self._conversation_page_payload(0),
                 "pending_confirmation": None if pending is None else pending.model_dump(mode="json"),
             }
         )
@@ -579,11 +608,7 @@ class LocalConversationBridge(QObject):
         if self._turn_in_flight:
             self._emit({"kind": "commitment_operation_rejected", "reason": "turn_in_flight"})
             return
-        visible = {
-            item.commitment_id: item
-            for item in self._application.commitments(limit=12).items
-        }
-        selected = visible.get(commitment_id)
+        selected = self._application.commitment(commitment_id)
         if selected is None or not selected.can_propose_completion:
             self._emit({"kind": "commitment_operation_rejected", "reason": "stale_or_invalid"})
             return
@@ -762,7 +787,7 @@ class LocalConversationBridge(QObject):
                     if self._application is None
                     else sum(
                         item.can_propose_completion
-                        for item in self._application.commitments(limit=12).items
+                        for item in self._application.commitments(limit=None).items
                     )
                 ),
             }
@@ -831,10 +856,19 @@ class LocalConversationBridge(QObject):
             return "Локальная модель"
         return self._session.active_model_display_name
 
-    def _recent_payload(self) -> list[dict]:
+    def _recent_payload(self) -> dict:
+        return self._conversation_page_payload(0)
+
+    def _conversation_page_payload(self, offset: int) -> dict:
         if self._application is None:
-            return []
-        return [item.model_dump(mode="json") for item in self._application.recent_conversations()]
+            return {
+                "items": [], "offset": 0, "page_size": OBJECT_PAGE_SIZE,
+                "total": 0, "has_more": False, "next_offset": None, "query": None,
+            }
+        return self._application.conversation_page(
+            offset=max(0, offset),
+            limit=OBJECT_PAGE_SIZE,
+        ).model_dump(mode="json")
 
     def _continuity_count(self) -> int:
         if self._application is None:

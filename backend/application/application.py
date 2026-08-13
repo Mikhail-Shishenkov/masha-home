@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from .contracts import (
     AgentRunListView,
     ConversationTurnResult,
+    ConversationPageView,
+    CommitmentView,
     CommitmentListView,
     CommitmentProposalResult,
     HonestHelpResolutionView,
@@ -78,8 +80,14 @@ class MashaApplication:
     def recent_conversations(self, *, limit: int | None = None) -> tuple[ConversationSummaryView, ...]:
         return self._conversation.recent_conversations(limit=limit)
 
-    def commitments(self, *, limit: int = 12) -> CommitmentListView:
-        return self._commitments.list(limit=limit)
+    def conversation_page(self, *, offset: int = 0, limit: int = 10, query: str | None = None) -> ConversationPageView:
+        return self._conversation.conversation_page(offset=offset, limit=limit, query=query)
+
+    def commitments(self, *, limit: int | None = 10, offset: int = 0) -> CommitmentListView:
+        return self._commitments.list(limit=limit, offset=offset)
+
+    def commitment(self, commitment_id: str) -> CommitmentView | None:
+        return self._commitments.get(commitment_id)
 
     def agent_runs(self, *, limit: int = 8) -> AgentRunListView:
         return self._activities.list(limit=limit)
@@ -109,6 +117,7 @@ class MashaApplication:
             prompt,
             project_id=project_id,
             conversation_id=conversation_id,
+            allow_capability_routing=False,
         )
 
     def reflection_workspace(self) -> ReflectionWorkspaceView:
@@ -184,7 +193,7 @@ class MashaApplication:
             emergency_stop_engaged=status.emergency_stop_engaged,
             safety_label=status.safety_label,
             commitments_count=sum(
-                item.can_propose_completion for item in self._commitments.list().items
+                item.can_propose_completion for item in self._commitments.list(limit=None).items
             ),
         )
 

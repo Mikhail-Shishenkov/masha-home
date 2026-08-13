@@ -65,6 +65,16 @@ class ConversationSummaryView(UiContract):
     preview: str = Field(min_length=1, max_length=160)
 
 
+class ConversationPageView(UiContract):
+    items: tuple[ConversationSummaryView, ...]
+    offset: int = Field(ge=0)
+    page_size: int = Field(ge=1)
+    total: int = Field(ge=0)
+    has_more: bool
+    next_offset: int | None = Field(default=None, ge=0)
+    query: str | None = None
+
+
 class CommitmentView(UiContract):
     commitment_id: str = Field(min_length=1)
     text: str = Field(min_length=1, max_length=500)
@@ -77,6 +87,12 @@ class CommitmentView(UiContract):
 class CommitmentListView(UiContract):
     observed_at: datetime
     items: tuple[CommitmentView, ...]
+    offset: int = Field(default=0, ge=0)
+    page_size: int = Field(default=10, ge=1)
+    total: int = Field(default=0, ge=0)
+    actionable_total: int = Field(default=0, ge=0)
+    has_more: bool = False
+    next_offset: int | None = Field(default=None, ge=0)
 
 
 class AgentStepView(UiContract):
@@ -115,6 +131,14 @@ class ProactiveInteractionView(UiContract):
 
 class ProactiveInteractionListView(UiContract):
     items: tuple[ProactiveInteractionView, ...]
+
+
+class ProactiveDiagnosticView(UiContract):
+    kind: Literal["reminder", "check_in"]
+    decision: str = Field(min_length=1, max_length=80)
+    state: str = Field(min_length=1, max_length=80)
+    reason_code: str = Field(min_length=1, max_length=120)
+    reason_label: str = Field(min_length=1, max_length=200)
 
 
 class RelationshipMomentView(UiContract):
@@ -397,3 +421,4 @@ class MashaStatusView(UiContract):
     proactive_reason_code: str | None = None
     proactive_reason_label: str | None = None
     proactive_last_cycle_at: datetime | None = None
+    proactive_diagnostics: tuple[ProactiveDiagnosticView, ...] = ()

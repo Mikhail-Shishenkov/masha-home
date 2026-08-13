@@ -1,4 +1,6 @@
 import json
+from datetime import timedelta
+from uuid import uuid4
 
 from backend.conversation.memory_intent import (
     MemoryIntentHandler,
@@ -102,22 +104,42 @@ def test_repeated_confirmation_is_idempotent(tmp_path, memory_path):
     assert sum(item["id"] == proposal.record_payload["id"] for item in store.data["facts"]) == 1
 
 
-def test_confirmation_is_bound_to_a_specific_proposal_when_two_are_pending(tmp_path, memory_path):
+def test_second_proposal_is_refused_while_one_confirmation_is_pending(tmp_path, memory_path):
     store = MemoryStore(memory_path)
     handler, proposals = _handler(tmp_path, store)
     handler.handle("Запомни, что я предпочитаю локальные модели", conversation_id="c", project_id=PROJECT_ID)
-    handler.handle("Запомни как решение проекта, что primary model — qwen3.5:9b", conversation_id="c", project_id=PROJECT_ID)
-    first, second = proposals.pending_for_conversation("c")
+    second = handler.handle("Запомни как решение проекта, что primary model — qwen3.5:9b", conversation_id="c", project_id=PROJECT_ID)
+    (first,) = proposals.pending_for_conversation("c")
 
-    ambiguous = handler.handle("Да", conversation_id="c", project_id=PROJECT_ID)
-    confirmed = handler.handle(f"Да {first.id}", conversation_id="c", project_id=PROJECT_ID)
+    confirmed = handler.handle("Да", conversation_id="c", project_id=PROJECT_ID)
 
-    assert "несколько предложений" in ambiguous.response
+    assert "Сначала решим текущее предложение" in second.response
+    assert first.id not in second.response
     assert confirmed.response == "Готово, сохранила."
     assert proposals.get(first.id).status == ProposalStatus.CONFIRMED
-    assert proposals.get(second.id).status == ProposalStatus.PENDING
     assert store.get_fact(first.record_payload["id"]) is not None
-    assert all(item["id"] != second.record_payload["id"] for item in store.data["decisions"])
+    assert all("qwen3.5:9b" not in item["decision"] for item in store.data["decisions"])
+
+
+def test_legacy_competing_pending_proposals_recover_to_newest_without_exposing_ids(tmp_path, memory_path):
+    store = MemoryStore(memory_path)
+    handler, proposals = _handler(tmp_path, store)
+    handler.handle("Запомни, что я предпочитаю локальные модели", conversation_id="c", project_id=PROJECT_ID)
+    first = proposals.pending_for_conversation("c")[0]
+    second = first.model_copy(update={
+        "id": str(uuid4()),
+        "created_at": first.created_at + timedelta(seconds=1),
+        "record_payload": {**first.record_payload, "id": f"fact_{uuid4()}"},
+    })
+    proposals._proposals[second.id] = second
+    proposals._save()
+
+    result = handler.handle("подтверждаю", conversation_id="c", project_id=PROJECT_ID)
+
+    assert result.response == "Готово, сохранила."
+    assert proposals.get(first.id).status is ProposalStatus.CANCELLED
+    assert proposals.get(second.id).status is ProposalStatus.CONFIRMED
+    assert first.id not in result.response and second.id not in result.response
 
 
 def test_explicit_decision_is_proposed_and_ordinary_statement_is_not_handled(tmp_path, memory_path):
