@@ -3,6 +3,7 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, QMetaMethod, QUrl
+from PySide6.QtWebEngineCore import QWebEngineUrlScheme
 
 from backend.ui.local_origin import FRONTEND_ROOT, LocalOriginError, build_masha_scheme, resolve_frontend_resource
 
@@ -10,6 +11,7 @@ from backend.ui.local_origin import FRONTEND_ROOT, LocalOriginError, build_masha
 def test_masha_scheme_is_secure_local_and_has_a_known_host_root():
     scheme = build_masha_scheme()
     assert bytes(scheme.name()) == b"masha"
+    assert scheme.syntax() == QWebEngineUrlScheme.Syntax.Host
     assert FRONTEND_ROOT == Path(__file__).resolve().parents[1] / "frontend"
     assert FRONTEND_ROOT.joinpath("index.html").is_file()
 
@@ -74,6 +76,10 @@ def test_production_frontend_keeps_desktop_composition_and_accessibility_contrac
     assert "Дом Маши · локально" not in html
     assert 'class="runtime-truth"' not in html
     assert "@media (max-width: 1280px)" in css
+    assert "height: min(72vh, 740px)" in css
+    assert ".recent-conversations { position: absolute; top: 52px; right: 0; bottom: 0; left: 0" in css
+    assert "max-height: min(52vh, 460px)" not in css
+    assert "border-bottom: 1px solid rgba(226,188,126,.2)" in css
     assert "@media (max-width: 1000px)" in css
     assert "@media (max-width: 780px)" in css
     assert "prefers-reduced-motion: reduce" in css

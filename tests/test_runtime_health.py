@@ -43,3 +43,31 @@ def test_missing_backup_is_warning_not_runtime_failure(tmp_path):
 
     assert next(item for item in report.checks if item.name == "backup").status == "warning"
     assert report.status == "degraded"
+
+
+def test_unexpected_daemon_probe_failure_degrades_with_truthful_detail(tmp_path):
+    root = tmp_path / "project"
+    source = Path(__file__).resolve().parents[1]
+    shutil.copytree(source / "identity", root / "identity")
+    MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3").import_json(
+        source / "tests" / "fixtures" / "test_memory.json"
+    )
+    service = build_service(project_root=root)
+    service.router = ModelRouter([FakeProvider(provider_id="ollama-local")])
+    daemon = ProactiveDaemon(
+        root,
+        process_probe=lambda _pid: (_ for _ in ()).throw(RuntimeError("probe exploded")),
+    )
+    daemon.lock_path.write_text("987654", encoding="ascii")
+
+    report = RuntimeHealthService(
+        service=service,
+        project_root=root,
+        daemon=daemon,
+    ).inspect()
+
+    check = next(item for item in report.checks if item.name == "daemon")
+    assert report.status == "degraded"
+    assert check.status == "warning"
+    assert "состояние неизвестно" in check.detail
+    assert "probe exploded" in check.detail

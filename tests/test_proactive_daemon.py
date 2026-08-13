@@ -1,4 +1,6 @@
 import os
+import subprocess
+import sys
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -51,6 +53,41 @@ def test_current_process_lock_is_detected_without_signalling_it(tmp_path, monkey
     monkeypatch.setattr(os, "kill", lambda *_: pytest.fail("must not signal current process"))
 
     assert daemon.is_running() is True
+
+
+def test_other_live_process_and_dead_pid_are_probed_without_signalling(tmp_path):
+    daemon = ProactiveDaemon(tmp_path)
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    try:
+        daemon.lock_path.write_text(str(child.pid), encoding="ascii")
+        assert daemon.is_running() is True
+    finally:
+        child.terminate()
+        child.wait(timeout=10)
+
+    assert daemon.is_running() is False
+
+
+def test_malformed_lock_and_unexpected_probe_failure_are_safe(tmp_path):
+    daemon = ProactiveDaemon(
+        tmp_path,
+        process_probe=lambda _pid: (_ for _ in ()).throw(RuntimeError("probe broke")),
+    )
+    daemon.lock_path.write_text("not-a-pid", encoding="ascii")
+    assert daemon.is_running() is False
+    assert daemon.liveness().state == "stopped"
+
+    daemon.lock_path.write_text(str(os.getpid() + 100_000), encoding="ascii")
+    assert daemon.is_running() is False
+    assert daemon.liveness().state == "unknown"
+    assert "probe broke" in daemon.liveness().detail
+
+    with pytest.raises(FileExistsError):
+        daemon.run(max_cycles=1)
+    assert daemon.lock_path.exists()
 
 
 def test_emergency_stop_prevents_daemon_service_build_and_exits(tmp_path, monkeypatch):

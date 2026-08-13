@@ -10,7 +10,7 @@ $ProjectRoot = $PSScriptRoot
 $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 
 if (-not (Test-Path -LiteralPath $Python)) {
-    Write-Error "Не найдено локальное Python-окружение: $Python"
+    Write-Error "Local Python environment was not found: $Python"
     exit 1
 }
 
@@ -28,12 +28,12 @@ switch ($Mode) {
     "permissions" { & $Python -m backend.skills.permissions_cli @RemainingArgs }
     "background" {
         Start-Process -FilePath $Python -ArgumentList @("-m", "backend.temporal.proactive_daemon", "--project-root", $ProjectRoot) -WorkingDirectory $ProjectRoot -WindowStyle Hidden
-        Write-Output "Фоновый Daily Runtime Маши запускается."
+        Write-Output "Masha Daily Runtime is starting."
     }
     "stop" {
         $StopFile = Join-Path $ProjectRoot "local-data\runtime\proactive-daemon.stop"
         New-Item -ItemType Directory -Force -Path (Split-Path $StopFile) | Out-Null
         Set-Content -LiteralPath $StopFile -Value "stop" -Encoding utf8
-        Write-Output "Остановка Daily Runtime запрошена."
+        Write-Output "Masha Daily Runtime stop requested."
     }
 }

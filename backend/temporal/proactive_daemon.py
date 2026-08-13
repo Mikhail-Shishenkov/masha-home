@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import os
 import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Callable, Literal
 
 from backend.runtime.daily_runtime import DailyCycleReceipt, DailyRuntime, DailyRuntimeJournal
 from backend.runtime.safety import AutonomySafetyStore
@@ -15,8 +18,80 @@ from backend.runtime.safety import AutonomySafetyStore
 from .proactive import ProactivePolicyStore
 
 
+@dataclass(frozen=True)
+class ProcessLiveness:
+    state: Literal["running", "stopped", "unknown"]
+    detail: str
+
+
+def _posix_process_is_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Signal 0 did not disturb the process; access denial still proves
+        # that the kernel knows the PID.
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _windows_process_is_running(pid: int) -> bool:
+    """Query a Windows PID without sending a console/control signal."""
+    from ctypes import wintypes
+
+    process_query_limited_information = 0x1000
+    still_active = 259
+    error_access_denied = 5
+    error_invalid_parameter = 87
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    open_process = kernel32.OpenProcess
+    open_process.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    open_process.restype = wintypes.HANDLE
+    get_exit_code = kernel32.GetExitCodeProcess
+    get_exit_code.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+    get_exit_code.restype = wintypes.BOOL
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = (wintypes.HANDLE,)
+    close_handle.restype = wintypes.BOOL
+
+    handle = open_process(process_query_limited_information, False, pid)
+    if not handle:
+        error_code = ctypes.get_last_error()
+        if error_code == error_invalid_parameter:
+            return False
+        if error_code == error_access_denied:
+            raise PermissionError(error_code, "access denied while probing process")
+        raise OSError(error_code, "OpenProcess failed")
+    try:
+        exit_code = wintypes.DWORD()
+        if not get_exit_code(handle, ctypes.byref(exit_code)):
+            error_code = ctypes.get_last_error()
+            raise OSError(error_code, "GetExitCodeProcess failed")
+        return exit_code.value == still_active
+    finally:
+        close_handle(handle)
+
+
+def _default_process_probe(pid: int) -> bool:
+    return (
+        _windows_process_is_running(pid)
+        if os.name == "nt"
+        else _posix_process_is_running(pid)
+    )
+
+
 class ProactiveDaemon:
-    def __init__(self, project_root: Path, *, sleep=time.sleep):
+    def __init__(
+        self,
+        project_root: Path,
+        *,
+        sleep=time.sleep,
+        process_probe: Callable[[int], bool] | None = None,
+    ):
         self.project_root = Path(project_root)
         self.runtime_dir = self.project_root / "local-data" / "runtime"
         self.runtime_dir.mkdir(parents=True, exist_ok=True)
@@ -28,6 +103,7 @@ class ProactiveDaemon:
             self.project_root / "local-data" / "config" / "autonomy-safety.json"
         )
         self.sleep = sleep
+        self._process_probe = process_probe or _default_process_probe
 
     def run(self, *, max_cycles: int | None = None):
         descriptor = None
@@ -77,25 +153,42 @@ class ProactiveDaemon:
         return json.loads(self.status_path.read_text(encoding="utf-8"))
 
     def is_running(self) -> bool:
-        if not self.lock_path.exists():
+        """Return a safe boolean; process-probe failures never escape."""
+        try:
+            return self.liveness().state == "running"
+        except Exception:
             return False
+
+    def liveness(self) -> ProcessLiveness:
+        if not self.lock_path.exists():
+            return ProcessLiveness("stopped", "lock file is absent")
         try:
             pid = int(self.lock_path.read_text(encoding="ascii"))
-            # On Windows os.kill(current_pid, 0) is not a harmless POSIX-style
-            # existence probe and can interrupt the caller.  Owning this lock
-            # ourselves is already deterministic proof that it is live.
-            if pid == os.getpid():
-                return True
-            os.kill(pid, 0)
-            return True
-        except (ValueError, OSError):
-            return False
+        except (ValueError, OSError, UnicodeError):
+            return ProcessLiveness("stopped", "lock file is malformed")
+        if pid <= 0:
+            return ProcessLiveness("stopped", "lock PID is invalid")
+        if pid == os.getpid():
+            return ProcessLiveness("running", f"process {pid} is current")
+        try:
+            running = self._process_probe(pid)
+        except Exception as error:
+            return ProcessLiveness(
+                "unknown",
+                f"process {pid} probe failed: {type(error).__name__}: {error}",
+            )
+        return ProcessLiveness(
+            "running" if running else "stopped",
+            f"process {pid} is {'running' if running else 'not running'}",
+        )
 
     def _acquire_lock(self):
         try:
             return os.open(self.lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError:
-            if self.is_running():
+            # Unknown includes access-denied and unexpected adapter failures.
+            # Never reclaim a lock unless the process is positively stale.
+            if self.liveness().state != "stopped":
                 raise
             self.lock_path.unlink(missing_ok=True)
             return os.open(self.lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)

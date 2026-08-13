@@ -411,6 +411,7 @@ class MashaStatusView(UiContract):
     proactive_enabled: bool
     proactive_label: str
     proactive_level: int = Field(ge=0, le=5)
+    commitment_reminders_allowed: bool = False
     runtime_mode: Literal["manual", "background"]
     runtime_mode_label: str
     daemon_running: bool

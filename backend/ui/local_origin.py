@@ -34,7 +34,8 @@ class LocalOriginError(ValueError):
 
 def build_masha_scheme() -> QWebEngineUrlScheme:
     scheme = QWebEngineUrlScheme(SCHEME_NAME)
-    scheme.setSyntax(QWebEngineUrlScheme.Syntax.HostAndPort)
+    # masha://home/... has a host but intentionally has no network port.
+    scheme.setSyntax(QWebEngineUrlScheme.Syntax.Host)
     scheme.setFlags(
         QWebEngineUrlScheme.Flag.SecureScheme
         | QWebEngineUrlScheme.Flag.LocalScheme

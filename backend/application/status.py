@@ -72,6 +72,7 @@ class MashaStatusService:
             proactive_enabled=policy.enabled,
             proactive_label="Инициативность включена" if policy.enabled else "Инициативность выключена",
             proactive_level=policy.proactive_level,
+            commitment_reminders_allowed=policy.allow_commitment_reminders,
             runtime_mode=policy.runtime_mode,
             runtime_mode_label="Фоновый режим" if policy.runtime_mode == "background" else "Ручной режим",
             daemon_running=self._daemon.is_running(),

@@ -3,6 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import subprocess
+import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -1083,6 +1086,66 @@ def test_proactive_status_explains_second_due_reminder_suppression(tmp_path):
     assert suppressed.reason_label == "Дневной лимит сообщений исчерпан"
 
 
+def test_opted_in_natural_two_minute_reminder_reaches_home_once(tmp_path):
+    from backend.temporal.proactive import ProactivePolicy, ProactivePolicyStore
+
+    root, _, application = _application(
+        tmp_path,
+        LocalProfileProvider(response_text="Миша, пора поставить чайник."),
+    )
+    now = datetime(2026, 8, 13, 8, 0, tzinfo=timezone.utc)
+    clock = FixedClock(now)
+    engine = TemporalEngine(clock)
+    conversation = application._conversation._conversation
+    conversation.temporal_engine = engine
+    conversation.memory_intent_handler.temporal_engine = engine
+    application._proactive._clock = clock
+    application._proactive._runtime.temporal_engine = engine
+    application._proactive._runtime.controlled.temporal_engine = engine
+    policy_store = ProactivePolicyStore(
+        root / "local-data" / "config" / "proactive-policy.json"
+    )
+    policy_store.save(
+        ProactivePolicy(
+            enabled=True,
+            proactive_level=1,
+            allow_commitment_reminders=True,
+            maximum_reminders=1,
+            daily_message_limit=1,
+            cooldown_seconds=0,
+            runtime_mode="background",
+            cycle_interval_seconds=10,
+        )
+    )
+
+    proposed = application.send_message(
+        "Маша, напомни, чтобы я поставил чайник через 2 минуты",
+        project_id=PROJECT_ID,
+    )
+    assert proposed.pending_confirmation.subject == "чтобы я поставил чайник"
+    assert proposed.pending_confirmation.due_at == now + timedelta(minutes=2)
+    application.resolve_confirmation(
+        conversation_id=proposed.conversation_id,
+        proposal_id=proposed.pending_confirmation.proposal_id,
+        decision="confirm",
+        project_id=PROJECT_ID,
+    )
+    clock.value = now + timedelta(minutes=2, seconds=1)
+
+    first = application.refresh_proactive_interactions()
+    second = application.refresh_proactive_interactions()
+
+    assert len(first.items) == len(second.items) == 1
+    assert first.items[0].interaction_id == second.items[0].interaction_id
+    assert first.items[0].message == "Миша, пора поставить чайник."
+    assert len(application._proactive._store.list()) == 1
+    status = application.status()
+    assert status.proactive_enabled is True
+    assert status.proactive_level == 1
+    assert status.runtime_mode == "background"
+    assert status.commitment_reminders_allowed is True
+
+
 def test_open_continuity_threads_are_newest_first_and_restart_safe(tmp_path):
     root, provider, application = _application(tmp_path)
     for text in ("первая открытая тема", "вторая открытая тема"):
@@ -1141,6 +1204,142 @@ def test_natural_resolve_routes_to_existing_thread_and_ambiguous_match_stays_ope
     assert [item.summary for item in application.shared_continuity().open_threads] == [
         "мяу и поездка к врачу"
     ]
+
+
+@pytest.mark.parametrize(
+    ("decision", "expected", "still_open"),
+    (("reject", "Нет, не закрыла", True), ("confirm", "Да, закрыла", False)),
+)
+def test_continuity_confirmation_outcome_owns_immediate_follow_up_truth(
+    tmp_path,
+    decision,
+    expected,
+    still_open,
+):
+    _, provider, application = _application(tmp_path)
+    created = application.send_message(
+        "Оставь это как открытую нить: выбор модели для длинных разговоров",
+        project_id=PROJECT_ID,
+    )
+    application.resolve_confirmation(
+        conversation_id=created.conversation_id,
+        proposal_id=created.pending_confirmation.proposal_id,
+        decision="confirm",
+        project_id=PROJECT_ID,
+    )
+    proposed = application.send_message(
+        "Маша, закрой нить про выбор модели для длинных разговоров",
+        project_id=PROJECT_ID,
+        conversation_id=created.conversation_id,
+    )
+    application.resolve_confirmation(
+        conversation_id=created.conversation_id,
+        proposal_id=proposed.pending_confirmation.proposal_id,
+        decision=decision,
+        project_id=PROJECT_ID,
+    )
+
+    result = application.send_message(
+        "Ну всё, значит закрыла",
+        project_id=PROJECT_ID,
+        conversation_id=created.conversation_id,
+    )
+
+    assert expected in result.assistant_message.content
+    assert provider.last_request is None
+    assert (
+        "выбор модели для длинных разговоров"
+        in [item.summary for item in application.shared_continuity().open_threads]
+    ) is still_open
+
+
+def test_ordinary_close_discussion_after_rejection_remains_a_model_turn(tmp_path):
+    provider = LocalProfileProvider(response_text="Давай сначала обсудим, готова ли тема завершиться.")
+    _, _, application = _application(tmp_path, provider)
+    created = application.send_message(
+        "Оставь это как открытую нить: архитектура разговора",
+        project_id=PROJECT_ID,
+    )
+    application.resolve_confirmation(
+        conversation_id=created.conversation_id,
+        proposal_id=created.pending_confirmation.proposal_id,
+        decision="confirm",
+        project_id=PROJECT_ID,
+    )
+    proposed = application.send_message(
+        "закрой нить про архитектуру разговора",
+        project_id=PROJECT_ID,
+        conversation_id=created.conversation_id,
+    )
+    application.resolve_confirmation(
+        conversation_id=created.conversation_id,
+        proposal_id=proposed.pending_confirmation.proposal_id,
+        decision="reject",
+        project_id=PROJECT_ID,
+    )
+
+    result = application.send_message(
+        "может, эту тему стоит закрыть",
+        project_id=PROJECT_ID,
+        conversation_id=created.conversation_id,
+    )
+
+    assert result.assistant_message.content == provider.response_text
+    assert provider.last_request is not None
+    assert application.shared_continuity().open_threads[0].summary == "архитектура разговора"
+
+
+def test_live_background_daemon_does_not_prevent_home_session_open(tmp_path):
+    from backend.temporal.proactive import ProactivePolicy, ProactivePolicyStore
+
+    root, _, application = _application(tmp_path)
+    ProactivePolicyStore(root / "local-data" / "config" / "proactive-policy.json").save(
+        ProactivePolicy(runtime_mode="manual", cycle_interval_seconds=10)
+    )
+    daemon = application._status._daemon
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "backend.temporal.proactive_daemon",
+            "--project-root",
+            str(root),
+        ],
+        cwd=PROJECT_ROOT,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not daemon.is_running() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert daemon.is_running() is True
+
+        opened = application.open_home_session().opened()
+
+        assert opened.status.daemon_running is True
+        assert child.poll() is None
+    finally:
+        daemon.request_stop()
+        child.wait(timeout=10)
+    assert daemon.is_running() is False
+
+
+def test_home_start_degrades_when_daemon_probe_is_unknown(tmp_path):
+    _, _, application = _application(tmp_path)
+    daemon = application._status._daemon
+    daemon.lock_path.write_text("987654", encoding="ascii")
+    daemon._process_probe = lambda _pid: (_ for _ in ()).throw(
+        RuntimeError("unexpected probe failure")
+    )
+
+    report = application._status._health.inspect()
+    opened = application.open_home_session().opened()
+
+    daemon_check = next(item for item in report.checks if item.name == "daemon")
+    assert daemon_check.status == "warning"
+    assert "состояние неизвестно" in daemon_check.detail
+    assert opened.status.runtime_status == "degraded"
+    assert opened.status.daemon_running is False
 
 
 def test_infinitive_continuity_resolve_keeps_typed_clarification_context(tmp_path):

@@ -42,7 +42,7 @@ class RuntimeHealthService:
             self._model(),
             self._policy(),
             self._backup(),
-            HealthCheck(name="daemon", status="ok" if self.daemon.is_running() else "warning", detail="работает" if self.daemon.is_running() else "не запущен"),
+            self._daemon(),
         )
         if any(item.status == "error" for item in checks):
             status = "unavailable"
@@ -51,6 +51,25 @@ class RuntimeHealthService:
         else:
             status = "ready"
         return RuntimeHealthReport(status=status, checks=checks)
+
+    def _daemon(self) -> HealthCheck:
+        try:
+            liveness = self.daemon.liveness()
+        except Exception as error:
+            return HealthCheck(
+                name="daemon",
+                status="warning",
+                detail=f"состояние неизвестно: {type(error).__name__}: {error}",
+            )
+        if liveness.state == "running":
+            return HealthCheck(name="daemon", status="ok", detail="работает")
+        if liveness.state == "stopped":
+            return HealthCheck(name="daemon", status="warning", detail="не запущен")
+        return HealthCheck(
+            name="daemon",
+            status="warning",
+            detail=f"состояние неизвестно: {liveness.detail}",
+        )
 
     def _identity_memory(self) -> HealthCheck:
         try:

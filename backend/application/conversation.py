@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict
 
 from backend.conversation.conversation_models import ConversationMessage, ConversationRole
 from backend.conversation.conversation_service import ConversationService, ConversationUnavailableError
@@ -25,17 +29,40 @@ from .contracts import (
 from .model_settings import ModelSettingsService
 
 
+class LastApplicationAction(BaseModel):
+    """One-turn application-owned truth after a confirmation decision."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    conversation_id: str
+    entity_type: str
+    entity_id: str | None
+    operation: str
+    subject: str
+    result: Literal["confirmed", "rejected", "failed"]
+    occurred_at: datetime
+
+
 class ConversationApplicationService:
     _PROPOSAL_ID = re.compile(
         r"(?:ID предложения:\s*|Подтверди:\s*да\s+)[0-9a-f-]{36}",
         re.IGNORECASE,
     )
+    _ACTION_OUTCOME_FOLLOW_UP = re.compile(
+        r"(?:\bзначит\b|\bто\s+есть\b|\bполучается\b|\bвыходит\b|\bну\s+вс[её]\b)"
+        r"[\s,!?.—-]*(?:(?:ты|мы)\s+)?(?:вс[её]-?таки\s+)?"
+        r"(?:е[её]\s+|эту\s+(?:нить|тему)\s+)?"
+        r"(?:закрыл(?:а|и|ась)?|завершил(?:а|и)?|убрал(?:а|и)?)\b",
+        re.IGNORECASE,
+    )
+
     def __init__(self, *, conversation: ConversationService, models: ModelSettingsService):
         self._conversation = conversation
         self._models = models
         # Session-scoped typed context; SharedContinuityService remains the
         # owner of the actual thread and its lifecycle.
         self._active_continuity_by_conversation: dict[str, str] = {}
+        self._last_application_action_by_conversation: dict[str, LastApplicationAction] = {}
 
     def conversation(self, conversation_id: str, *, limit: int | None = None) -> ConversationView:
         try:
@@ -186,6 +213,9 @@ class ConversationApplicationService:
     ) -> ConfirmationResolutionResult:
         if decision not in {"confirm", "reject"}:
             raise ValueError("unsupported confirmation decision")
+        handler = self._conversation.memory_intent_handler
+        proposal = None if handler is None else handler.proposal_store.get(proposal_id)
+        action = None if proposal is None else self._proposal_action(proposal)
         response, proposal_status = self._conversation.resolve_memory_proposal(
             conversation_id=conversation_id,
             proposal_id=proposal_id,
@@ -210,6 +240,15 @@ class ConversationApplicationService:
             status = ConfirmationResolutionStatus.REJECTED
         else:
             status = ConfirmationResolutionStatus.FAILED
+        if action is not None:
+            self._last_application_action_by_conversation[conversation_id] = (
+                action.model_copy(
+                    update={
+                        "result": status.value,
+                        "occurred_at": datetime.now(timezone.utc),
+                    }
+                )
+            )
         return ConfirmationResolutionResult(
             proposal_id=proposal_id,
             conversation_id=conversation_id,
@@ -230,6 +269,13 @@ class ConversationApplicationService:
     ) -> ConversationTurnResult:
         active_profile_id = self._models.current().profile_id
         resolved_id = conversation_id
+        action_follow_up = self._action_follow_up(
+            content,
+            conversation_id=conversation_id,
+            profile_id=active_profile_id,
+        )
+        if action_follow_up is not None:
+            return action_follow_up
         active_thread_id = active_continuity_thread_id or (
             None
             if conversation_id is None
@@ -297,6 +343,94 @@ class ConversationApplicationService:
             conversation_id=resolved_id,
             status=ConversationTurnStatus.COMPLETED,
             profile_id=active_profile_id,
+        )
+
+    def _action_follow_up(
+        self,
+        content: str,
+        *,
+        conversation_id: str | None,
+        profile_id: str,
+    ) -> ConversationTurnResult | None:
+        if conversation_id is None:
+            return None
+        action = self._last_application_action_by_conversation.pop(
+            conversation_id,
+            None,
+        )
+        if (
+            action is None
+            or action.operation != "resolve"
+            or not self._ACTION_OUTCOME_FOLLOW_UP.search(content)
+        ):
+            return None
+        user = self._conversation.history.append(
+            conversation_id,
+            ConversationRole.USER,
+            content,
+        )
+        if action.result == "confirmed":
+            response = (
+                f"Да, закрыла — нить «{action.subject}» действительно завершена."
+            )
+        elif action.result == "rejected":
+            response = (
+                "Нет, не закрыла — ты выбрал «не сейчас», поэтому нить "
+                f"«{action.subject}» осталась открытой."
+            )
+        else:
+            response = (
+                "Нет подтверждения, что нить была закрыта: применение изменения "
+                "не завершилось."
+            )
+        assistant = self._conversation.history.append(
+            conversation_id,
+            ConversationRole.ASSISTANT,
+            response,
+        )
+        return ConversationTurnResult(
+            conversation_id=conversation_id,
+            user_message=self._message(user),
+            assistant_message=self._message(assistant),
+            status=ConversationTurnStatus.COMPLETED,
+            active_profile_id=profile_id,
+            pending_confirmation=self.pending_confirmation(conversation_id),
+        )
+
+    def _proposal_action(self, proposal) -> LastApplicationAction:
+        _, _, subject = self._confirmation_copy(proposal)
+        entity_id = None
+        operation = proposal.operation
+        entity_type = proposal.record_type
+        if proposal.record_type == "continuity_state":
+            rows = proposal.record_payload.get("intended_follow_ups") or []
+            handler = self._conversation.memory_intent_handler
+            continuity = None if handler is None else handler.shared_continuity
+            open_ids = (
+                set()
+                if continuity is None
+                else {item.id for _, item in continuity.open_follow_ups()}
+            )
+            resolved = next(
+                (
+                    item
+                    for item in rows
+                    if item.get("status") == "resolved" and item.get("id") in open_ids
+                ),
+                None,
+            )
+            if resolved is not None:
+                entity_type = "continuity_thread"
+                entity_id = resolved.get("id")
+                operation = "resolve"
+        return LastApplicationAction(
+            conversation_id=proposal.conversation_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            operation=operation,
+            subject=subject,
+            result="failed",
+            occurred_at=datetime.now(timezone.utc),
         )
 
     def _result(
