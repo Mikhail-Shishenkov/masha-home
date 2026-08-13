@@ -7,7 +7,7 @@ from backend.memory.confirmed_memory_service import (
     ExplicitMemoryConfirmation,
 )
 from backend.memory.memory_models import IdentityCode, SourceType
-from backend.memory.memory_retriever import MemoryRetriever
+from backend.memory.memory_retriever import MemoryRetrievalRequest, MemoryRetriever
 from backend.memory.memory_store import MemoryStore
 from backend.memory.sqlite_activation import activate_sqlite_memory
 from backend.memory.sqlite_repository import MemorySqliteRepository
@@ -96,7 +96,16 @@ def test_confirmed_memory_audits_and_retrieves_through_sqlite(tmp_path, memory_p
         ExplicitMemoryConfirmation(confirmed_by=IdentityCode.MISHA, record=fact)
     )
 
-    assert any(item["data"]["id"] == fact.id for item in MemoryRetriever(repository).retrieve("project_masha_home", 20))
+    assert any(
+        item["data"]["id"] == fact.id
+        for item in MemoryRetriever(repository).retrieve(
+            MemoryRetrievalRequest(
+                query="sqlite preference local models",
+                project_id="project_masha_home",
+                limit=20,
+            )
+        )
+    )
     event = repository.list_audit_events()[-1]
     assert event["action"] == "confirmed_memory"
     assert event["payload"]["who"] == "misha"

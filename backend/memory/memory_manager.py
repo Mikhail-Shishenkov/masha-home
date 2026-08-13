@@ -1,5 +1,5 @@
 from backend.memory.memory_store import MemoryStore
-from backend.memory.memory_retriever import MemoryRetriever
+from backend.memory.memory_retriever import MemoryRetrievalRequest, MemoryRetriever
 from backend.memory.working_memory import WorkingMemory
 
 
@@ -17,11 +17,11 @@ class MemoryManager:
     def load_working_memory(
         self,
         project_id: str,
+        query: str,
         limit: int = 10,
     ):
         memories = self.retriever.retrieve(
-            project_id=project_id,
-            limit=limit,
+            MemoryRetrievalRequest(query=query, project_id=project_id, limit=limit)
         )
 
         self.working_memory.load(memories)
@@ -64,9 +64,18 @@ class MemoryManager:
 
         self.store.save()
 
+        collection = self.store._find_collection(memory_type)
+        restored = next(
+            (
+                item
+                for item in self.store.data.get(collection or "", [])
+                if item.get("id") == memory_id
+            ),
+            None,
+        )
+        query = "" if restored is None else self.retriever.searchable_text(memory_type, restored)
         memories = self.retriever.retrieve(
-            project_id=project_id,
-            limit=limit,
+            MemoryRetrievalRequest(query=query, project_id=project_id, limit=limit)
         )
 
         for memory in memories:

@@ -1,4 +1,4 @@
-from backend.memory.memory_retriever import MemoryRetriever
+from backend.memory.memory_retriever import MemoryRetrievalRequest, MemoryRetriever
 from backend.memory.memory_store import MemoryStore
 
 
@@ -9,7 +9,13 @@ PROJECT_ID = "project_masha_home"
 def _retrieved_ids(retriever: MemoryRetriever) -> set[str]:
     return {
         item["data"]["id"]
-        for item in retriever.retrieve(project_id=PROJECT_ID, limit=20)
+        for item in retriever.retrieve(
+            MemoryRetrievalRequest(
+                query="repository github masha home",
+                project_id=PROJECT_ID,
+                limit=20,
+            )
+        )
     }
 
 

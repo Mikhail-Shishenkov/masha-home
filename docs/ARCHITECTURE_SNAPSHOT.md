@@ -128,10 +128,11 @@ MemoryDocument v0.4 validates all IDs, ownership and graph links
  └─ MemorySqliteRepository (implemented separately; not wired in)
 ```
 
-`MemoryRetriever` currently retrieves visible active/open/current facts,
-decisions, commitments and episodes by project, scoring importance, recency and
-type bonus. It does not retrieve all v0.4 record types. `WorkingMemory` limits
-the in-process selection to ten items.
+`MemoryRetriever` accepts a typed query, project, record bound, context lens and
+character budget. It filters visible active/open/current v0.4 records by the
+selected lens, ranks meaningful user-facing fields with dominant deterministic
+lexical relevance, and may return no records. `WorkingMemory` receives only the
+bounded selection; ordinary conversation uses a six-record default.
 
 ## CONTEXT / IDENTITY / PERSONA
 

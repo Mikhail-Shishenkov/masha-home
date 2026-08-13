@@ -7,7 +7,7 @@ from backend.llm.model_models import ModelMessage
 from backend.llm.model_provider import ModelProviderUnavailableError, ModelTimeoutError
 from backend.llm.model_router import ModelRouter
 from backend.llm.model_profiles import ModelProfileStore
-from backend.memory.memory_retriever import MemoryRetriever
+from backend.memory.memory_retriever import ContextLens, MemoryRetrievalRequest, MemoryRetriever
 from backend.memory.working_memory import WorkingMemory
 from backend.temporal.temporal_engine import TemporalEngine
 
@@ -23,16 +23,46 @@ class ConversationUnavailableError(RuntimeError):
     """Controlled application error; callers should present it without a traceback."""
 
 
+_LENS_SPACE = re.compile(r"\s+")
+_LENS_PUNCTUATION = re.compile(r"[^\w\s'-]+", re.UNICODE)
 _SHARED_CONTINUITY_QUERY = re.compile(
     r"\b(?:между\s+нами|наш(?:а|ей|у)\s+истори(?:я|и|ю)|общ(?:ая|ей|ую)\s+истори(?:я|и|ю)|"
-    r"открыт(?:ая|ые|ую)\s+нит(?:ь|и)|что\s+у\s+нас\s+продолжается)\b",
-    re.IGNORECASE,
+    r"открыт(?:ая|ые|ую)\s+нит(?:ь|и)|что\s+у\s+нас\s+продолжается)\b"
 )
 _PERSPECTIVE_QUERY = re.compile(
-    r"\b(?:что\s+ты\s+думаешь|как\s+изменилось\s+тво[её]\s+мнение|"
-    r"ты\s+вс[её]\s+ещ[её]\s+так\s+считаешь|тво[иия]\s+рефлекси)\b",
-    re.IGNORECASE,
+    r"\b(?:"
+    r"что\s+ты(?:\s+сама)?\s+думаешь|"
+    r"ты(?:\s+сама)?\s+что\s+думаешь|"
+    r"каково\s+твое\s+мнение|"
+    r"как\s+изменилось\s+твое\s+мнение|"
+    r"ты\s+все\s+еще\s+так\s+считаешь|"
+    r"тво(?:е\s+мнение|и\s+рефлекси\w*)"
+    r")\b"
 )
+
+
+def _normalized_lens_query(value: str) -> str:
+    text = value.casefold().replace("ё", "е")
+    return _LENS_SPACE.sub(" ", _LENS_PUNCTUATION.sub(" ", text)).strip()
+
+
+def select_context_lens(user_message: str) -> ContextLens:
+    """Classify only the three established context lenses, deterministically."""
+    query = _normalized_lens_query(user_message)
+    if _SHARED_CONTINUITY_QUERY.search(query):
+        return ContextLens.SHARED_CONTINUITY
+    if _PERSPECTIVE_QUERY.search(query):
+        return ContextLens.MASHA_PERSPECTIVE
+    return ContextLens.GENERAL
+
+
+def _retrieval_query(user_message: str, lens: ContextLens) -> str:
+    """Remove only lens framing so it cannot masquerade as topical evidence."""
+    if lens is not ContextLens.MASHA_PERSPECTIVE:
+        return user_message
+    normalized = _normalized_lens_query(user_message)
+    topic = _LENS_SPACE.sub(" ", _PERSPECTIVE_QUERY.sub(" ", normalized)).strip()
+    return topic
 
 
 class ConversationService:
@@ -119,25 +149,15 @@ class ConversationService:
                 self.history.append(conversation.id, ConversationRole.ASSISTANT, intent.response)
                 return conversation.id, intent.response
 
-        retrieval_limit = self.memory_limit
-        if _PERSPECTIVE_QUERY.search(user_message):
-            retrieval_limit = max(self.memory_limit * 4, 20)
-        memories = self.memory_retriever.retrieve(project_id=project_id, limit=retrieval_limit)
-        context_lens = "general"
-        if _SHARED_CONTINUITY_QUERY.search(user_message):
-            context_lens = "shared_continuity"
-            memories = [
-                item
-                for item in memories
-                if item["type"] in {"relationship_memory", "continuity_state"}
-            ]
-        elif _PERSPECTIVE_QUERY.search(user_message):
-            context_lens = "masha_perspective"
-            memories = [
-                item for item in memories if item["type"] == "reflection"
-            ][: self.memory_limit]
-        else:
-            memories = [item for item in memories if item["type"] != "reflection"]
+        context_lens = select_context_lens(user_message)
+        memories = self.memory_retriever.retrieve(
+            MemoryRetrievalRequest(
+                query=_retrieval_query(user_message, context_lens),
+                project_id=project_id,
+                limit=self.memory_limit,
+                lens=context_lens,
+            )
+        )
         self.working_memory.load(memories)
         active_profile = None if self.model_profiles is None else self.model_profiles.get_active_profile()
         request = self.context_compiler.compile(
@@ -151,7 +171,7 @@ class ConversationService:
             execution_model_id=None if active_profile is None else active_profile.model_id,
             execution_think=False if active_profile is None else active_profile.think,
             execution_timeout_seconds=30.0 if active_profile is None else active_profile.timeout_seconds,
-            context_lens=context_lens,
+            context_lens=context_lens.value,
         )
         try:
             response = self.router.generate(request)

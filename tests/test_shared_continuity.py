@@ -18,7 +18,7 @@ from backend.llm.fake_provider import FakeProvider
 from backend.llm.model_router import ModelRouter
 from backend.memory.confirmed_memory_service import ConfirmedMemoryService
 from backend.memory.memory_models import ContinuityFollowUp, ContinuityState, FollowUpStatus
-from backend.memory.memory_retriever import MemoryRetriever
+from backend.memory.memory_retriever import ContextLens, MemoryRetrievalRequest, MemoryRetriever
 from backend.memory.shared_continuity import SharedContinuityService
 from backend.memory.sqlite_repository import MemorySqliteRepository
 from backend.memory.working_memory import WorkingMemory
@@ -173,8 +173,14 @@ def test_retrieval_and_context_keep_shared_semantics_bounded(tmp_path):
     )
     continuity.confirm_proposal(proposal, handler.proposal_store)
 
-    retrieved = MemoryRetriever(repository).retrieve(project_id=PROJECT_ID, limit=2)
-    shared = [item for item in retrieved if item["type"] in {"relationship_memory", "continuity_state"}]
+    shared = MemoryRetriever(repository).retrieve(
+        MemoryRetrievalRequest(
+            query="Что между нами продолжается?",
+            project_id=PROJECT_ID,
+            limit=2,
+            lens=ContextLens.SHARED_CONTINUITY,
+        )
+    )
     request = ConversationContextCompiler(clock=lambda: NOW).compile(
         messages=(ModelMessage(role="user", content="Что между нами продолжается?"),),
         identity_context=IdentityKernel(
@@ -196,10 +202,7 @@ def test_retrieval_and_context_keep_shared_semantics_bounded(tmp_path):
     assert "affective_record_ids" not in state
     assert "НЕ Commitment" in request.private_context["shared_continuity_contract"]
     assert "Не обобщай" in request.private_context["shared_continuity_contract"]
-    assert any(
-        "bounded_shared_continuity_coverage" in item["reasons"]
-        for item in shared
-    )
+    assert all("broad_lens_selection" in item["reasons"] for item in shared)
 
 
 def test_human_continuity_cli_hides_internal_ids(tmp_path):
@@ -287,7 +290,14 @@ def test_corrupt_legacy_thread_is_quarantined_without_storage_mutation(tmp_path)
     assert "Скрыты повреждённые legacy-фрагменты: 1" in continuity.render()
     assert all(
         item["type"] != "continuity_state"
-        for item in MemoryRetriever(repository).retrieve(project_id=PROJECT_ID, limit=20)
+        for item in MemoryRetriever(repository).retrieve(
+            MemoryRetrievalRequest(
+                query="Что есть в нашей истории?",
+                project_id=PROJECT_ID,
+                limit=20,
+                lens=ContextLens.SHARED_CONTINUITY,
+            )
+        )
     )
     assert repository.read_document().model_dump(mode="json") == before
 

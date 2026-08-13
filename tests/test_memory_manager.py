@@ -15,7 +15,11 @@ def test_manager_updates_working_memory_on_forget_and_restore(
         working_memory=working_memory,
     )
 
-    manager.load_working_memory("project_masha_home", limit=10)
+    manager.load_working_memory(
+        "project_masha_home",
+        query="repository github",
+        limit=10,
+    )
     assert working_memory.contains("fact_001")
 
     assert manager.forget("fact", "fact_001") is True
