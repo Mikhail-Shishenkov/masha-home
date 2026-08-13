@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError
 
 from backend.memory.confirmed_memory_service import (
     ConfirmedMemoryService,
@@ -196,8 +196,9 @@ class MemoryProposalStore:
             raise ValueError(f"proposal already exists: {proposal.id}")
         if self.pending_for_conversation(proposal.conversation_id):
             raise PendingProposalConflict("a confirmation is already pending")
-        self._proposals[proposal.id] = proposal
-        self._save()
+        updated = {**self._proposals, proposal.id: proposal}
+        self._save(updated)
+        self._proposals = updated
         return proposal
 
     def get(self, proposal_id: str) -> MemoryProposal | None:
@@ -224,18 +225,21 @@ class MemoryProposalStore:
             return None
         current = pending[-1]
         if len(pending) > 1:
+            updated = dict(self._proposals)
             for stale in pending[:-1]:
-                self._proposals[stale.id] = stale.model_copy(
+                updated[stale.id] = stale.model_copy(
                     update={"status": ProposalStatus.CANCELLED}
                 )
-            self._save()
+            self._save(updated)
+            self._proposals = updated
         return current
 
     def set_status(self, proposal_id: str, status: ProposalStatus) -> MemoryProposal:
         proposal = self._proposals[proposal_id]
         updated = proposal.model_copy(update={"status": status})
-        self._proposals[proposal_id] = updated
-        self._save()
+        proposals = {**self._proposals, proposal_id: updated}
+        self._save(proposals)
+        self._proposals = proposals
         return updated
 
     def _load(self) -> dict[str, MemoryProposal]:
@@ -247,11 +251,12 @@ class MemoryProposalStore:
             for item in raw.get("proposals", [])
         }
 
-    def _save(self) -> None:
+    def _save(self, proposals: dict[str, MemoryProposal] | None = None) -> None:
+        snapshot = self._proposals if proposals is None else proposals
         temporary = self.file_path.with_suffix(".tmp")
         temporary.write_text(
             json.dumps(
-                {"proposals": [item.model_dump(mode="json") for item in self._proposals.values()]},
+                {"proposals": [item.model_dump(mode="json") for item in snapshot.values()]},
                 ensure_ascii=False,
                 indent=2,
             )
@@ -298,6 +303,12 @@ class ConfirmationFailureDiagnostic(BaseModel):
     record_type: str = Field(min_length=1)
     proposal_id: str = Field(min_length=1)
     record_id: str | None = None
+    stage: Literal[
+        "proposal_validation",
+        "repository_write",
+        "postcondition_check",
+        "proposal_status",
+    ]
     timestamp: AwareDatetime
 
 
@@ -1156,42 +1167,104 @@ class MemoryIntentHandler:
             return MemoryIntentResult(handled=True, response="Эта запись уже сохранена.")
         if proposal.status == ProposalStatus.CANCELLED:
             return MemoryIntentResult(handled=True, response="Это предложение уже отменено; ничего не сохраняла.")
-        if proposal.operation in {"continuity_create", "continuity_update"}:
-            if self.shared_continuity is None:
-                return MemoryIntentResult(handled=True, response="Общие нити сейчас недоступны.")
-            try:
+        try:
+            if self._confirmation_postcondition(proposal):
+                self.proposal_store.set_status(proposal.id, ProposalStatus.CONFIRMED)
+                return self._confirmation_success(proposal)
+        except Exception as error:
+            stage = "proposal_validation" if isinstance(error, ValidationError) else "postcondition_check"
+            return self._confirmation_failure(error, proposal, save=proposal.operation == "create", stage=stage)
+
+        try:
+            if proposal.operation in {"continuity_create", "continuity_update"}:
+                if self.shared_continuity is None:
+                    return MemoryIntentResult(handled=True, response="Общие нити сейчас недоступны.")
                 self.shared_continuity.confirm_proposal(proposal, self.proposal_store)
-            except Exception as error:
-                return self._confirmation_failure(error, proposal, save=False)
-            return MemoryIntentResult(
-                handled=True,
-                response="Готово. Наша общая нить обновлена.",
+            elif proposal.operation != "create":
+                if self.memory_management is None:
+                    return MemoryIntentResult(handled=True, response="Эта операция сейчас недоступна.")
+                self.memory_management.confirm_proposal(proposal, self.proposal_store)
+            else:
+                self.confirmed_memory.confirm(
+                    ExplicitMemoryConfirmation(
+                        confirmed_by=IdentityCode.MISHA,
+                        record=self._record_from_proposal(proposal),
+                        proposal_id=proposal.id,
+                    )
+                )
+                if not self._confirmation_postcondition(proposal):
+                    raise RuntimeError("confirmed memory postcondition was not satisfied")
+                self.proposal_store.set_status(proposal.id, ProposalStatus.CONFIRMED)
+        except Exception as error:
+            return self._recover_confirmation(error, proposal)
+        return self._confirmation_success(proposal)
+
+    def _confirmation_postcondition(self, proposal: MemoryProposal) -> bool:
+        if proposal.operation in {"continuity_create", "continuity_update"}:
+            return bool(
+                self.shared_continuity is not None
+                and self.shared_continuity.proposal_postcondition(proposal) is not None
             )
         if proposal.operation != "create":
-            if self.memory_management is None:
-                return MemoryIntentResult(handled=True, response="Эта операция сейчас недоступна.")
-            try:
-                self.memory_management.confirm_proposal(proposal, self.proposal_store)
-            except Exception as error:
-                return self._confirmation_failure(error, proposal, save=False)
-            if proposal.operation == MemoryMutationOperation.FORGET.value:
-                return MemoryIntentResult(handled=True, response="Готово. Эта запись больше не используется как активная память.")
-            if proposal.operation == MemoryMutationOperation.EDIT.value:
-                if proposal.record_type == "commitment" and proposal.record_payload.get("status") == "completed":
-                    return MemoryIntentResult(handled=True, response="Готово, обязательство отмечено выполненным.")
-                return MemoryIntentResult(handled=True, response="Готово. Подтверждённая память обновлена.")
-            return MemoryIntentResult(handled=True, response="Готово. Изменение применено.")
-        try:
-            self.confirmed_memory.confirm(
-                ExplicitMemoryConfirmation(
-                    confirmed_by=IdentityCode.MISHA,
-                    record=self._record_from_proposal(proposal),
-                )
+            return bool(
+                self.memory_management is not None
+                and self.memory_management.proposal_postcondition(proposal) is not None
             )
-        except Exception as error:
-            return self._confirmation_failure(error, proposal, save=True)
-        self.proposal_store.set_status(proposal.id, ProposalStatus.CONFIRMED)
-        return MemoryIntentResult(handled=True, response="Готово, сохранила.")
+        confirmation = ExplicitMemoryConfirmation(
+            confirmed_by=IdentityCode.MISHA,
+            record=self._record_from_proposal(proposal),
+            proposal_id=proposal.id,
+        )
+        if not hasattr(self.confirmed_memory, "confirmation_postcondition"):
+            return False
+        return self.confirmed_memory.confirmation_postcondition(confirmation)
+
+    def _recover_confirmation(
+        self,
+        error: Exception,
+        proposal: MemoryProposal,
+    ) -> MemoryIntentResult:
+        save = proposal.operation == "create"
+        try:
+            applied = self._confirmation_postcondition(proposal)
+        except Exception as check_error:
+            stage = "proposal_validation" if isinstance(check_error, ValidationError) else "postcondition_check"
+            return self._confirmation_failure(check_error, proposal, save=save, stage=stage)
+        if not applied:
+            return self._confirmation_failure(
+                error,
+                proposal,
+                save=save,
+                stage="repository_write",
+            )
+        try:
+            self.proposal_store.set_status(proposal.id, ProposalStatus.CONFIRMED)
+        except Exception as status_error:
+            return self._confirmation_failure(
+                status_error,
+                proposal,
+                save=save,
+                stage="proposal_status",
+                mutation_applied=True,
+            )
+        return self._confirmation_success(proposal)
+
+    @staticmethod
+    def _confirmation_success(proposal: MemoryProposal) -> MemoryIntentResult:
+        if proposal.operation in {"continuity_create", "continuity_update"}:
+            response = "Готово. Наша общая нить обновлена."
+        elif proposal.operation == MemoryMutationOperation.FORGET.value:
+            response = "Готово. Эта запись больше не используется как активная память."
+        elif proposal.operation == MemoryMutationOperation.EDIT.value:
+            if proposal.record_type == "commitment" and proposal.record_payload.get("status") == "completed":
+                response = "Готово, обязательство отмечено выполненным."
+            else:
+                response = "Готово. Подтверждённая память обновлена."
+        elif proposal.operation != "create":
+            response = "Готово. Изменение применено."
+        else:
+            response = "Готово, сохранила."
+        return MemoryIntentResult(handled=True, response=response)
 
     def _confirmation_failure(
         self,
@@ -1199,6 +1272,13 @@ class MemoryIntentHandler:
         proposal: MemoryProposal,
         *,
         save: bool,
+        stage: Literal[
+            "proposal_validation",
+            "repository_write",
+            "postcondition_check",
+            "proposal_status",
+        ],
+        mutation_applied: bool = False,
     ) -> MemoryIntentResult:
         diagnostic = ConfirmationFailureDiagnostic(
             exception_type=type(error).__name__,
@@ -1206,6 +1286,7 @@ class MemoryIntentHandler:
             record_type=proposal.record_type,
             proposal_id=proposal.id,
             record_id=proposal.target_record_id or str(proposal.record_payload.get("id") or "") or None,
+            stage=stage,
             timestamp=self._now(),
         )
         existing: list[dict] = []
@@ -1225,6 +1306,14 @@ class MemoryIntentHandler:
             temporary.replace(self._diagnostic_path)
         except OSError:
             pass
+        if mutation_applied:
+            return MemoryIntentResult(
+                handled=True,
+                response=(
+                    "Изменение уже применено один раз, но я пока не смогла завершить подтверждение. "
+                    "Повтори «Подтверждаю» — я безопасно сверю состояние."
+                ),
+            )
         verb = "сохранить" if save else "применить"
         return MemoryIntentResult(
             handled=True,

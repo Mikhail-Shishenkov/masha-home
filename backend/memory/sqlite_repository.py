@@ -105,6 +105,12 @@ class MemorySqliteRepository:
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
+                # Whole-document replacement temporarily removes referenced
+                # records before inserting the validated replacement.  Real
+                # Home databases can already contain temporal rows pointing
+                # at those records, so enforce the FK at COMMIT after the
+                # stable record IDs have been restored.
+                connection.execute("PRAGMA defer_foreign_keys = ON")
                 connection.execute("DELETE FROM record_projects")
                 connection.execute("DELETE FROM memory_records")
                 connection.execute("DELETE FROM projects")

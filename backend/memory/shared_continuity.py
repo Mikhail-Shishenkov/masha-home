@@ -208,6 +208,10 @@ class SharedContinuityService:
         if proposal.operation not in {"continuity_create", "continuity_update"}:
             raise ValueError("not a continuity proposal")
         replacement = ContinuityState.model_validate(proposal.record_payload)
+        existing = self.proposal_postcondition(proposal)
+        if existing is not None:
+            proposal_store.set_status(proposal.id, ProposalStatus.CONFIRMED)
+            return existing
         document = self._document()
         payload = document.model_dump(mode="json")
         positions = {
@@ -233,8 +237,29 @@ class SharedContinuityService:
                 "record_id": replacement.id,
             },
         )
+        verified = self.proposal_postcondition(proposal)
+        if verified is None:
+            raise RuntimeError("continuity postcondition was not satisfied")
         proposal_store.set_status(proposal.id, ProposalStatus.CONFIRMED)
-        return replacement
+        return verified
+
+    def proposal_postcondition(self, proposal) -> ContinuityState | None:
+        if proposal.operation not in {"continuity_create", "continuity_update"}:
+            raise ValueError("not a continuity proposal")
+        replacement = ContinuityState.model_validate(proposal.record_payload)
+        matches = [
+            state for state in self._document().continuity_states
+            if state.id == replacement.id
+        ]
+        if len(matches) != 1 or matches[0] != replacement:
+            return None
+        audited = any(
+            event.get("action") == proposal.operation
+            and event.get("payload", {}).get("proposal_id") == proposal.id
+            and event.get("payload", {}).get("record_id") == replacement.id
+            for event in self.repository.list_audit_events()
+        )
+        return matches[0] if audited else None
 
     def render(self) -> str:
         moments = self.relationship_memories()

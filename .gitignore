@@ -36,6 +36,7 @@ local-data/model-benchmarks/
 local-data/conversations/
 local-data/behavioral-regressions/
 local-data/memory-proposals.json
+local-data/confirmation-failures.json
 local-data/memory-backups/
 local-data/memory-exports/
 local-data/identity-regressions/
