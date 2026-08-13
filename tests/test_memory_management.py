@@ -5,7 +5,7 @@ import pytest
 from backend.conversation.memory_intent import MemoryProposalStore, ProposalStatus
 from backend.memory.memory_management import MemoryManagementService, MemoryMutationOperation
 from backend.memory.memory_models import MemoryDocument
-from backend.memory.memory_retriever import MemoryRetriever
+from backend.memory.memory_retriever import MemoryRetrievalRequest, MemoryRetriever
 from backend.memory.sqlite_repository import MemorySqliteRepository
 
 
@@ -46,7 +46,13 @@ def test_archive_and_forget_are_pending_then_hidden_with_audit(tmp_path, canonic
     assert service.get("fact_001").payload["visibility"] == "hidden"
     assert service.get("fact_002").payload["visibility"] == "hidden"
     assert all(item["data"]["id"] not in {"fact_001", "fact_002"}
-               for item in MemoryRetriever(repository).retrieve(project_id=PROJECT_ID, limit=20))
+               for item in MemoryRetriever(repository).retrieve(
+                   MemoryRetrievalRequest(
+                       query="repository Python",
+                       project_id=PROJECT_ID,
+                       limit=20,
+                   )
+               ))
     assert {"memory_archive", "memory_forget"} <= {event["action"] for event in repository.list_audit_events()}
 
 
@@ -83,7 +89,13 @@ def test_supersession_keeps_old_record_and_retrieves_current_replacement(tmp_pat
     document = repository.read_document()
     old_after = next(item for item in document.facts if item.id == "fact_001")
     new_after = next(item for item in document.facts if item.id == "fact_repository_new")
-    retrieved = MemoryRetriever(repository).retrieve(project_id=PROJECT_ID, limit=20)
+    retrieved = MemoryRetriever(repository).retrieve(
+        MemoryRetrievalRequest(
+            query="local only repository",
+            project_id=PROJECT_ID,
+            limit=20,
+        )
+    )
 
     assert old_after.status.value == "superseded"
     assert old_after.superseded_by == "fact_repository_new"
@@ -100,7 +112,13 @@ def test_conflicts_trace_and_restart_are_local_and_deterministic(tmp_path, canon
     repository.replace_document(MemoryDocument.model_validate(payload), action="test_conflict")
 
     conflicts = service.conflicts(project_id=PROJECT_ID)
-    retrieved = MemoryRetriever(repository).retrieve(project_id=PROJECT_ID, limit=20)
+    retrieved = MemoryRetriever(repository).retrieve(
+        MemoryRetrievalRequest(
+            query="repository",
+            project_id=PROJECT_ID,
+            limit=20,
+        )
+    )
     trace = service.trace(retrieved)
     restarted = MemoryManagementService(MemorySqliteRepository(repository.database_path))
 

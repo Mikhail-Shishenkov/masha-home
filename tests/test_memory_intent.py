@@ -8,7 +8,7 @@ from backend.conversation.memory_intent import (
     ProposalStatus,
 )
 from backend.memory.confirmed_memory_service import ConfirmedMemoryService
-from backend.memory.memory_retriever import MemoryRetriever
+from backend.memory.memory_retriever import MemoryRetrievalRequest, MemoryRetriever
 from backend.memory.memory_store import MemoryStore
 
 
@@ -65,7 +65,13 @@ def test_confirmation_persists_fact_and_retriever_finds_it_after_restart(tmp_pat
     assert restarted_proposals.get(proposal.id).status == ProposalStatus.CONFIRMED
     assert any(
         item["data"]["id"] == proposal.record_payload["id"]
-        for item in MemoryRetriever(restarted_store).retrieve(project_id=PROJECT_ID, limit=20)
+        for item in MemoryRetriever(restarted_store).retrieve(
+            MemoryRetrievalRequest(
+                query="предпочитаю локальные модели",
+                project_id=PROJECT_ID,
+                limit=20,
+            )
+        )
     )
     assert len(restarted_store.data["facts"]) == original_counts["facts"] + 1
     assert all(

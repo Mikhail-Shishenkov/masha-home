@@ -38,6 +38,7 @@ from backend.memory.memory_models import (
 )
 from backend.temporal.temporal_engine import TemporalEngine
 from backend.memory.memory_management import MemoryMutationOperation
+from backend.memory.text_normalization import meaningful_tokens, stem_russian_token
 from .capability_router import CapabilityIntent, NaturalLanguageCapabilityRouter, ParsedCapabilityIntent, normalize_utterance
 
 
@@ -613,22 +614,11 @@ class MemoryIntentHandler:
 
     @staticmethod
     def _tokens(value: str) -> set[str]:
-        stop = {
-            "я", "мне", "мой", "моя", "мои", "что", "это", "то", "у", "про",
-            "как", "люблю", "та", "тот", "где", "которая", "который", "нить", "тема",
-        }
-        return {
-            MemoryIntentHandler._stem(token)
-            for token in normalize_utterance(value).split()
-            if len(token) > 1 and token not in stop
-        }
+        return set(meaningful_tokens(normalize_utterance(value)))
 
     @staticmethod
     def _stem(token: str) -> str:
-        for suffix in ("иями", "ями", "ами", "ого", "ему", "ому", "ыми", "ими", "кой", "ку", "ка", "ах", "ях", "ом", "ем", "ой", "ей", "ую", "юю", "ы", "и", "а", "я", "о", "у", "ю", "е"):
-            if token.endswith(suffix) and len(token) - len(suffix) >= 4:
-                return token[: -len(suffix)]
-        return token
+        return stem_russian_token(token)
 
     @classmethod
     def _rank_records(cls, records, query: str, text_getter):

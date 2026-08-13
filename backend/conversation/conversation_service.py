@@ -7,7 +7,7 @@ from backend.llm.model_models import ModelMessage
 from backend.llm.model_provider import ModelProviderUnavailableError, ModelTimeoutError
 from backend.llm.model_router import ModelRouter
 from backend.llm.model_profiles import ModelProfileStore
-from backend.memory.memory_retriever import MemoryRetriever
+from backend.memory.memory_retriever import ContextLens, MemoryRetrievalRequest, MemoryRetriever
 from backend.memory.working_memory import WorkingMemory
 from backend.temporal.temporal_engine import TemporalEngine
 
@@ -119,25 +119,19 @@ class ConversationService:
                 self.history.append(conversation.id, ConversationRole.ASSISTANT, intent.response)
                 return conversation.id, intent.response
 
-        retrieval_limit = self.memory_limit
-        if _PERSPECTIVE_QUERY.search(user_message):
-            retrieval_limit = max(self.memory_limit * 4, 20)
-        memories = self.memory_retriever.retrieve(project_id=project_id, limit=retrieval_limit)
-        context_lens = "general"
+        context_lens = ContextLens.GENERAL
         if _SHARED_CONTINUITY_QUERY.search(user_message):
-            context_lens = "shared_continuity"
-            memories = [
-                item
-                for item in memories
-                if item["type"] in {"relationship_memory", "continuity_state"}
-            ]
+            context_lens = ContextLens.SHARED_CONTINUITY
         elif _PERSPECTIVE_QUERY.search(user_message):
-            context_lens = "masha_perspective"
-            memories = [
-                item for item in memories if item["type"] == "reflection"
-            ][: self.memory_limit]
-        else:
-            memories = [item for item in memories if item["type"] != "reflection"]
+            context_lens = ContextLens.MASHA_PERSPECTIVE
+        memories = self.memory_retriever.retrieve(
+            MemoryRetrievalRequest(
+                query=user_message,
+                project_id=project_id,
+                limit=self.memory_limit,
+                lens=context_lens,
+            )
+        )
         self.working_memory.load(memories)
         active_profile = None if self.model_profiles is None else self.model_profiles.get_active_profile()
         request = self.context_compiler.compile(
@@ -151,7 +145,7 @@ class ConversationService:
             execution_model_id=None if active_profile is None else active_profile.model_id,
             execution_think=False if active_profile is None else active_profile.think,
             execution_timeout_seconds=30.0 if active_profile is None else active_profile.timeout_seconds,
-            context_lens=context_lens,
+            context_lens=context_lens.value,
         )
         try:
             response = self.router.generate(request)

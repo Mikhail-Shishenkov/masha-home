@@ -11,7 +11,7 @@ from backend.conversation.context_compiler import ConversationContextCompiler
 from backend.llm.model_models import ModelMessage
 from backend.llm.model_router import ModelRouter
 from backend.llm.ollama_provider import OllamaProvider
-from backend.memory.memory_retriever import MemoryRetriever
+from backend.memory.memory_retriever import MemoryRetriever, MemoryRetrievalRequest
 from backend.memory.memory_store import MemoryStore
 from backend.memory.working_memory import WorkingMemory
 
@@ -42,12 +42,20 @@ def run_identity_regression(
     """Run approved scenarios against local routing using controlled fixture memory."""
     kernel = IdentityKernel(IdentityStore(manifest_path))
     suite = kernel.load_regression_suite(str(suite_path))
-    memory = MemoryRetriever(MemoryStore(fixture_memory_path)).retrieve(project_id=project_id, limit=6)
+    retriever = MemoryRetriever(MemoryStore(fixture_memory_path))
     working_memory = WorkingMemory(max_items=6)
-    working_memory.load(memory)
     compiler = ConversationContextCompiler()
     results = []
     for scenario in suite.scenarios:
+        working_memory.load(
+            retriever.retrieve(
+                MemoryRetrievalRequest(
+                    query=scenario.user_message,
+                    project_id=project_id,
+                    limit=6,
+                )
+            )
+        )
         request = compiler.compile(
             messages=(ModelMessage(role="user", content=scenario.user_message),),
             identity_context=kernel.build_context(),

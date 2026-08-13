@@ -23,6 +23,7 @@ from backend.memory.memory_models import (
     SourceType,
     Visibility,
 )
+from backend.memory.memory_retriever import MemoryRetrievalRequest
 
 
 class ReflectionScope(str, Enum):
@@ -596,15 +597,14 @@ class ReflectionService:
         )
 
     def _select_memory_evidence(self, topic: str, project_id: str) -> list[dict]:
-        topic_words = self._words(topic)
-        ranked = []
-        for item in self.memory_retriever.retrieve(project_id=project_id, limit=20):
-            serialized = json.dumps(item["data"], ensure_ascii=False, sort_keys=True)
-            overlap = len(topic_words & self._words(serialized))
-            if overlap:
-                ranked.append((overlap, item["score"], item))
-        ranked.sort(key=lambda row: (row[0], row[1]), reverse=True)
-        return [row[2] for row in ranked[: self.evidence_limit]]
+        return self.memory_retriever.retrieve(
+            MemoryRetrievalRequest(
+                query=topic,
+                project_id=project_id,
+                limit=self.evidence_limit,
+                memory_budget_chars=6_000,
+            )
+        )
 
     @staticmethod
     def _evidence_record(item: dict) -> dict:
