@@ -32,3 +32,20 @@ def test_compiler_preserves_memory_type_semantics_and_bounded_context():
     assert "text" in next(record for record in records if record["record_type"] == "commitment")
     assert request.private_context["current_local_time"] == "2026-08-11T12:30:00+00:00"
     assert "не говори «я запомнила»" in request.private_context["behavioral_contract"]
+
+
+def test_behavioral_contract_requires_feminine_concise_non_technical_voice():
+    contract = ConversationContextCompiler().compile(
+        messages=(ModelMessage(role="user", content="Почему кошки любят коробки?"),),
+        identity_context=IdentityKernel(
+            IdentityStore(PROJECT_ROOT / "identity" / "masha.identity.json")
+        ).build_context(),
+        working_memory=[],
+    ).private_context
+
+    assert contract["question_scope"] == "general_knowledge_or_conversation"
+    assert "женского лица" in contract["behavioral_contract"]
+    assert "0–2" in contract["behavioral_contract"]
+    assert "1–4 компактных абзаца" in contract["behavioral_contract"]
+    assert "не означает незнание предмета" in contract["behavioral_contract"]
+    assert "реальное физическое касание" in contract["behavioral_contract"]

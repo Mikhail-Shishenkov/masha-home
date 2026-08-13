@@ -5,7 +5,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from .conversation_models import Conversation, ConversationMessage, ConversationRole
+from .conversation_models import (
+    Conversation,
+    ConversationMessage,
+    ConversationMessageOrigin,
+    ConversationRole,
+)
 
 
 class ConversationStore:
@@ -65,7 +70,14 @@ class ConversationStore:
             )[:limit]
         )
 
-    def append(self, conversation_id: str, role: ConversationRole, content: str) -> ConversationMessage:
+    def append(
+        self,
+        conversation_id: str,
+        role: ConversationRole,
+        content: str,
+        *,
+        origin: ConversationMessageOrigin | None = None,
+    ) -> ConversationMessage:
         self.get(conversation_id)
         message = ConversationMessage(
             id=str(uuid4()),
@@ -73,6 +85,11 @@ class ConversationStore:
             content=content,
             created_at=self._now(),
             conversation_id=conversation_id,
+            origin=origin or (
+                ConversationMessageOrigin.USER
+                if role is ConversationRole.USER
+                else ConversationMessageOrigin.MODEL
+            ),
         )
         self._data["messages"].append(message.model_dump(mode="json"))
         self._save()

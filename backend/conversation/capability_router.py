@@ -67,6 +67,19 @@ def normalize_utterance(value: str) -> str:
     return _SPACE.sub(" ", " ".join(words)).strip()
 
 
+def memory_query_entity(value: str) -> str | None:
+    """Extract a supplied topic while keeping broad memory reads broad."""
+    text = normalize_utterance(value)
+    match = re.match(
+        r"^(?:кстати\s+а\s+|а\s+)?что\s+ты\s+(?:обо\s+мне\s+)?"
+        r"(?:помнишь|знаешь)\s+про\s+(?P<entity>.+)$",
+        text,
+    )
+    if match:
+        return match.group("entity").strip() or None
+    return None
+
+
 class NaturalLanguageCapabilityRouter:
     """Deterministic aliases first, optional local semantic classification last."""
 
@@ -168,7 +181,11 @@ class NaturalLanguageCapabilityRouter:
         if re.search(r"\bчто\b.*\b(?:сегодня|запланир)\w*\b", text):
             return ParsedCapabilityIntent(intent=CapabilityIntent.QUERY_COMMITMENTS, confidence=0.91, temporal_scope="today" if "сегодня" in text else None)
         if re.search(r"\b(?:что|покажи)\b.*\b(?:помн|памят|зна)\w*\b", text):
-            return ParsedCapabilityIntent(intent=CapabilityIntent.QUERY_MEMORY, confidence=0.96)
+            return ParsedCapabilityIntent(
+                intent=CapabilityIntent.QUERY_MEMORY,
+                confidence=0.96,
+                entity=memory_query_entity(text),
+            )
 
         # Writes: these only lead to proposals in MemoryIntentHandler.
         complete = re.match(r"^(?:с\s+)?(?P<body>.+?)\s+(?:закончили|закончил|готово|сделано)$", text)

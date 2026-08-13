@@ -39,7 +39,13 @@ from backend.memory.memory_models import (
 from backend.temporal.temporal_engine import TemporalEngine
 from backend.memory.memory_management import MemoryMutationOperation
 from backend.memory.text_normalization import meaningful_tokens, stem_russian_token
-from .capability_router import CapabilityIntent, NaturalLanguageCapabilityRouter, ParsedCapabilityIntent, normalize_utterance
+from .conversation_models import ConversationMessage
+from .capability_router import (
+    CapabilityIntent,
+    NaturalLanguageCapabilityRouter,
+    ParsedCapabilityIntent,
+    normalize_utterance,
+)
 
 
 MemoryRecordType = Literal[
@@ -82,15 +88,22 @@ _EXPLICIT_INTENT = re.compile(
     r"^\s*(?:маша\s*,?\s*)?запомни(?:\s+как\s+(?P<kind>факт|решение(?:\s+проекта)?|обязательство|эпизод))?\s*,?\s*(?:что\s+)?(?P<body>.+?)\s*$",
     re.IGNORECASE,
 )
-_CONFIRM = re.compile(
-    r"^\s*(?:да|подтверждаю|сохраняй|сохрани|сохраняем)(?:\s+(?P<id>[0-9a-f-]{36}))?\s*$",
+_CONVERSATION_EPISODE = re.compile(
+    r"^\s*(?:маша\s*,?\s*)?(?:"
+    r"(?:запомни|сохрани)\s+(?:наш|этот)\s+разговор(?:\s+(?:про|о)\s+(?P<topic>.+?))?|"
+    r"хочу\s+сохранить\s+этот\s+разговор\s+как\s+эпизод(?:\s+(?:про|о)\s+(?P<topic_two>.+?))?"
+    r")\s*[.!?]?\s*$",
     re.IGNORECASE,
 )
-_REJECT = re.compile(r"^\s*(?:нет|не надо|не сейчас|не сохраняй|не запоминай|отмена)(?:\s+(?P<id>[0-9a-f-]{36}))?\s*$", re.IGNORECASE)
+_CONFIRM = re.compile(
+    r"^\s*(?:да|подтверждаю|сохраняй|сохрани|сохраняем)(?:\s+(?P<id>[0-9a-f-]{36}))?\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
+_REJECT = re.compile(r"^\s*(?:нет|не надо|не сейчас|не сохраняй|не запоминай|отмена)(?:\s+(?P<id>[0-9a-f-]{36}))?\s*[.!]?\s*$", re.IGNORECASE)
 _MEMORY_PREFIX = re.compile(r"^\s*(?:маша\s*,?\s*)?запомни\b", re.IGNORECASE)
 _COMPLETE = re.compile(r"^\s*(?:маша\s*,?\s*)?отметь\s+(?P<body>.+?)\s+выполненным\s*$", re.IGNORECASE)
 _SHOW_MEMORY = re.compile(
-    r"^\s*(?:маша\s*,?\s*)?(?:что\s+ты\s+(?:обо\s+мне\s+)?помнишь|"
+    r"^\s*(?:маша\s*,?\s*)?(?:что\s+ты\s+(?:обо\s+мне\s+)?помнишь(?:\s+про\s+(?P<remember_query>.+?))?|"
     r"что\s+ты\s+знаешь(?:\s+про\s+(?P<query>.+?))?|покажи\s+(?:мою\s+)?память)\s*\??\s*$",
     re.IGNORECASE,
 )
@@ -265,6 +278,29 @@ class ContinuityResolveClarification(BaseModel):
     original_query: str = Field(min_length=1)
 
 
+class ForgetClarification(BaseModel):
+    """Conversation-scoped candidates for one ambiguous forget request."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    conversation_id: str = Field(min_length=1)
+    candidate_record_ids: tuple[str, ...] = Field(min_length=2, max_length=5)
+    original_query: str = Field(min_length=1)
+
+
+class ConfirmationFailureDiagnostic(BaseModel):
+    """Safe local metadata for a failed confirmed mutation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    exception_type: str = Field(min_length=1)
+    operation: str = Field(min_length=1)
+    record_type: str = Field(min_length=1)
+    proposal_id: str = Field(min_length=1)
+    record_id: str | None = None
+    timestamp: AwareDatetime
+
+
 class MemoryIntentHandler:
     """Creates/cancels/confirms proposals; only ConfirmedMemoryService writes memory."""
 
@@ -285,6 +321,10 @@ class MemoryIntentHandler:
         self.shared_continuity = shared_continuity
         self.capability_router = capability_router or NaturalLanguageCapabilityRouter()
         self._continuity_clarifications: dict[str, ContinuityResolveClarification] = {}
+        self._forget_clarifications: dict[str, ForgetClarification] = {}
+        self._diagnostic_path = proposal_store.file_path.with_name(
+            "confirmation-failures.json"
+        )
 
     def handle(
         self,
@@ -293,6 +333,7 @@ class MemoryIntentHandler:
         conversation_id: str,
         project_id: str,
         active_continuity_thread_id: str | None = None,
+        conversation_messages: tuple[ConversationMessage, ...] = (),
     ) -> MemoryIntentResult:
         # A plain human confirmation always resolves the single user-facing
         # slot. IDs remain an internal bridge compatibility detail.
@@ -308,6 +349,7 @@ class MemoryIntentHandler:
                     response="Сначала уточни, какую именно нить закрыть — пока ничего не меняю.",
                 )
             self._continuity_clarifications.pop(conversation_id, None)
+            self._forget_clarifications.pop(conversation_id, None)
             return self._confirm(confirm.group("id"), conversation_id)
         if reject := _REJECT.match(message):
             clarification = self._continuity_clarifications.get(conversation_id)
@@ -322,6 +364,7 @@ class MemoryIntentHandler:
                     response="Хорошо, ничего не закрываю.",
                 )
             self._continuity_clarifications.pop(conversation_id, None)
+            self._forget_clarifications.pop(conversation_id, None)
             return self._cancel(reject.group("id"), conversation_id)
         pending = self.proposal_store.current_for_conversation(conversation_id) is not None
 
@@ -333,6 +376,13 @@ class MemoryIntentHandler:
             # A new explicit action replaces the abandoned clarification.  A
             # repeated resolve command starts a fresh candidate set below.
             self._continuity_clarifications.pop(conversation_id, None)
+
+        forget_clarification = self._forget_clarifications.get(conversation_id)
+        if forget_clarification is not None:
+            parsed_clarification = self.capability_router.route(message)
+            if parsed_clarification is None:
+                return self._refine_forget(message, forget_clarification)
+            self._forget_clarifications.pop(conversation_id, None)
 
         # A resumed thread is a real conversational context, not a one-turn
         # prompt trick.  Deictic follow-ups refer to that existing thread and
@@ -351,7 +401,8 @@ class MemoryIntentHandler:
         # These read/proposal commands are deliberately resolved locally.  They
         # cannot be hallucinated as a model capability and never expose storage.
         if show := _SHOW_MEMORY.match(message):
-            return self._show_memory(show.group("query"), project_id)
+            query = show.group("remember_query") or show.group("query")
+            return self._show_memory(query, project_id)
         if _LIST_COMMITMENTS.match(message):
             return self._list_commitments(project_id)
         if create := _CREATE_COMMITMENT.match(message):
@@ -390,6 +441,15 @@ class MemoryIntentHandler:
             return MemoryIntentResult(
                 handled=True,
                 response="Какое именно дело отметить выполненным? Назови его, чтобы я ничего не закрыла по догадке.",
+            )
+        if episode := _CONVERSATION_EPISODE.match(message):
+            if pending:
+                return self._pending_conflict()
+            return self._propose_conversation_episode(
+                episode,
+                conversation_id=conversation_id,
+                project_id=project_id,
+                conversation_messages=conversation_messages,
             )
         match = _EXPLICIT_INTENT.match(message)
         if match:
@@ -485,11 +545,19 @@ class MemoryIntentHandler:
     def _show_memory(self, query: str | None, project_id: str) -> MemoryIntentResult:
         if self.memory_management is None:
             return MemoryIntentResult(handled=True, response="Сейчас не могу прочитать локальную память.")
-        records = self.memory_management.list(project_id=project_id, query=query, include_hidden=False)
+        records = self.memory_management.list(project_id=project_id, include_hidden=False)
         visible = [item for item in records if item.record_type in {"fact", "decision", "episode"}]
+        if query:
+            visible = self._rank_records(visible, query, self._memory_line)
         if not visible:
-            suffix = " по этому поводу" if query else ""
-            return MemoryIntentResult(handled=True, response=f"В подтверждённой памяти{suffix} ничего не нашла.")
+            return MemoryIntentResult(
+                handled=True,
+                response=(
+                    "Про это в подтверждённой памяти сейчас ничего подходящего не нашла."
+                    if query
+                    else "В подтверждённой памяти пока ничего не нашла."
+                ),
+            )
         lines = ["Вот что у меня подтверждённо есть в памяти:"]
         for item in visible[:6]:
             lines.append(f"— {self._memory_line(item)}")
@@ -574,7 +642,83 @@ class MemoryIntentHandler:
                 handled=True,
                 response="Уточни, какую именно запись забыть. Я не буду прятать память целиком по одной фразе.",
             )
-        return self._propose_mutation(query, conversation_id, MemoryMutationOperation.FORGET)
+        if self.memory_management is None:
+            return MemoryIntentResult(handled=True, response="Изменение памяти сейчас недоступно.")
+        matches = self._find_memories(query)
+        if not matches:
+            return self._mutation_lookup_problem(matches, "забыть")
+        if len(matches) > 1:
+            bounded = matches[:5]
+            self._forget_clarifications[conversation_id] = ForgetClarification(
+                conversation_id=conversation_id,
+                candidate_record_ids=tuple(item.record_id for item in bounded),
+                original_query=query.strip(),
+            )
+            return self._forget_clarification_response(
+                bounded,
+                truncated=len(matches) > len(bounded),
+            )
+        return self._propose_forget_view(matches[0], conversation_id)
+
+    def _propose_forget_view(self, view, conversation_id: str) -> MemoryIntentResult:
+        assert self.memory_management is not None
+        self.memory_management.propose(
+            self.proposal_store,
+            operation=MemoryMutationOperation.FORGET,
+            record_id=view.record_id,
+            conversation_id=conversation_id,
+        )
+        self._forget_clarifications.pop(conversation_id, None)
+        return MemoryIntentResult(
+            handled=True,
+            response=(
+                f"Скрыть из активной памяти: «{self._memory_line(view)}»? "
+                "Это не удалит историю безвозвратно.\n"
+                "Подтверди обычным «да» или выбери «не сейчас»."
+            ),
+        )
+
+    def _refine_forget(
+        self,
+        query: str,
+        clarification: ForgetClarification,
+    ) -> MemoryIntentResult:
+        assert self.memory_management is not None
+        candidates = [
+            view
+            for record_id in clarification.candidate_record_ids
+            if (view := self.memory_management.get(record_id)) is not None
+        ]
+        ordinal = {
+            "первая": 0, "первую": 0, "вторая": 1, "вторую": 1,
+            "третья": 2, "третью": 2, "четвертая": 3, "четвертую": 3,
+            "пятая": 4, "пятую": 4,
+        }.get(normalize_utterance(query))
+        if ordinal is not None and ordinal < len(candidates):
+            return self._propose_forget_view(
+                candidates[ordinal],
+                clarification.conversation_id,
+            )
+        refined = self._rank_records(candidates, query, self._memory_line)
+        if not refined:
+            return MemoryIntentResult(
+                handled=True,
+                response="Среди этих вариантов не поняла, какую запись выбрать. Назови её словами или номером.",
+            )
+        if len(refined) > 1:
+            self._forget_clarifications[clarification.conversation_id] = clarification.model_copy(
+                update={"candidate_record_ids": tuple(item.record_id for item in refined[:5])}
+            )
+            return self._forget_clarification_response(refined[:5], truncated=False)
+        return self._propose_forget_view(refined[0], clarification.conversation_id)
+
+    def _forget_clarification_response(self, matches, *, truncated: bool) -> MemoryIntentResult:
+        descriptions = "\n".join(f"— {self._memory_line(item)}" for item in matches)
+        prefix = "Показываю самые похожие" if truncated else "Нашла несколько"
+        return MemoryIntentResult(
+            handled=True,
+            response=f"{prefix} записей:\n{descriptions}\nКакую убрать?",
+        )
 
     def _propose_update(self, old: str, new: str, conversation_id: str) -> MemoryIntentResult:
         if self.memory_management is None:
@@ -906,6 +1050,74 @@ class MemoryIntentHandler:
         proposal = self.memory_management.propose(self.proposal_store, operation=MemoryMutationOperation.EDIT, record_id=view.record_id, conversation_id=conversation_id, replacement_payload=payload)
         return MemoryIntentResult(handled=True, response=f"Отметить обязательство выполненным?\n«{view.payload['text']}»\nСтатус: открыто → выполнено.\nПодтверди обычным «да» или выбери «не сейчас».")
 
+    def _propose_conversation_episode(
+        self,
+        match: re.Match[str],
+        *,
+        conversation_id: str,
+        project_id: str,
+        conversation_messages: tuple[ConversationMessage, ...],
+    ) -> MemoryIntentResult:
+        explicit_topic = (match.group("topic") or match.group("topic_two") or "").strip()
+        explicit_topic = explicit_topic.rstrip(".!?")
+        evidence = tuple(conversation_messages[:-1][-6:])
+        user_evidence = [
+            " ".join(message.content.split()).strip()
+            for message in evidence
+            if message.role.value == "user" and message.content.strip()
+        ][-2:]
+        if explicit_topic:
+            title = f"Разговор про {explicit_topic}"[:120]
+            summary = f"В недавнем разговоре обсуждали {explicit_topic}."
+            topics = [explicit_topic[:120]]
+        elif user_evidence:
+            seed = user_evidence[-1].rstrip(".!?")
+            title = f"Разговор: {seed}"[:120]
+            excerpt = "; затем ".join(item.rstrip(".!?") for item in user_evidence)
+            summary = f"В недавнем разговоре обсуждали: {excerpt[:360]}."
+            topics = [seed[:120]]
+        else:
+            title = "Недавний разговор"
+            summary = "Сохранили недавний разговор как отдельный эпизод без дополнительных утверждений о фактах."
+            topics = ["недавний разговор"]
+        now = self._now()
+        record = Episode(
+            id=f"episode_{uuid4()}",
+            title=title,
+            summary=summary,
+            occurred_at=now,
+            source=SourceType.EXPLICIT_USER_INPUT,
+            importance=0.7,
+            visibility=Visibility.VISIBLE,
+            project_ids=[project_id],
+            participants=[IdentityCode.MISHA, IdentityCode.MASHA],
+            topics=topics,
+            produced=EpisodeProduced(
+                facts=[], decisions=[], commitments=[], reflections=[], relationship_memories=[], affective_records=[], project_changes=[]
+            ),
+            updated=EpisodeUpdated(facts=[], decisions=[], commitments=[], continuity_states=[], projects=[]),
+            superseded=EpisodeSuperseded(facts=[], decisions=[], commitments=[]),
+            related_memory_ids=[],
+            created_at=now,
+        )
+        self.proposal_store.create(MemoryProposal(
+            id=str(uuid4()),
+            conversation_id=conversation_id,
+            record_type="episode",
+            record_payload=record.model_dump(mode="json"),
+            created_at=now,
+            status=ProposalStatus.PENDING,
+        ))
+        return MemoryIntentResult(
+            handled=True,
+            response=(
+                "Могу сохранить этот разговор как эпизод.\n"
+                f"Название: «{record.title}»\n"
+                f"Кратко: {record.summary}\n"
+                "Сохраняем?"
+            ),
+        )
+
     def _propose(self, match: re.Match[str], *, conversation_id: str, project_id: str) -> MemoryIntentResult:
         body = match.group("body").strip().rstrip(".")
         if not body:
@@ -949,11 +1161,8 @@ class MemoryIntentHandler:
                 return MemoryIntentResult(handled=True, response="Общие нити сейчас недоступны.")
             try:
                 self.shared_continuity.confirm_proposal(proposal, self.proposal_store)
-            except Exception:
-                return MemoryIntentResult(
-                    handled=True,
-                    response="Не смогла применить изменение. Оно осталось ожидающим подтверждения.",
-                )
+            except Exception as error:
+                return self._confirmation_failure(error, proposal, save=False)
             return MemoryIntentResult(
                 handled=True,
                 response="Готово. Наша общая нить обновлена.",
@@ -963,8 +1172,8 @@ class MemoryIntentHandler:
                 return MemoryIntentResult(handled=True, response="Эта операция сейчас недоступна.")
             try:
                 self.memory_management.confirm_proposal(proposal, self.proposal_store)
-            except Exception:
-                return MemoryIntentResult(handled=True, response="Не смогла применить изменение. Оно осталось ожидающим подтверждения.")
+            except Exception as error:
+                return self._confirmation_failure(error, proposal, save=False)
             if proposal.operation == MemoryMutationOperation.FORGET.value:
                 return MemoryIntentResult(handled=True, response="Готово. Эта запись больше не используется как активная память.")
             if proposal.operation == MemoryMutationOperation.EDIT.value:
@@ -979,13 +1188,48 @@ class MemoryIntentHandler:
                     record=self._record_from_proposal(proposal),
                 )
             )
-        except Exception:
-            return MemoryIntentResult(
-                handled=True,
-                response="Не смогла сохранить изменение. Оно осталось ожидающим подтверждения.",
-            )
+        except Exception as error:
+            return self._confirmation_failure(error, proposal, save=True)
         self.proposal_store.set_status(proposal.id, ProposalStatus.CONFIRMED)
         return MemoryIntentResult(handled=True, response="Готово, сохранила.")
+
+    def _confirmation_failure(
+        self,
+        error: Exception,
+        proposal: MemoryProposal,
+        *,
+        save: bool,
+    ) -> MemoryIntentResult:
+        diagnostic = ConfirmationFailureDiagnostic(
+            exception_type=type(error).__name__,
+            operation=proposal.operation,
+            record_type=proposal.record_type,
+            proposal_id=proposal.id,
+            record_id=proposal.target_record_id or str(proposal.record_payload.get("id") or "") or None,
+            timestamp=self._now(),
+        )
+        existing: list[dict] = []
+        if self._diagnostic_path.exists():
+            try:
+                raw = json.loads(self._diagnostic_path.read_text(encoding="utf-8"))
+                existing = list(raw.get("failures", []))
+            except (OSError, ValueError, TypeError):
+                existing = []
+        existing.append(diagnostic.model_dump(mode="json"))
+        temporary = self._diagnostic_path.with_suffix(".tmp")
+        try:
+            temporary.write_text(
+                json.dumps({"failures": existing[-100:]}, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(self._diagnostic_path)
+        except OSError:
+            pass
+        verb = "сохранить" if save else "применить"
+        return MemoryIntentResult(
+            handled=True,
+            response=f"Не смогла {verb} изменение. Оно осталось ожидающим подтверждения — можно повторить.",
+        )
 
     def _cancel(self, proposal_id: str | None, conversation_id: str) -> MemoryIntentResult:
         proposal, problem = self._resolve(proposal_id, conversation_id)

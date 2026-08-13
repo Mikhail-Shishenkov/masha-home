@@ -8,7 +8,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from backend.conversation.conversation_models import ConversationMessage, ConversationRole
+from backend.conversation.conversation_models import (
+    ConversationMessage,
+    ConversationMessageOrigin,
+    ConversationRole,
+)
 from backend.conversation.conversation_service import ConversationService, ConversationUnavailableError
 from backend.llm.model_provider import ModelProviderUnavailableError, ModelTimeoutError
 
@@ -387,6 +391,7 @@ class ConversationApplicationService:
             conversation_id,
             ConversationRole.ASSISTANT,
             response,
+            origin=ConversationMessageOrigin.APPLICATION,
         )
         return ConversationTurnResult(
             conversation_id=conversation_id,

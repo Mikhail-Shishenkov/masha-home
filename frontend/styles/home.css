@@ -35,6 +35,15 @@ html[data-home-attention="active"] .conversation-surface.is-surface-concealed { 
 .message-user { align-self: flex-end; border-color: rgba(222,181,116,.24); background: rgba(90,57,25,.27); }
 .message-assistant { align-self: flex-start; border-left-color: rgba(226,188,126,.18); background: rgba(18,15,12,.27); }
 .message.is-provisional { opacity: .68; }
+.message p { margin: 0 0 .72em; }
+.message p:last-child { margin-bottom: 0; }
+.message strong { font-weight: 700; color: rgba(255,246,234,.98); }
+.message em { font-style: italic; }
+.message code { padding: .08em .3em; border: 1px solid rgba(226,188,126,.14); background: rgba(0,0,0,.25); font: .92em/1.45 Consolas, "Cascadia Mono", monospace; }
+.message pre { max-width: 100%; margin: .65em 0; padding: 10px 12px; overflow-x: auto; border-left: 2px solid rgba(226,188,126,.28); background: rgba(0,0,0,.32); white-space: pre; }
+.message pre code { padding: 0; border: 0; background: transparent; white-space: pre; }
+.message ul, .message ol { margin: .55em 0 .55em 1.35em; padding: 0; }
+.message li { margin: .22em 0; }
 .composer { display: grid; flex: 0 0 auto; grid-template-columns: minmax(0, 1fr) auto; align-items: end; min-width: 0; gap: 14px; padding-top: 15px; border-top: 1px solid rgba(248,237,224,.14); }
 .recent-conversations { position: absolute; top: 52px; right: 0; bottom: 0; left: 0; z-index: 6; min-height: 0; padding: 23px 26px 28px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgba(222,181,116,.38) transparent; border: 0; border-top: 1px solid rgba(226,188,126,.25); border-bottom: 1px solid rgba(226,188,126,.2); background: linear-gradient(155deg, rgba(27,20,14,.99), rgba(14,13,12,.98)); box-shadow: 0 34px 76px rgba(0,0,0,.42); }
 .shelf-line { position: absolute; left: 22px; right: 22px; bottom: 18px; height: 1px; background: linear-gradient(90deg, transparent, rgba(216,170,105,.35) 14%, rgba(216,170,105,.16) 84%, transparent); box-shadow: 0 8px 18px rgba(0,0,0,.5); }
@@ -194,7 +203,16 @@ html[data-presence="processing"] .scene { filter: saturate(.82) contrast(1.03) b
 html[data-presence="speaking"] .scene { filter: saturate(1.02) contrast(1.02) brightness(1.03); }
 html[data-safety="autonomy_stopped"] .scene { filter: saturate(.68) contrast(.98) brightness(.82); }
 html[data-safety="autonomy_stopped"] .ambient { background: linear-gradient(90deg, rgba(8,12,12,.25), rgba(8,12,12,.1) 50%, rgba(8,12,12,.55)); }
-@media (min-width: 1800px) { .conversation-surface { right: 8vw; width: min(31vw, 610px); }.message { font-size: 16px; }.transcript { max-height: 48vh; } }
+.message, .composer textarea, .surface-status, .recent-item, .new-conversation, .recent-conversations-toggle, .send { font-family: system-ui, "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif; }
+@media (min-width: 1800px) {
+  .conversation-surface { right: clamp(80px, 6vw, 230px); bottom: clamp(90px, 8vh, 175px); width: clamp(610px, 28vw, 920px); height: min(76vh, 1120px); max-height: calc(100vh - clamp(130px, 14vh, 285px)); padding: clamp(28px, 1.45vw, 44px) clamp(32px, 1.7vw, 54px) clamp(26px, 1.35vw, 42px); }
+  .conversation-surface h1 { font-size: clamp(42px, 1.7vw, 60px); }
+  .eyebrow, .new-conversation, .recent-conversations-toggle, .send { font-size: clamp(11px, .42vw, 14px); }
+  .surface-status { font-size: clamp(15px, .5vw, 19px); }
+  .message { padding: clamp(12px, .48vw, 17px) clamp(14px, .56vw, 20px); font-size: clamp(16px, .54vw, 20px); }
+  .composer textarea { min-height: 48px; font-size: clamp(16px, .52vw, 19px); }
+  .transcript { max-height: 55vh; gap: clamp(11px, .5vw, 17px); }
+}
 @media (max-width: 1280px) { .conversation-surface { right: 4vw; width: min(39vw, 520px); }.home-attention, .operation-surface, .commitments-surface, .activity-surface, .proactive-surface, .continuity-surface, .reflections-surface, .workbench-surface { right: 4vw; width: 42vw; }.recent-list { grid-template-columns: 1fr; }.continuity-columns { grid-template-columns: 1fr; } }
 @media (max-width: 1000px) { .scene { object-position: 43% center; }.conversation-surface { right: 3vw; width: min(46vw, 500px); }.safety-overlay { padding: 55px; }.safety-copy { width: min(46vw, 480px); } }
 @media (max-width: 780px) { body { min-width: 640px; }.scene { object-position: 40% center; }.conversation-surface { right: 20px; bottom: 70px; width: min(58vw, 450px); min-width: 330px; max-height: 66vh; padding: 22px 24px 20px; }.transcript { max-height: 34vh; }.home-attention { right: 20px; bottom: 92px; width: min(58vw, 420px); min-width: 330px; }.operation-surface, .commitments-surface, .activity-surface, .proactive-surface, .continuity-surface, .reflections-surface, .workbench-surface { right: 20px; top: 72px; width: min(58vw, 450px); min-width: 350px; max-height: calc(100vh - 150px); padding: 25px 27px; }.safety-overlay { padding: 36px; }.safety-copy { width: 55vw; }.home-attention-trigger { left: 20px; }.safety-trigger { right: 20px; } }

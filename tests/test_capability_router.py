@@ -165,3 +165,13 @@ def test_local_semantic_classifier_sees_only_current_utterance_and_fixed_allowli
     assert provider.last_request.messages[0].role is MessageRole.SYSTEM
     assert provider.last_request.messages[1].role is MessageRole.USER
     assert provider.last_request.messages[1].content == "Может, заведём задачу про врача?"
+
+
+def test_scoped_memory_query_carries_natural_topic():
+    parsed = NaturalLanguageCapabilityRouter().route(
+        "Кстати, а что ты помнишь про то, что я люблю пить?"
+    )
+
+    assert parsed is not None
+    assert parsed.intent is CapabilityIntent.QUERY_MEMORY
+    assert parsed.entity == "то что я люблю пить"

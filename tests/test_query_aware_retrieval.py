@@ -481,3 +481,60 @@ def test_retrieval_is_interactive_on_one_thousand_local_records(
 
     assert _ids(records)[0] == "A_primary_local_model"
     assert elapsed < 2.0
+
+
+def test_pronoun_perspective_follow_up_uses_only_recent_user_topic(
+    tmp_path: Path,
+    query_retrieval_store: MemoryStore,
+):
+    service, provider = _conversation_service(tmp_path, query_retrieval_store)
+    conversation_id, _ = service.send(
+        "Что мы решили с локальными моделями?",
+        project_id=PROJECT_ID,
+    )
+
+    service.send(
+        "А ты сама что про это думаешь?",
+        project_id=PROJECT_ID,
+        conversation_id=conversation_id,
+    )
+
+    request = provider.last_request
+    assert request.private_context["context_lens"] == "masha_perspective"
+    assert [item["id"] for item in request.private_context["memory_context"]] == [
+        "H_model_perspective"
+    ]
+
+
+def test_explicit_broad_perspective_stays_broad_without_history_rewrite(
+    tmp_path: Path,
+    query_retrieval_store: MemoryStore,
+):
+    service, provider = _conversation_service(tmp_path, query_retrieval_store)
+
+    service.send("Что ты вообще думаешь?", project_id=PROJECT_ID)
+
+    request = provider.last_request
+    assert request.private_context["context_lens"] == "masha_perspective"
+    assert {item["record_type"] for item in request.private_context["memory_context"]} <= {
+        "reflection"
+    }
+
+
+def test_new_perspective_topic_does_not_reuse_previous_user_topic(
+    tmp_path: Path,
+    query_retrieval_store: MemoryStore,
+):
+    service, provider = _conversation_service(tmp_path, query_retrieval_store)
+    conversation_id, _ = service.send(
+        "Что мы решили с локальными моделями?",
+        project_id=PROJECT_ID,
+    )
+
+    service.send(
+        "Что ты сама думаешь о погоде?",
+        project_id=PROJECT_ID,
+        conversation_id=conversation_id,
+    )
+
+    assert provider.last_request.private_context["memory_context"] == []
