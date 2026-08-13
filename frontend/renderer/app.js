@@ -121,7 +121,15 @@ function applyScene(presentation) {
     reducedMotion: reducedMotion.matches,
   });
   clearTimeout(sceneSettleTimer);
-  if (next.id === activeSceneId) return;
+  if (next.id === activeSceneId) {
+    clearTimeout(sceneTransitionTimer);
+    sceneTransitionTimer = null;
+    window.MashaSceneTransitionSafety.restoreActiveLayer(
+      sceneLayers,
+      activeSceneLayer,
+    );
+    return;
+  }
   const heldFor = performance.now() - activeSceneChangedAt;
   const holdDelay = Math.max(0, transition.minimumHoldMs - heldFor);
   const delay = Math.max(transition.settleMs, holdDelay);
@@ -690,7 +698,11 @@ function renderMessage(message, { provisional = false } = {}) {
     transcript.append(item);
   }
   item.className = `message message-${message.role}${provisional ? " is-provisional" : ""}`;
-  item.textContent = message.content;
+  if (message.role === "assistant") {
+    window.MashaSafeMarkdown.renderInto(item, message.content);
+  } else {
+    item.textContent = message.content;
+  }
   return item;
 }
 

@@ -172,6 +172,49 @@ def test_response_contract_allows_discussion_and_receipted_success():
     assert render_model_response(execution, application_receipts=("receipt",)) == execution
 
 
+@pytest.mark.parametrize(
+    "answer",
+    (
+        "Бетельгейзе находится в Млечном Пути. Её яркость изменяется со временем.",
+        "Яркость звезды изменяется.",
+        "Модель обновляется раз в месяц.",
+        "Если изменить настройку, результат будет другим.",
+        "Можно удалить запись после подтверждения.",
+        "Я изменила мнение после разговора.",
+        "Мы обновили подход к выбору модели.",
+        "Всё со временем изменилось.",
+    ),
+)
+def test_response_contract_allows_non_application_change_language(answer):
+    from backend.conversation.response_contract import render_model_response
+
+    assert render_model_response(answer) == answer
+
+
+@pytest.mark.parametrize(
+    "claim",
+    (
+        "Я сохранила это в память.",
+        "Я сейчас изменяю запись.",
+        "Готово, задача создана.",
+        "Запись уже удалена.",
+    ),
+)
+def test_response_contract_still_blocks_application_mutation_claims_with_safe_diagnostic(claim):
+    from backend.conversation.response_contract import (
+        render_model_response,
+        response_guard_diagnostics,
+    )
+
+    before = len(response_guard_diagnostics())
+    assert render_model_response(claim) != claim
+    diagnostic = response_guard_diagnostics()[-1]
+    assert len(response_guard_diagnostics()) == before + 1
+    assert diagnostic["rule"]
+    assert diagnostic["character_count"] == len(claim)
+    assert "content" not in diagnostic
+
+
 def test_ambiguous_follow_up_neither_creates_nor_claims_commitment(tmp_path):
     _, provider, application = _application(tmp_path)
     before = application._conversation._conversation.memory_retriever.memory_store.read_document()

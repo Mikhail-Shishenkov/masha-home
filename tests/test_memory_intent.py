@@ -214,3 +214,16 @@ def test_storage_failure_keeps_pending_proposal_and_never_reports_success(tmp_pa
     assert "Не смогла сохранить" in result.response
     assert proposals.get(proposal.id).status == ProposalStatus.PENDING
     assert store.get_fact(proposal.record_payload["id"]) is None
+    diagnostic = json.loads(
+        (tmp_path / "confirmation-failures.json").read_text(encoding="utf-8")
+    )
+    failure = diagnostic["failures"][-1]
+    assert failure["exception_type"] == "OSError"
+    assert failure["operation"] == "create"
+    assert failure["record_type"] == "fact"
+    assert failure["proposal_id"] == proposal.id
+    assert failure["record_id"] == proposal.record_payload["id"]
+
+    retry = handler.handle("Да", conversation_id="c", project_id=PROJECT_ID)
+    assert "можно повторить" in retry.response
+    assert proposals.get(proposal.id).status == ProposalStatus.PENDING

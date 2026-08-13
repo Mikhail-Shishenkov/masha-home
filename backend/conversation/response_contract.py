@@ -7,7 +7,10 @@ mutation-success language is rejected before it enters conversation history.
 
 from __future__ import annotations
 
+import hashlib
 import re
+from collections import deque
+from datetime import datetime, timezone
 
 
 _FIRST_PERSON_MUTATION = re.compile(
@@ -68,6 +71,47 @@ UNRECEIPTED_MUTATION_RESPONSE = (
     "Могу обсудить это или подготовить отдельное предложение для твоего подтверждения."
 )
 
+_GUARD_PATTERNS = (
+    ("first_person_mutation", _FIRST_PERSON_MUTATION),
+    ("result_state_claim", _RESULT_STATE_CLAIM),
+    ("english_mutation", _ENGLISH_MUTATION),
+    ("success_mutation_sequence", _SUCCESS_MUTATION_SEQUENCE),
+    ("execution_mutation_form", _EXECUTION_MUTATION_FORM),
+)
+_APPLICATION_STATE_NOUN = re.compile(
+    r"\b(?:дело|задач\w*|обязательств\w*|напоминан\w*|запис\w*|памят\w*|"
+    r"событи\w*|нить|нити|тему|темы|приложени\w*|календар\w*)\b",
+    re.IGNORECASE,
+)
+_BLOCKED_DIAGNOSTICS: deque[dict[str, str | int]] = deque(maxlen=100)
+
+
+def response_guard_diagnostics() -> tuple[dict[str, str | int], ...]:
+    """Return content-free local diagnostics for support/status boundaries."""
+    return tuple(dict(item) for item in _BLOCKED_DIAGNOSTICS)
+
+
+def _sentence_for_match(text: str, match: re.Match[str]) -> str:
+    start = max(text.rfind(".", 0, match.start()), text.rfind("!", 0, match.start()), text.rfind("?", 0, match.start()))
+    ends = [position for mark in ".!?" if (position := text.find(mark, match.end())) >= 0]
+    end = min(ends) if ends else len(text)
+    return text[start + 1 : end]
+
+
+def _is_application_claim(rule: str, text: str, match: re.Match[str]) -> bool:
+    if rule == "english_mutation":
+        return True
+    # Russian change language is authoritative only when its sentence names
+    # application-owned state. This keeps ordinary descriptions such as
+    # "яркость изменяется" and "я изменила мнение" conversational.
+    sentence = _sentence_for_match(text, match)
+    if _APPLICATION_STATE_NOUN.search(sentence):
+        return True
+    return (
+        rule in {"first_person_mutation", "execution_mutation_form"}
+        and re.search(r"\bя\b.{0,48}\b(?:это|его|ее|её)\b", sentence, re.IGNORECASE) is not None
+    )
+
 
 def render_model_response(text: str, *, application_receipts: tuple[str, ...] = ()) -> str:
     """Return mutation-success wording only when the application issued a receipt.
@@ -77,12 +121,14 @@ def render_model_response(text: str, *, application_receipts: tuple[str, ...] = 
     """
     if application_receipts:
         return text
-    if any(pattern.search(text) for pattern in (
-        _FIRST_PERSON_MUTATION,
-        _RESULT_STATE_CLAIM,
-        _ENGLISH_MUTATION,
-        _SUCCESS_MUTATION_SEQUENCE,
-        _EXECUTION_MUTATION_FORM,
-    )):
-        return UNRECEIPTED_MUTATION_RESPONSE
+    for rule, pattern in _GUARD_PATTERNS:
+        match = pattern.search(text)
+        if match and _is_application_claim(rule, text, match):
+            _BLOCKED_DIAGNOSTICS.append({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "rule": rule,
+                "character_count": len(text),
+                "content_digest": hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
+            })
+            return UNRECEIPTED_MUTATION_RESPONSE
     return text

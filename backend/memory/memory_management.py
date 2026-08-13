@@ -188,15 +188,73 @@ class MemoryManagementService:
         """Mutation confirmation entry point; caller must verify pending user approval."""
         if proposal.status.value != "pending" or proposal.operation == "create" or not proposal.target_record_id:
             raise ValueError("proposal is not a pending memory mutation")
+        existing = self.proposal_postcondition(proposal)
+        if existing is not None:
+            from backend.conversation.memory_intent import ProposalStatus
+            proposal_store.set_status(proposal.id, ProposalStatus.CONFIRMED)
+            return existing
         view = self.apply(
             operation=MemoryMutationOperation(proposal.operation),
             record_id=proposal.target_record_id,
             replacement_payload=proposal.record_payload,
             proposal_id=proposal.id,
         )
+        verified = self.proposal_postcondition(proposal)
+        if verified is None:
+            raise RuntimeError("memory mutation postcondition was not satisfied")
         from backend.conversation.memory_intent import ProposalStatus
         proposal_store.set_status(proposal.id, ProposalStatus.CONFIRMED)
-        return view
+        return verified
+
+    def proposal_postcondition(self, proposal) -> MemoryRecordView | None:
+        """Return the applied result only when this exact proposal is audited."""
+        if proposal.operation == "create" or not proposal.target_record_id:
+            raise ValueError("proposal is not a memory mutation")
+        operation = MemoryMutationOperation(proposal.operation)
+        target = self.get(proposal.target_record_id)
+        if target is None or not self._proposal_audited(proposal.id, operation):
+            return None
+        if operation in {MemoryMutationOperation.ARCHIVE, MemoryMutationOperation.FORGET}:
+            return target if target.payload.get("visibility") == "hidden" else None
+        if operation == MemoryMutationOperation.EDIT:
+            expected = self._without_runtime_timestamp(proposal.record_payload)
+            actual = self._without_runtime_timestamp(target.payload)
+            return target if actual == expected else None
+        replacement_id = proposal.record_payload.get("id")
+        replacement = self.get(str(replacement_id)) if replacement_id else None
+        if (
+            operation == MemoryMutationOperation.SUPERSEDE
+            and replacement is not None
+            and target.payload.get("superseded_by") == replacement.record_id
+            and target.payload.get("status") == "superseded"
+            and self._without_runtime_timestamp(replacement.payload)
+            == self._without_runtime_timestamp(proposal.record_payload)
+        ):
+            return replacement
+        return None
+
+    def _proposal_audited(
+        self,
+        proposal_id: str,
+        operation: MemoryMutationOperation,
+    ) -> bool:
+        return any(
+            event.get("action") == f"memory_{operation.value}"
+            and event.get("payload", {}).get("proposal_id") == proposal_id
+            for event in self.repository.list_audit_events()
+        )
+
+    @staticmethod
+    def _without_runtime_timestamp(payload: dict[str, Any]) -> dict[str, Any]:
+        comparable = dict(payload)
+        comparable.pop("updated_at", None)
+        for key, value in tuple(comparable.items()):
+            if key.endswith("_at") and isinstance(value, str):
+                try:
+                    comparable[key] = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                except ValueError:
+                    pass
+        return comparable
 
     def trace(self, retrieved: list[dict[str, Any]]) -> tuple[MemoryRetrievalTrace, ...]:
         return tuple(

@@ -927,6 +927,57 @@ def test_production_bridge_keeps_one_pending_confirmation_and_plain_yes_resolves
     bridge.close()
 
 
+def test_memory_proposal_bridge_preserves_valid_presentation_lifecycle(tmp_path):
+    from backend.application import build_masha_application
+    from backend.llm.model_router import ModelRouter
+    from backend.ui.conversation_bridge import LocalConversationBridge
+    from tests.test_application_boundary import LocalProfileProvider, _isolated_root
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    application = build_masha_application(
+        project_root=_isolated_root(tmp_path),
+        router=ModelRouter([LocalProfileProvider(response_text="Я здесь.")]),
+    )
+    bridge = LocalConversationBridge(application)
+    events: list[dict] = []
+    bridge.event.connect(lambda encoded: events.append(json.loads(encoded)))
+    bridge.loadInitialState()
+
+    bridge.submitMessage("Маша, запомни наш разговор про звёзды")
+    deadline = time.monotonic() + 3
+    while not any(item["kind"] == "turn_result" for item in events) and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+
+    started = next(item for item in events if item["kind"] == "turn_started")
+    thinking = next(item for item in events if item["kind"] == "turn_thinking")
+    proposed = next(item for item in events if item["kind"] == "turn_result")
+    assert started["snapshot"]["presentation"]["presence"]["activity"] == "waiting"
+    assert thinking["snapshot"]["presentation"]["presence"]["activity"] == "processing"
+    assert proposed["snapshot"]["presentation"]["presence"]["activity"] == "confirmation"
+    assert proposed["result"]["pending_confirmation"]["confirmation_type"] == "memory_create"
+    proposal_id = proposed["result"]["pending_confirmation"]["proposal_id"]
+
+    bridge.resolveConfirmation(proposal_id, "reject")
+    deadline = time.monotonic() + 3
+    while not any(item["kind"] == "confirmation_result" for item in events) and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    resolved = next(item for item in events if item["kind"] == "confirmation_result")
+    assert resolved["result"]["status"] == "rejected"
+    assert resolved["snapshot"]["presentation"]["presence"]["activity"] == "completed"
+
+    before = len([item for item in events if item["kind"] == "turn_result"])
+    bridge.submitMessage("Ты здесь?")
+    deadline = time.monotonic() + 3
+    while len([item for item in events if item["kind"] == "turn_result"]) == before and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    follow_up = [item for item in events if item["kind"] == "turn_result"][-1]
+    assert follow_up["result"]["assistant_message"]["content"] == "Я здесь."
+    bridge.close()
+
+
 def test_commitment_pagination_keeps_old_records_actionable_by_id(tmp_path):
     from datetime import datetime, timedelta, timezone
 

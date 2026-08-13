@@ -3,7 +3,8 @@ from __future__ import annotations
 import re
 
 from backend.identity.identity_kernel import IdentityKernel
-from backend.llm.model_models import ModelMessage
+from backend.llm.model_models import MessageRole, ModelMessage
+from backend.memory.text_normalization import meaningful_tokens
 from backend.llm.model_provider import ModelProviderUnavailableError, ModelTimeoutError
 from backend.llm.model_router import ModelRouter
 from backend.llm.model_profiles import ModelProfileStore
@@ -11,7 +12,7 @@ from backend.memory.memory_retriever import ContextLens, MemoryRetrievalRequest,
 from backend.memory.working_memory import WorkingMemory
 from backend.temporal.temporal_engine import TemporalEngine
 
-from .conversation_models import ConversationRole
+from .conversation_models import ConversationMessageOrigin, ConversationRole
 from .context_compiler import ConversationContextCompiler
 from .conversation_store import ConversationStore
 from .memory_intent import MemoryIntentHandler
@@ -31,8 +32,9 @@ _SHARED_CONTINUITY_QUERY = re.compile(
 )
 _PERSPECTIVE_QUERY = re.compile(
     r"\b(?:"
-    r"что\s+ты(?:\s+сама)?\s+думаешь|"
-    r"ты(?:\s+сама)?\s+что\s+думаешь|"
+    r"что\s+ты(?:\s+(?:сама|вообще)){0,2}\s+думаешь|"
+    r"ты(?:\s+(?:сама|вообще)){0,2}\s+что\s+думаешь|"
+    r"ты(?:\s+сама)?\s+что\s+(?:про\s+(?:это|нее)|об\s+этом)\s+думаешь|"
     r"каково\s+твое\s+мнение|"
     r"как\s+изменилось\s+твое\s+мнение|"
     r"ты\s+все\s+еще\s+так\s+считаешь|"
@@ -62,6 +64,33 @@ def _retrieval_query(user_message: str, lens: ContextLens) -> str:
         return user_message
     normalized = _normalized_lens_query(user_message)
     topic = _LENS_SPACE.sub(" ", _PERSPECTIVE_QUERY.sub(" ", normalized)).strip()
+    return topic
+
+
+_EXPLICIT_BROAD_PERSPECTIVE = re.compile(
+    r"\b(?:вообще|в\s+целом)\b.*\b(?:думаешь|мнение|считаешь)\b|"
+    r"\b(?:думаешь|мнение|считаешь)\b.*\b(?:вообще|в\s+целом)\b"
+)
+
+
+def contextualized_retrieval_query(
+    user_message: str,
+    lens: ContextLens,
+    recent_user_messages: tuple[str, ...] = (),
+) -> str:
+    """Resolve a pronoun-only topic from at most two prior user turns."""
+    topic = _retrieval_query(user_message, lens)
+    if lens is not ContextLens.MASHA_PERSPECTIVE:
+        return topic
+    normalized = _normalized_lens_query(user_message)
+    if _EXPLICIT_BROAD_PERSPECTIVE.search(normalized):
+        return ""
+    if meaningful_tokens(topic):
+        return topic
+    for previous in reversed(recent_user_messages[-2:]):
+        previous_topic = _retrieval_query(previous, select_context_lens(previous))
+        if meaningful_tokens(previous_topic):
+            return previous_topic
     return topic
 
 
@@ -134,6 +163,7 @@ class ConversationService:
                     conversation.id,
                     ConversationRole.ASSISTANT,
                     reflection_intent.response,
+                    origin=ConversationMessageOrigin.APPLICATION,
                 )
                 return conversation.id, reflection_intent.response
 
@@ -143,16 +173,34 @@ class ConversationService:
                 conversation_id=conversation.id,
                 project_id=project_id,
                 active_continuity_thread_id=active_continuity_thread_id,
+                conversation_messages=self.history.messages(
+                    conversation.id,
+                    limit=self.history_limit,
+                ),
             )
             if intent.handled:
                 assert intent.response is not None
-                self.history.append(conversation.id, ConversationRole.ASSISTANT, intent.response)
+                self.history.append(
+                    conversation.id,
+                    ConversationRole.ASSISTANT,
+                    intent.response,
+                    origin=ConversationMessageOrigin.APPLICATION,
+                )
                 return conversation.id, intent.response
 
         context_lens = select_context_lens(user_message)
+        recent_user_messages = tuple(
+            message.content
+            for message in self.history.messages(conversation.id, limit=self.history_limit)
+            if message.role is ConversationRole.USER and message.id != user_history_message.id
+        )
         memories = self.memory_retriever.retrieve(
             MemoryRetrievalRequest(
-                query=_retrieval_query(user_message, context_lens),
+                query=contextualized_retrieval_query(
+                    user_message,
+                    context_lens,
+                    recent_user_messages,
+                ),
                 project_id=project_id,
                 limit=self.memory_limit,
                 lens=context_lens,
@@ -162,7 +210,7 @@ class ConversationService:
         active_profile = None if self.model_profiles is None else self.model_profiles.get_active_profile()
         request = self.context_compiler.compile(
             messages=tuple(
-                ModelMessage(role=message.role.value, content=message.content)
+                self._model_history_message(message)
                 for message in self.history.messages(conversation.id, limit=self.history_limit)
             ),
             identity_context=self.identity_kernel.build_context(),
@@ -210,6 +258,7 @@ class ConversationService:
             conversation_id,
             ConversationRole.ASSISTANT,
             result.response,
+            origin=ConversationMessageOrigin.APPLICATION,
         )
         proposal = self.memory_intent_handler.proposal_store.get(proposal_id)
         status = "missing" if proposal is None else proposal.status.value
@@ -252,5 +301,18 @@ class ConversationService:
             conversation.id,
             ConversationRole.ASSISTANT,
             result.response,
+            origin=ConversationMessageOrigin.APPLICATION,
         )
         return conversation.id, user, assistant
+
+    @staticmethod
+    def _model_history_message(message) -> ModelMessage:
+        if message.origin is ConversationMessageOrigin.APPLICATION:
+            return ModelMessage(
+                role=MessageRole.SYSTEM,
+                content=(
+                    "Результат приложения из предыдущего хода; это факт интерфейса, "
+                    "а не образец стиля ответа:\n" + message.content
+                ),
+            )
+        return ModelMessage(role=message.role.value, content=message.content)

@@ -359,3 +359,91 @@ def test_terminal_minute_reminder_flows_from_confirmation_to_due_event(tmp_path,
         now=now + timedelta(minutes=3),
     )
     assert decision is ProactiveDecision.REMIND
+
+
+def test_scoped_memory_hit_no_match_and_broad_overview_do_not_cross_contaminate(tmp_path, memory_path):
+    service, _ = _service(tmp_path, memory_path)
+    conversation_id, _ = _send(service, "Запомни, что я люблю чай")
+    _send(service, "да", conversation_id)
+
+    _, scoped = _send(service, "Что ты помнишь про то, что я люблю пить?", conversation_id)
+    _, missing = _send(service, "Что ты знаешь про мою подводную лодку?", conversation_id)
+    _, broad = _send(service, "Что ты обо мне помнишь?", conversation_id)
+
+    assert "люблю чай" in scoped
+    assert "learning_python" not in scoped
+    assert "ничего подходящего" in missing
+    assert "learning_python" not in missing
+    assert "learning_python" in broad
+
+
+def test_application_readout_is_typed_before_unrelated_model_turn(tmp_path, memory_path):
+    service, _ = _service(tmp_path, memory_path)
+    conversation_id, readout = _send(service, "Что ты обо мне помнишь?")
+    _, telescope = _send(
+        service,
+        "Какой лучше телескоп выбрать для просмотра Луны в деревне?",
+        conversation_id,
+    )
+
+    provider = service.router.get_provider("ollama-local")
+    request = provider.last_request
+    assert telescope == "model must not run"
+    assert request.messages[-1].role.value == "user"
+    assert "телескоп" in request.messages[-1].content
+    application_history = [
+        message for message in request.messages
+        if message.role.value == "system" and readout in message.content
+    ]
+    assert len(application_history) == 1
+
+
+def test_natural_conversation_memory_creates_and_confirms_episode(tmp_path, memory_path):
+    service, store = _service(tmp_path, memory_path)
+    conversation_id, _ = _send(service, "Поговорим о Бетельгейзе и наблюдении Луны?")
+    _, proposal_text = _send(
+        service,
+        "Маша, запомни наш разговор про звёзды",
+        conversation_id,
+    )
+    proposal = service.memory_intent_handler.proposal_store.current_for_conversation(conversation_id)
+
+    assert proposal is not None
+    assert proposal.record_type == "episode"
+    assert proposal.record_payload["title"] == "Разговор про звёзды"
+    assert proposal.record_payload["summary"] == "В недавнем разговоре обсуждали звёзды."
+    assert "misha.explicit_statement" not in proposal_text
+    assert not any(item.id == proposal.record_payload["id"] for item in store.read_document().episodes)
+
+    _, receipt = _send(service, "Подтверждаю.", conversation_id)
+    saved = next(
+        item for item in store.read_document().episodes
+        if item.id == proposal.record_payload["id"]
+    )
+    assert receipt == "Готово, сохранила."
+    assert saved.title == "Разговор про звёзды"
+
+
+def test_ambiguous_forget_shows_typed_choices_and_follow_up_stays_bounded(tmp_path, memory_path):
+    service, store = _service(tmp_path, memory_path)
+    conversation_id, _ = _send(service, "Запомни, что кот любит коробки")
+    _send(service, "да", conversation_id)
+    _send(service, "Запомни, что кот любит диван", conversation_id)
+    _send(service, "да", conversation_id)
+
+    _, choices = _send(service, "Маша, забудь про кота", conversation_id)
+    assert "кот любит коробки" in choices
+    assert "кот любит диван" in choices
+    assert "fact_" not in choices
+    assert service.memory_intent_handler.proposal_store.current_for_conversation(conversation_id) is None
+
+    _, proposal_text = _send(service, "ту, где про коробки", conversation_id)
+    pending = service.memory_intent_handler.proposal_store.current_for_conversation(conversation_id)
+    assert pending is not None
+    assert pending.operation == "forget"
+    assert "кот любит коробки" in proposal_text
+    selected = next(
+        item for item in store.read_document().facts
+        if item.id == pending.target_record_id
+    )
+    assert selected.visibility.value == "visible"

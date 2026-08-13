@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import ConfigDict, model_validator
+from pydantic import ConfigDict, Field, model_validator
 
 from .memory_models import (
     Commitment,
@@ -46,6 +46,7 @@ class ExplicitMemoryConfirmation(StrictMemoryModel):
 
     confirmed_by: Literal[IdentityCode.MISHA]
     record: ConfirmedRecord
+    proposal_id: str | None = Field(default=None, min_length=1)
 
     @model_validator(mode="after")
     def require_explicit_user_source(self):
@@ -81,9 +82,36 @@ class ConfirmedMemoryService:
                 "when": confirmation.record.created_at.isoformat(),
                 "operation": "confirmed_memory",
                 "record_id": confirmation.record.id,
+                **(
+                    {"proposal_id": confirmation.proposal_id}
+                    if confirmation.proposal_id is not None
+                    else {}
+                ),
             },
         )
         return confirmation.record
+
+    def confirmation_postcondition(
+        self,
+        confirmation: ExplicitMemoryConfirmation,
+    ) -> bool:
+        """Verify the exact proposed record, plus its audit when available."""
+        document = self.repository.read_document()
+        if document is None:
+            return False
+        record_type = self._record_type(confirmation.record)
+        collection = getattr(document, _COLLECTION_BY_RECORD_TYPE[record_type])
+        matches = [item for item in collection if item.id == confirmation.record.id]
+        if len(matches) != 1 or matches[0] != confirmation.record:
+            return False
+        if confirmation.proposal_id is None or not hasattr(self.repository, "list_audit_events"):
+            return True
+        return any(
+            event.get("action") == "confirmed_memory"
+            and event.get("payload", {}).get("proposal_id") == confirmation.proposal_id
+            and event.get("payload", {}).get("record_id") == confirmation.record.id
+            for event in self.repository.list_audit_events()
+        )
 
     @staticmethod
     def _record_type(record: ConfirmedRecord) -> ConfirmedRecordType:
