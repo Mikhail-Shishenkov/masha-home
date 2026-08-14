@@ -10,7 +10,11 @@ from PySide6.QtCore import QObject, Signal, Slot
 from PySide6.QtWidgets import QFileDialog
 
 from backend.application import ConversationTurnStatus, MashaApplication
-from backend.application.human_information import HumanSearchRequest, HumanSearchScope
+from backend.application.human_information import (
+    HumanSearchRequest,
+    HumanSearchScope,
+    RecallMode,
+)
 
 
 HOME_PROJECT_ID = "project_masha_home"
@@ -30,6 +34,8 @@ class LocalConversationBridge(QObject):
         self._session_lock = Lock()
         self._conversation_id: str | None = None
         self._conversation_page_revision = 0
+        self._human_search_revision = 0
+        self._human_search_refs: dict[str, str] = {}
         self._turn_in_flight = False
         self._proactive_refresh_in_flight = False
         self._visible_proactive_ids: set[str] = set()
@@ -315,12 +321,44 @@ class LocalConversationBridge(QObject):
         except ValueError:
             self._emit({"kind": "human_search_unavailable"})
             return
-        result = self._application.search_information(HumanSearchRequest(
-            query=query.strip(), scope=selected_scope, project_id=HOME_PROJECT_ID,
+        normalized_query = query.strip()
+        current_and_past = self._application.search_information(HumanSearchRequest(
+            query=normalized_query,
+            scope=selected_scope,
+            project_id=HOME_PROJECT_ID,
+            mode=RecallMode.RETROSPECTIVE,
+            limit=20,
         ))
+        forgotten = self._application.search_information(HumanSearchRequest(
+            query=normalized_query,
+            scope=selected_scope,
+            project_id=HOME_PROJECT_ID,
+            mode=RecallMode.FORGOTTEN_REVIEW,
+            limit=20,
+        ))
+        matches_by_id = {}
+        for match in (*current_and_past.matches, *forgotten.matches):
+            existing = matches_by_id.get(match.item.ref.entity_id)
+            if existing is None or match.relevance > existing.relevance:
+                matches_by_id[match.item.ref.entity_id] = match
+        matches = sorted(
+            matches_by_id.values(),
+            key=lambda match: (
+                -match.relevance,
+                0 if match.item.availability.value == "active" else 1,
+                match.item.label.casefold(),
+                match.item.ref.entity_id,
+            ),
+        )[:20]
+        self._human_search_revision += 1
+        self._human_search_refs = {
+            f"result-{self._human_search_revision}-{index}": match.item.ref.entity_id
+            for index, match in enumerate(matches, 1)
+        }
+        ref_by_record = {record_id: ref for ref, record_id in self._human_search_refs.items()}
         self._emit({
             "kind": "human_search_loaded",
-            "query": query.strip(),
+            "query": normalized_query,
             "scope": selected_scope.value,
             "items": [
                 {
@@ -328,9 +366,57 @@ class LocalConversationBridge(QObject):
                     "label": match.item.label,
                     "state": match.item.domain_state,
                     "availability": match.item.availability.value,
+                    "reference": ref_by_record[match.item.ref.entity_id],
+                    "can_restore": (
+                        match.item.availability.value == "forgotten"
+                        and "restore" in {
+                            action.value for action in match.item.ref.allowed_actions
+                        }
+                    ),
                 }
-                for match in result.matches
+                for match in matches
             ],
+        })
+
+    @Slot(str)
+    def restoreInformation(self, reference: str):  # noqa: N802
+        """Propose restoring one result selected from the latest search page."""
+        if self._application is None or self._turn_in_flight:
+            self._emit({"kind": "memory_restore_unavailable"})
+            return
+        record_id = self._human_search_refs.get(reference)
+        if record_id is None:
+            self._emit({"kind": "memory_restore_unavailable"})
+            return
+        if self._conversation_id is None:
+            self._emit({
+                "kind": "memory_restore_unavailable",
+                "message": "Сначала начнём разговор — и тогда я смогу вернуть это в память.",
+            })
+            return
+        if self._application.pending_confirmation(self._conversation_id) is not None:
+            self._emit({
+                "kind": "memory_restore_unavailable",
+                "message": "Сначала закончим с решением, которое уже ждёт ответа.",
+            })
+            return
+        try:
+            pending = self._application.restore_information(
+                record_id=record_id,
+                conversation_id=self._conversation_id,
+            )
+        except (KeyError, RuntimeError, ValueError):
+            self._emit({"kind": "memory_restore_unavailable"})
+            return
+        snapshot = self._session_snapshot(
+            "confirmation_requested",
+            title=pending.title,
+            summary=pending.subject,
+        )
+        self._emit({
+            "kind": "memory_restore_proposed",
+            "pending_confirmation": pending.model_dump(mode="json"),
+            "snapshot": snapshot.model_dump(mode="json"),
         })
 
     @Slot(str, str)

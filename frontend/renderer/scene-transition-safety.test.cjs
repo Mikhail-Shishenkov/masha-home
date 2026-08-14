@@ -14,6 +14,7 @@ class FakeClassList {
 
 const payload = (activity, attention = "ambient") => ({
   home_state: "ready",
+  observed_at: "2026-08-14T21:00:00+04:00",
   overlays: {},
   presence: { activity, attention },
 });
@@ -24,10 +25,10 @@ const sequence = [
   payload("confirmation", "toward_surface"),
 ];
 assert.deepEqual(sequence.map((item) => scenes.resolveScene(item).id), [
-  "scene.home.idle",
-  "scene.home.listening",
-  "scene.home.thinking",
-  "scene.home.idle",
+  "scene.home.evening.idle",
+  "scene.home.evening.listening",
+  "scene.home.evening.thinking",
+  "scene.home.evening.idle",
 ]);
 
 // Exact interrupted state from idle -> listening/thinking -> idle: the old
@@ -47,7 +48,7 @@ assert.equal(layers[1].onerror, null);
 for (const resolution of ["confirmed", "rejected"]) {
   assert.equal(
     scenes.resolveScene(payload("completed", "ambient")).id,
-    "scene.home.idle",
+    "scene.home.evening.idle",
     resolution,
   );
 }

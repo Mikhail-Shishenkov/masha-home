@@ -10,8 +10,8 @@
 <body>
   <main class="home" aria-label="Дом Маши">
     <div class="scene-stack" aria-hidden="true">
-      <img class="scene is-active" src="assets/canonical-master.png" alt="">
-      <img class="scene" src="assets/canonical-master.png" alt="">
+      <img class="scene is-active" src="assets/presence/evening/idle.png" alt="">
+      <img class="scene" src="assets/presence/evening/idle.png" alt="">
     </div>
     <div class="ambient" aria-hidden="true"></div>
     <button class="home-attention-trigger" id="home-attention-trigger" type="button" aria-expanded="false" aria-controls="home-attention" disabled>
@@ -81,8 +81,14 @@
         <div class="object-header-actions"><button class="surface-action" id="add-shared-moment" type="button">Сохранить момент</button><button class="surface-action" id="add-continuity-thread" type="button">Оставить нить</button><button class="surface-close" id="close-continuity" type="button">Закрыть</button></div>
       </header>
       <p class="object-intro">Не досье — только то, что действительно осталось с нами и к чему хочется вернуться.</p>
-      <div class="history-search"><input id="history-search-input" type="search" maxlength="240" placeholder="Найти в нашей истории"><div class="history-search-scopes" role="group" aria-label="Где искать"><button type="button" data-search-scope="all">Всё</button><button type="button" data-search-scope="history">История</button><button type="button" data-search-scope="tasks">Дела</button></div><ol id="history-search-results" hidden></ol></div>
-      <div class="continuity-columns">
+      <div class="history-search">
+        <label class="sr-only" for="history-search-input">Найти в нашей истории и делах</label>
+        <input id="history-search-input" type="search" maxlength="240" autocomplete="off" placeholder="Найти в нашем доме">
+        <div class="history-search-scopes" role="group" aria-label="Где искать"><button class="is-active" type="button" data-search-scope="all">Всё</button><button type="button" data-search-scope="history">История</button><button type="button" data-search-scope="tasks">Дела</button></div>
+        <p class="history-search-hint" id="history-search-hint">Здесь находятся и нынешние дела, и то, что уже осталось в прошлом.</p>
+        <ol class="history-search-results" id="history-search-results" aria-live="polite" hidden></ol>
+      </div>
+      <div class="continuity-columns" id="continuity-columns">
         <section><h3>Наши моменты</h3><ol class="continuity-list" id="relationship-moments"></ol></section>
         <section><h3>К чему стоит вернуться</h3><ol class="continuity-list" id="continuity-threads"></ol></section>
       </div>
@@ -115,6 +121,7 @@
       <p class="eyebrow" id="memory-candidate-eyebrow">мне кажется, это стоит помнить</p>
       <h2 id="memory-candidate-title">Сохранить это?</h2>
       <p class="operation-subject" id="memory-candidate-summary"></p>
+      <p class="memory-candidate-note" id="memory-candidate-note"></p>
       <div class="operation-actions"><button class="operation-action is-primary" id="approve-memory-candidate" type="button">Запомнить</button><button class="operation-action" id="reject-memory-candidate" type="button">Не надо</button></div>
     </aside>
     <aside class="operation-surface" id="operation-surface" aria-live="polite" hidden>
@@ -168,6 +175,7 @@
   <script src="renderer/scene-transition-safety.js"></script>
   <script src="renderer/interaction-safety.js"></script>
   <script src="renderer/safe-markdown.js"></script>
+  <script src="renderer/human-information.js"></script>
   <script src="renderer/app.js"></script>
 </body>
 </html>

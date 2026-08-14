@@ -18,13 +18,12 @@ def test_masha_scheme_is_secure_local_and_has_a_known_host_root():
 
 def test_local_origin_resolves_only_bundled_frontend_resources():
     assert resolve_frontend_resource("/index.html") == FRONTEND_ROOT / "index.html"
-    assert resolve_frontend_resource("assets/canonical-master.png").is_file()
-    assert resolve_frontend_resource("assets/conversation-candidate.png").is_file()
-    assert resolve_frontend_resource("assets/thinking-candidate.png").is_file()
-    assert resolve_frontend_resource("assets/activity-candidate.png").is_file()
-    assert resolve_frontend_resource("assets/listening-v1.png").is_file()
-    assert resolve_frontend_resource("assets/quiet-beside-v1.png").is_file()
-    assert resolve_frontend_resource("assets/firm-disagreement-v1.png").is_file()
+    assert resolve_frontend_resource("assets/presence/day/idle.png").is_file()
+    assert resolve_frontend_resource("assets/presence/day/conversation.png").is_file()
+    assert resolve_frontend_resource("assets/presence/evening/idle.png").is_file()
+    assert resolve_frontend_resource("assets/presence/evening/thinking.png").is_file()
+    assert resolve_frontend_resource("assets/presence/evening/special-cozy-wide.png").is_file()
+    assert resolve_frontend_resource("assets/presence/context/boundary-calm.png").is_file()
 
 
 def test_local_origin_rejects_path_traversal_and_missing_resources():
@@ -168,6 +167,7 @@ def test_webchannel_bridge_exposes_only_typed_allowlisted_slots():
         "loadSharedContinuity",
         "continueContinuityThread",
         "searchInformation",
+        "restoreInformation",
         "resolveMemoryCandidate",
         "loadReflectionWorkspace",
         "resolveReflection",
@@ -184,6 +184,59 @@ def test_webchannel_bridge_exposes_only_typed_allowlisted_slots():
         "proposeCommitmentCompletion",
         "resolveConfirmation",
     }
+    bridge.close()
+
+
+def test_human_search_projects_forgotten_memory_and_restores_via_typed_confirmation(tmp_path):
+    from backend.application import build_masha_application
+    from backend.llm.model_router import ModelRouter
+    from backend.memory.memory_models import MemoryDocument
+    from backend.memory.sqlite_repository import MemorySqliteRepository
+    from backend.ui.conversation_bridge import LocalConversationBridge
+    from tests.human_information_fixture import FORGOTTEN_MAC_ID, human_information_document
+    from tests.test_application_boundary import LocalProfileProvider, _isolated_root
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    root = _isolated_root(tmp_path)
+    repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")
+    repository.replace_document(
+        MemoryDocument.model_validate(human_information_document()),
+        action="test_home_human_search",
+    )
+    application = build_masha_application(
+        project_root=root,
+        router=ModelRouter([LocalProfileProvider(response_text="Я рядом.")]),
+    )
+    turn = application.send_message("Привет", project_id="project_masha_home")
+    assert turn.conversation_id is not None
+
+    bridge = LocalConversationBridge(application)
+    emitted: list[dict] = []
+    bridge.event.connect(lambda encoded: emitted.append(json.loads(encoded)))
+    bridge.loadInitialState()
+    bridge.searchInformation("забытая цена MacBook", "history")
+
+    search = next(item for item in emitted if item["kind"] == "human_search_loaded")
+    forgotten = next(item for item in search["items"] if item["availability"] == "forgotten")
+    assert forgotten["can_restore"] is True
+    assert forgotten["reference"].startswith("result-")
+    assert FORGOTTEN_MAC_ID not in json.dumps(search, ensure_ascii=False)
+
+    bridge.restoreInformation(forgotten["reference"])
+    proposed = next(item for item in emitted if item["kind"] == "memory_restore_proposed")
+    pending = proposed["pending_confirmation"]
+    assert pending["confirmation_type"] == "memory_restore"
+    assert FORGOTTEN_MAC_ID not in json.dumps(proposed, ensure_ascii=False)
+
+    bridge.resolveConfirmation(pending["proposal_id"], "confirm")
+    deadline = time.monotonic() + 3
+    while not any(item["kind"] == "confirmation_result" for item in emitted) and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    resolved = next(item for item in emitted if item["kind"] == "confirmation_result")
+    assert resolved["result"]["status"] == "confirmed"
+    restored = next(item for item in repository.read_document().facts if item.id == FORGOTTEN_MAC_ID)
+    assert restored.visibility.value == "visible"
     bridge.close()
 
 

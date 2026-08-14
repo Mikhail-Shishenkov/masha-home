@@ -86,11 +86,14 @@ const submitContinuity = document.getElementById("submit-continuity");
 const cancelContinuity = document.getElementById("cancel-continuity");
 const historySearchInput = document.getElementById("history-search-input");
 const historySearchResults = document.getElementById("history-search-results");
+const historySearchHint = document.getElementById("history-search-hint");
+const continuityColumns = document.getElementById("continuity-columns");
 const historySearchScopes = [...document.querySelectorAll("[data-search-scope]")];
 const memoryCandidateSurface = document.getElementById("memory-candidate-surface");
 const memoryCandidateEyebrow = document.getElementById("memory-candidate-eyebrow");
 const memoryCandidateTitle = document.getElementById("memory-candidate-title");
 const memoryCandidateSummary = document.getElementById("memory-candidate-summary");
+const memoryCandidateNote = document.getElementById("memory-candidate-note");
 const approveMemoryCandidate = document.getElementById("approve-memory-candidate");
 const rejectMemoryCandidate = document.getElementById("reject-memory-candidate");
 
@@ -109,6 +112,7 @@ let activeSceneChangedAt = performance.now();
 let pendingConfirmation = null;
 let pendingMemoryCandidate = null;
 let historySearchScope = "all";
+let historySearchTimer = null;
 let pendingSkillInstall = null;
 let continuityCreateKind = null;
 const COMPOSER_MIN_HEIGHT = 44;
@@ -190,7 +194,7 @@ function commitScene(next, transition, revision) {
   incoming.onload = showIncoming;
   incoming.onerror = () => {
     if (revision !== sceneTransitionRevision) return;
-    incoming.src = "assets/canonical-master.png";
+    incoming.src = "assets/presence/evening/idle.png";
     incoming.alt = "Маша дома, в своей гостиной";
   };
   incoming.src = next.source;
@@ -389,6 +393,15 @@ function renderWorkbench(view) {
 function renderContinuity(view) {
   relationshipMoments.replaceChildren();
   continuityThreads.replaceChildren();
+  for (const memory of view?.confirmed_memories || []) {
+    const item = document.createElement("li");
+    item.className = "continuity-item is-memory";
+    item.append(
+      Object.assign(document.createElement("span"), { className: "continuity-context", textContent: "то, что осталось с нами" }),
+      Object.assign(document.createElement("strong"), { textContent: memory.text }),
+    );
+    relationshipMoments.append(item);
+  }
   for (const moment of view?.moments || []) {
     const item = document.createElement("li");
     item.className = "continuity-item";
@@ -406,6 +419,9 @@ function renderContinuity(view) {
     title.textContent = thread.summary;
     const reason = document.createElement("p");
     reason.textContent = thread.reason_to_return;
+    const context = document.createElement("span");
+    context.className = "continuity-context";
+    context.textContent = "открытая нить";
     const action = document.createElement("button");
     action.type = "button";
     action.textContent = "Продолжить в разговоре";
@@ -414,7 +430,7 @@ function renderContinuity(view) {
       setComposerState({ enabled: true, waiting: true });
       bridge.continueContinuityThread(thread.thread_id);
     });
-    item.append(title, reason, action);
+    item.append(context, title, reason, action);
     continuityThreads.append(item);
   }
   if (!relationshipMoments.children.length) relationshipMoments.append(objectEmpty("Наших сохранённых моментов пока нет."));
@@ -424,15 +440,34 @@ function renderContinuity(view) {
 function renderHumanSearch(items, query) {
   historySearchResults.replaceChildren();
   historySearchResults.hidden = !query;
+  continuityColumns.hidden = Boolean(query);
+  historySearchHint.textContent = query
+    ? "Текущее остаётся ближе; завершённое и забытое отмечено тише."
+    : "Здесь находятся и нынешние дела, и то, что уже осталось в прошлом.";
   if (!query) return;
   if (!items.length) {
     historySearchResults.append(objectEmpty("Пока ничего похожего не нашла."));
     return;
   }
   for (const result of items) {
+    const presentation = window.MashaHumanInformation.describe(result);
     const row = document.createElement("li");
-    row.className = "continuity-item";
-    row.append(Object.assign(document.createElement("p"), { textContent: result.label }));
+    row.className = `continuity-item search-result is-${presentation.tone}`;
+    row.append(
+      Object.assign(document.createElement("span"), { className: "search-result-context", textContent: presentation.context }),
+      Object.assign(document.createElement("p"), { className: "search-result-label", textContent: result.label }),
+    );
+    if (result.can_restore) {
+      const restore = document.createElement("button");
+      restore.type = "button";
+      restore.textContent = "Вернуть в память";
+      restore.addEventListener("click", () => {
+        if (!ready || inFlight || pendingConfirmation) return;
+        restore.disabled = true;
+        bridge.restoreInformation(result.reference);
+      });
+      row.append(restore);
+    }
     historySearchResults.append(row);
   }
 }
@@ -445,9 +480,12 @@ function renderMemoryCandidate(candidate) {
   }
   const isUpdate = candidate.relation === "possible_update";
   memoryCandidateEyebrow.textContent = isUpdate ? "похоже, это изменилось" : "мне кажется, это стоит помнить";
-  memoryCandidateTitle.textContent = isUpdate ? "Обновить то, что я помню?" : "Сохранить это?";
+  memoryCandidateTitle.textContent = isUpdate ? "Оставить новое?" : "Может быть, это стоит помнить?";
   memoryCandidateSummary.textContent = candidate.summary;
-  approveMemoryCandidate.textContent = isUpdate ? "Обновить" : "Запомнить";
+  memoryCandidateNote.textContent = isUpdate
+    ? "То, что было раньше, останется в нашей истории."
+    : "Только если тебе хочется, чтобы это осталось с нами.";
+  approveMemoryCandidate.textContent = isUpdate ? "Да, оставить новое" : "Запомнить";
   approveMemoryCandidate.disabled = false;
   rejectMemoryCandidate.disabled = false;
   transitionToSurface(() => {
@@ -997,6 +1035,11 @@ function handleBridgeEvent(encoded) {
     renderHumanSearch(payload.items || [], payload.query || "");
     return;
   }
+  if (payload.kind === "memory_restore_proposed") {
+    applySnapshot(payload.snapshot);
+    renderPendingConfirmation(payload.pending_confirmation);
+    return;
+  }
   if (payload.kind === "memory_candidate_resolved") {
     pendingMemoryCandidate = null;
     memoryCandidateSurface.hidden = true;
@@ -1046,8 +1089,8 @@ function handleBridgeEvent(encoded) {
     showLocalFailure("Локальное состояние сейчас не удалось открыть.");
     return;
   }
-  if (["human_search_unavailable", "memory_candidate_rejected"].includes(payload.kind)) {
-    showLocalFailure("Сейчас это действие недоступно. Попробуй ещё раз чуть позже.");
+  if (["human_search_unavailable", "memory_candidate_rejected", "memory_restore_unavailable"].includes(payload.kind)) {
+    showLocalFailure(payload.message || "Сейчас это действие недоступно. Попробуй ещё раз чуть позже.");
     return;
   }
   if (payload.kind === "commitment_operation_rejected" || payload.kind === "commitments_unavailable") {
@@ -1338,22 +1381,27 @@ closeContinuity.addEventListener("click", () => {
   returnToConversation();
 });
 
-historySearchInput.addEventListener("input", () => {
+function requestHumanSearch() {
+  clearTimeout(historySearchTimer);
   const query = historySearchInput.value.trim();
   if (!ready || inFlight) return;
   if (!query) {
     renderHumanSearch([], "");
     return;
   }
-  bridge.searchInformation(query, historySearchScope);
-});
+  historySearchTimer = window.setTimeout(
+    () => bridge.searchInformation(query, historySearchScope),
+    reducedMotion.matches ? 0 : 160,
+  );
+}
+
+historySearchInput.addEventListener("input", requestHumanSearch);
 
 for (const button of historySearchScopes) {
   button.addEventListener("click", () => {
     historySearchScope = button.dataset.searchScope;
     for (const choice of historySearchScopes) choice.classList.toggle("is-active", choice === button);
-    const query = historySearchInput.value.trim();
-    if (query && ready && !inFlight) bridge.searchInformation(query, historySearchScope);
+    requestHumanSearch();
   });
 }
 
