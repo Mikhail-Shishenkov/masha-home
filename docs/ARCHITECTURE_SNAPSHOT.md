@@ -8,6 +8,11 @@
 > describes the pre-consolidation state. The section `CURRENT — ID-02 IDENTITY
 > RUNTIME CONSOLIDATION` is authoritative for the active identity runtime.
 
+> **Current memory/recall note (v0.3.1):** этот файл остаётся историческим
+> снимком. Канонический текущий контракт human lifecycle, search, recall,
+> restore, model-context privacy и Home timezone находится в
+> [HUMAN_INFORMATION_MODEL_V0.3.1.md](HUMAN_INFORMATION_MODEL_V0.3.1.md).
+
 ## Рабочее дерево
 
 Репозиторий **нечистый**: большая часть текущей реализации памяти, Identity
@@ -412,7 +417,7 @@ startup error and never mutates either source. The local-only
 production-style compiler/router using fixture memory, stores raw output under
 `local-data/identity-regressions/`, and never rewrites responses.
 
-## CURRENT — MEM-10 MANAGED LONG-TERM MEMORY
+## HISTORICAL — MEM-10 MANAGED LONG-TERM MEMORY
 
 `MemoryManagementService` is a local inspection and mutation boundary over the
 same active `MemorySqliteRepository`. It lists/gets/searches records with
@@ -424,15 +429,16 @@ transaction and audit event. Archive and forget both use existing
 retrieval. Fact/Decision supersession retains the old record, marks it
 superseded, and stores reciprocal `supersedes_id` on the new record.
 
-`MemoryRetriever` now emits deterministic reasons and scores; the compiler
-passes a bounded runtime-generated `[record_id=...][type=...]` memory reference
-to the local model context. Chat history remains separate and no ordinary turn
-creates or mutates long-term memory.
+`MemoryRetriever` emitted deterministic reasons and scores. Since v0.3.1 those
+internal details remain inspectable application trace, while the compiler sends
+only allow-listed humanized context without storage IDs. Chat history remains
+separate and no ordinary turn creates or mutates long-term memory.
 
-## CURRENT — MEM-11 TEMPORAL ENGINE
+## HISTORICAL — MEM-11 TEMPORAL ENGINE
 
-UTC is canonical internal time; the offline MVP local presentation is fixed
-`Europe/Moscow` UTC+03:00, independent from OS timezone settings. Temporal
+UTC is canonical internal time. The active runtime uses the configured Home
+timezone provider (`Europe/Saratov` is the repository default), independent
+from OS timezone settings. Temporal
 context is compiled before the model request, so LLM never determines time,
 durations, deadlines or overdue status. `due_at` is stored in UTC; overdue is
 computed only (`due_at == now` remains open) and completed never becomes overdue.

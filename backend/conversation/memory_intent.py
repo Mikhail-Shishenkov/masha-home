@@ -115,6 +115,29 @@ _SHOW_MEMORY = re.compile(
     r"что\s+ты\s+знаешь(?:\s+про\s+(?P<query>.+?))?|покажи\s+(?:мою\s+)?память)\s*\??\s*$",
     re.IGNORECASE,
 )
+_FORGOTTEN_REVIEW = re.compile(
+    r"^\s*(?:маша\s*,?\s*)?(?:"
+    r"что\s+я\s+(?:тебя\s+)?просил\s+(?:тебя\s+)?забыть|"
+    r"что\s+ты\s+забыла|покажи\s+(?:мне\s+)?забытые\s+записи|"
+    r"покажи\s+(?:мне\s+)?забытую\s+память"
+    r")(?:\s+про\s+(?P<body>.+?))?\s*\??\s*$",
+    re.IGNORECASE,
+)
+_SEARCH_INFORMATION = re.compile(
+    r"^\s*(?:маша\s*,?\s*)?(?:найди|поищи)\s+"
+    r"(?:(?:всю|все|всё)\s+)?(?:(?P<kind>информацию|записи|дело|историю|тему)\s+)?"
+    r"(?:про|о)?\s*(?P<body>.+?)\s*\??\s*$",
+    re.IGNORECASE,
+)
+_RESTORE_INFORMATION = re.compile(
+    r"^\s*(?:маша\s*,?\s*)?(?:верни|восстанови)\s+(?P<body>.+?)\s*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+_INSPECT_PRESENTED = re.compile(
+    r"^\s*(?:маша\s*,?\s*)?(?:что\s+(?:было\s+)?в|расскажи\s+про)\s+"
+    r"(?P<body>.+?)\s*\??\s*$",
+    re.IGNORECASE,
+)
 _LIST_COMMITMENTS = re.compile(
     r"^\s*(?:маша\s*,?\s*)?(?:какие\s+(?:у\s+(?:меня|нас)\s+)?(?:сейчас\s+)?(?:дела|задачи|обязательства)|"
     r"что\s+(?:у\s+(?:меня|нас)\s+)?(?:сейчас\s+)?(?:по\s+)?(?:делам|задачам|обязательствам)|"
@@ -145,23 +168,23 @@ _HUMAN_REMOVE = re.compile(
     re.IGNORECASE,
 )
 _ORDINAL_WORDS = {
-    "первая": 1, "первую": 1, "первый": 1,
+    "первая": 1, "первую": 1, "первый": 1, "первой": 1,
     "вторая": 2, "вторую": 2, "второй": 2,
-    "третья": 3, "третью": 3, "третий": 3,
-    "четвертая": 4, "четвертую": 4, "четвертый": 4,
-    "пятая": 5, "пятую": 5, "пятый": 5,
+    "третья": 3, "третью": 3, "третий": 3, "третьей": 3,
+    "четвертая": 4, "четвертую": 4, "четвертый": 4, "четвертой": 4,
+    "пятая": 5, "пятую": 5, "пятый": 5, "пятой": 5,
     "шестая": 6, "шестую": 6, "шестой": 6,
     "седьмая": 7, "седьмую": 7, "седьмой": 7,
     "восьмая": 8, "восьмую": 8, "восьмой": 8,
-    "девятая": 9, "девятую": 9, "девятый": 9,
-    "десятая": 10, "десятую": 10, "десятый": 10,
+    "девятая": 9, "девятую": 9, "девятый": 9, "девятой": 9,
+    "десятая": 10, "десятую": 10, "десятый": 10, "десятой": 10,
     "одиннадцатая": 11, "одиннадцатую": 11, "одиннадцатый": 11,
     "двенадцатая": 12, "двенадцатую": 12, "двенадцатый": 12,
 }
 _DEICTIC_ONLY = {
     "ее", "её", "эту", "это", "вот эту", "она", "это больше не нужно",
 }
-_REMOVABLE_MEMORY_TYPES = {"fact", "decision", "episode", "relationship_memory"}
+_REMOVABLE_MEMORY_TYPES = {"fact", "decision", "episode", "relationship_memory", "commitment"}
 _UPDATE = re.compile(
     r"^\s*(?:маша\s*,?\s*)?(?:обнови|измени)\s+(?:в\s+памяти\s+)?(?P<old>.+?)\s+на\s+(?P<new>.+?)\s*$",
     re.IGNORECASE,
@@ -348,6 +371,7 @@ class MemoryIntentHandler:
         memory_management=None,
         shared_continuity=None,
         capability_router: NaturalLanguageCapabilityRouter | None = None,
+        human_information=None,
     ):
         self.proposal_store = proposal_store
         self.confirmed_memory = confirmed_memory
@@ -355,6 +379,7 @@ class MemoryIntentHandler:
         self.memory_management = memory_management
         self.shared_continuity = shared_continuity
         self.capability_router = capability_router or NaturalLanguageCapabilityRouter()
+        self.human_information = human_information
         self._continuity_clarifications: dict[str, ContinuityResolveClarification] = {}
         self._human_entity_clarifications: dict[str, HumanEntityClarification] = {}
         self._presented_entity_sets: dict[str, PresentedEntitySet] = {}
@@ -459,6 +484,42 @@ class MemoryIntentHandler:
                 query,
                 project_id,
                 conversation_id=conversation_id,
+            )
+        if forgotten := _FORGOTTEN_REVIEW.match(message):
+            return self._search_human_information(
+                forgotten.group("body") or "",
+                project_id=project_id,
+                conversation_id=conversation_id,
+                mode="forgotten_review",
+            )
+        if restore := _RESTORE_INFORMATION.match(message):
+            if pending:
+                return self._pending_conflict()
+            return self._propose_restore_reference(
+                restore.group("body"),
+                conversation_id=conversation_id,
+                project_id=project_id,
+            )
+        if inspect := _INSPECT_PRESENTED.match(message):
+            return self._inspect_presented_reference(
+                inspect.group("body"),
+                conversation_id=conversation_id,
+            )
+        if search := _SEARCH_INFORMATION.match(message):
+            requested_kind = (search.group("kind") or "").casefold()
+            scope = (
+                "tasks"
+                if requested_kind == "дело"
+                else "history"
+                if requested_kind in {"историю", "тему"}
+                else "all"
+            )
+            return self._search_human_information(
+                search.group("body"),
+                project_id=project_id,
+                conversation_id=conversation_id,
+                mode="retrospective",
+                scope=scope,
             )
         if _LIST_COMMITMENTS.match(message):
             return self._list_commitments(project_id)
@@ -629,6 +690,14 @@ class MemoryIntentHandler:
         *,
         conversation_id: str,
     ) -> MemoryIntentResult:
+        if self.human_information is not None:
+            return self._search_human_information(
+                query or "",
+                project_id=project_id,
+                conversation_id=conversation_id,
+                mode="retrospective",
+                scope="history",
+            )
         if self.memory_management is None:
             self._presented_entity_sets.pop(conversation_id, None)
             return MemoryIntentResult(handled=True, response="Сейчас не могу прочитать локальную память.")
@@ -669,6 +738,170 @@ class MemoryIntentHandler:
         )
         return MemoryIntentResult(handled=True, response="\n".join(lines))
 
+    def _search_human_information(
+        self,
+        query: str,
+        *,
+        project_id: str,
+        conversation_id: str,
+        mode: str,
+        scope: str = "all",
+    ) -> MemoryIntentResult:
+        if self.human_information is None:
+            self._presented_entity_sets.pop(conversation_id, None)
+            return MemoryIntentResult(
+                handled=True,
+                response="Поиск по сохранённой информации сейчас недоступен.",
+            )
+        result = self.human_information.search_for_conversation(
+            query=query,
+            project_id=project_id,
+            scope=scope,
+            mode=mode,
+            limit=8,
+        )
+        if not result.matches:
+            self._presented_entity_sets.pop(conversation_id, None)
+            response = (
+                "Среди забытых записей ничего подходящего не нашла."
+                if mode == "forgotten_review"
+                else "В сохранённой информации ничего подходящего не нашла."
+            )
+            return MemoryIntentResult(handled=True, response=response)
+
+        heading = (
+            "Вот что ты просил не использовать:"
+            if mode == "forgotten_review"
+            else "Нашла в сохранённой информации:"
+        )
+        availability_labels = {
+            "active": "актуально",
+            "archived": "из прошлого",
+            "forgotten": "забыто",
+        }
+        kind_labels = {
+            HumanEntityKind.MEMORY: "Память",
+            HumanEntityKind.HISTORY: "История",
+            HumanEntityKind.TASK: "Дело",
+            HumanEntityKind.THREAD: "Тема",
+        }
+        lines = [heading]
+        for ordinal, match in enumerate(result.matches, 1):
+            item = match.item
+            lines.append(
+                f"{ordinal}. {kind_labels[item.kind]} · "
+                f"{availability_labels[item.availability.value]} — {item.label}"
+            )
+        if mode == "forgotten_review":
+            lines.append("Если хочешь вернуть запись, назови её номер — сначала я попрошу подтверждение.")
+        presented = self.human_information.presented_entity_set(
+            result,
+            conversation_id=conversation_id,
+        )
+        assert presented is not None
+        self._presented_entity_sets[conversation_id] = presented
+        return MemoryIntentResult(handled=True, response="\n".join(lines))
+
+    def _propose_restore_reference(
+        self,
+        query: str,
+        *,
+        conversation_id: str,
+        project_id: str,
+    ) -> MemoryIntentResult:
+        if self.human_information is None:
+            return MemoryIntentResult(handled=True, response="Восстановление памяти сейчас недоступно.")
+        presented = self._presented_entity_sets.get(conversation_id)
+        selected = None
+        ordinal = self._ordinal_from_text(query)
+        if presented is not None:
+            if ordinal is not None:
+                selected = next((item for item in presented.items if item.ordinal == ordinal), None)
+            elif normalize_utterance(query) in _DEICTIC_ONLY:
+                restorable = [
+                    item for item in presented.items
+                    if HumanEntityAction.RESTORE in item.allowed_actions
+                ]
+                if len(restorable) == 1:
+                    selected = restorable[0]
+                elif len(restorable) > 1:
+                    return MemoryIntentResult(
+                        handled=True,
+                        response="Уточни номер забытой записи, которую нужно вернуть.",
+                    )
+        if selected is None and ordinal is None and normalize_utterance(query) not in _DEICTIC_ONLY:
+            result = self.human_information.search_for_conversation(
+                query=query,
+                project_id=project_id,
+                mode="forgotten_review",
+                limit=2,
+            )
+            if len(result.matches) == 1:
+                item = result.matches[0].item
+                selected = PresentedEntityRef(
+                    ordinal=1,
+                    entity_kind=item.kind,
+                    entity_id=item.ref.entity_id,
+                    human_label=item.label,
+                    allowed_actions=item.ref.allowed_actions,
+                )
+        if selected is None:
+            return MemoryIntentResult(
+                handled=True,
+                response="Сначала покажи забытые записи или уточни, что именно вернуть.",
+            )
+        if HumanEntityAction.RESTORE not in selected.allowed_actions:
+            return MemoryIntentResult(
+                handled=True,
+                response="Эта запись не является забытой; ничего не меняю.",
+            )
+        try:
+            self.human_information.restore_information(
+                record_id=selected.entity_id,
+                conversation_id=conversation_id,
+                proposal_store=self.proposal_store,
+            )
+        except (KeyError, ValueError):
+            return MemoryIntentResult(
+                handled=True,
+                response="Эта забытая запись уже недоступна или была восстановлена; ничего не меняю.",
+            )
+        return MemoryIntentResult(
+            handled=True,
+            response=(
+                f"Вернуть в обычную память: «{selected.human_label}»? "
+                "Её прежнее состояние и история сохранятся.\n"
+                "Подтверди обычным «да» или выбери «не сейчас»."
+            ),
+        )
+
+    def _inspect_presented_reference(
+        self,
+        query: str,
+        *,
+        conversation_id: str,
+    ) -> MemoryIntentResult:
+        presented = self._presented_entity_sets.get(conversation_id)
+        ordinal = self._ordinal_from_text(query)
+        if presented is None or ordinal is None:
+            return MemoryIntentResult(
+                handled=True,
+                response="Сначала покажи нужный список, затем назови номер пункта.",
+            )
+        selected = next(
+            (item for item in presented.items if item.ordinal == ordinal),
+            None,
+        )
+        if selected is None:
+            return MemoryIntentResult(
+                handled=True,
+                response=f"В последнем показанном списке нет пункта {ordinal}.",
+            )
+        return MemoryIntentResult(
+            handled=True,
+            response=f"В пункте {ordinal}: {selected.human_label}",
+        )
+
     def _list_commitments(self, project_id: str, *, query: str | None = None, temporal_scope: str | None = None) -> MemoryIntentResult:
         if self.memory_management is None:
             return MemoryIntentResult(handled=True, response="Список дел сейчас недоступен.")
@@ -703,6 +936,10 @@ class MemoryIntentHandler:
     def presented_entity_set(self, conversation_id: str) -> PresentedEntitySet | None:
         """Inspect the latest application-owned selection truth for a conversation."""
         return self._presented_entity_sets.get(conversation_id)
+
+    def remember_presented_entity_set(self, presented: PresentedEntitySet) -> None:
+        """Reuse the v0.3 ordinal truth for typed application search results."""
+        self._presented_entity_sets[presented.conversation_id] = presented
 
     def discard_presented_entity_set(self, conversation_id: str) -> None:
         """Invalidate ordinal truth before an unowned model presentation."""
@@ -851,6 +1088,8 @@ class MemoryIntentHandler:
                 ):
                     continue
                 refs.append(HumanEntityRef(
+                    # This is the v0.3 remove-only path. Unified search uses
+                    # the richer MEMORY/HISTORY/TASK mapping separately.
                     entity_kind=HumanEntityKind.MEMORY,
                     entity_id=view.record_id,
                     human_label=self._memory_line(view),
@@ -877,7 +1116,11 @@ class MemoryIntentHandler:
         return cls._rank_records(refs, query, lambda ref: ref.human_label)
 
     def _human_entity_is_current(self, ref: HumanEntityRef) -> bool:
-        if ref.entity_kind is HumanEntityKind.MEMORY:
+        if ref.entity_kind in {
+            HumanEntityKind.MEMORY,
+            HumanEntityKind.HISTORY,
+            HumanEntityKind.TASK,
+        }:
             if self.memory_management is None:
                 return False
             view = self.memory_management.get(ref.entity_id)
@@ -885,14 +1128,6 @@ class MemoryIntentHandler:
                 view is not None
                 and view.record_type in _REMOVABLE_MEMORY_TYPES
                 and view.payload.get("visibility", "visible") == "visible"
-                and not (
-                    view.record_type in {"fact", "decision"}
-                    and view.payload.get("status") != "active"
-                )
-                and not (
-                    view.record_type == "relationship_memory"
-                    and view.payload.get("status") != "current"
-                )
             )
         return bool(
             self.shared_continuity is not None
@@ -908,7 +1143,11 @@ class MemoryIntentHandler:
         conversation_id: str,
     ) -> MemoryIntentResult:
         self._human_entity_clarifications.pop(conversation_id, None)
-        if ref.entity_kind is HumanEntityKind.MEMORY:
+        if ref.entity_kind in {
+            HumanEntityKind.MEMORY,
+            HumanEntityKind.HISTORY,
+            HumanEntityKind.TASK,
+        }:
             if HumanEntityAction.FORGET not in ref.allowed_actions or self.memory_management is None:
                 return MemoryIntentResult(handled=True, response="Это воспоминание сейчас нельзя убрать.")
             view = self.memory_management.get(ref.entity_id)
@@ -1624,6 +1863,8 @@ class MemoryIntentHandler:
             response = "Готово. Наша история обновлена."
         elif proposal.operation == MemoryMutationOperation.FORGET.value:
             response = "Готово. Эта запись больше не используется как активная память."
+        elif proposal.operation == MemoryMutationOperation.RESTORE.value:
+            response = "Готово. Эта запись снова доступна в обычной памяти."
         elif proposal.operation == MemoryMutationOperation.EDIT.value:
             if proposal.record_type == "commitment" and proposal.record_payload.get("status") == "completed":
                 response = "Готово, обязательство отмечено выполненным."

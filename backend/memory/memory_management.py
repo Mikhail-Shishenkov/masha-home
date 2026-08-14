@@ -28,6 +28,7 @@ class MemoryMutationOperation(str, Enum):
     EDIT = "edit"
     ARCHIVE = "archive"
     FORGET = "forget"
+    RESTORE = "restore"
     SUPERSEDE = "supersede"
 
 
@@ -119,6 +120,11 @@ class MemoryManagementService:
             if "updated_at" in new:
                 new["updated_at"] = now
             payload[collection][index] = new
+        elif operation == MemoryMutationOperation.RESTORE:
+            new = {**old, "visibility": "visible"}
+            if "updated_at" in new:
+                new["updated_at"] = now
+            payload[collection][index] = new
         elif operation == MemoryMutationOperation.EDIT:
             if replacement_payload is None:
                 raise ValueError("edit requires replacement_payload")
@@ -177,6 +183,8 @@ class MemoryManagementService:
             raise KeyError(f"memory record not found: {record_id}")
         if operation == MemoryMutationOperation.SUPERSEDE and replacement_payload is None:
             raise ValueError("supersession requires a replacement payload")
+        if operation == MemoryMutationOperation.RESTORE and view.payload.get("visibility") != "hidden":
+            raise ValueError("restore requires hidden information")
         return proposal_store.create(MemoryProposal(
             id=str(uuid4()), conversation_id=conversation_id, record_type=view.record_type,
             record_payload=replacement_payload or view.payload,
@@ -216,6 +224,8 @@ class MemoryManagementService:
             return None
         if operation in {MemoryMutationOperation.ARCHIVE, MemoryMutationOperation.FORGET}:
             return target if target.payload.get("visibility") == "hidden" else None
+        if operation == MemoryMutationOperation.RESTORE:
+            return target if target.payload.get("visibility") == "visible" else None
         if operation == MemoryMutationOperation.EDIT:
             expected = self._without_runtime_timestamp(proposal.record_payload)
             actual = self._without_runtime_timestamp(target.payload)

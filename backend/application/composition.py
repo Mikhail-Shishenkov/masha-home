@@ -44,6 +44,7 @@ from .conversation import ConversationApplicationService
 from .commitments import CommitmentApplicationService
 from .continuity import ContinuityApplicationService
 from .home_snapshot import HomeSnapshotService
+from .human_information import HumanInformationService
 from .model_settings import ModelSettingsService
 from .memory_candidates import MemoryCandidateApplicationService
 from .proactive import ProactiveApplicationService
@@ -61,6 +62,7 @@ class _Core:
     identity: IdentityKernel
     profiles: ModelProfileStore
     router: ModelRouter
+    human_information: HumanInformationService
 
 
 def build_conversation_service(*, project_root: Path, router: ModelRouter | None = None) -> ConversationService:
@@ -171,6 +173,7 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
         memory_candidates=MemoryCandidateApplicationService(
             core.conversation.passive_memory_service
         ),
+        human_information=core.human_information,
     )
 
 
@@ -184,13 +187,23 @@ def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
     identity = IdentityKernel(IdentityStore(root / "identity" / "masha.identity.json"))
     identity.validate_memory_identity(repository)
     memory_management = MemoryManagementService(repository)
+    proposal_store = MemoryProposalStore(root / "local-data" / "memory-proposals.json")
+    conversation_retriever = MemoryRetriever(repository)
+    human_information = HumanInformationService(
+        repository,
+        memory_management=memory_management,
+        temporal_engine=temporal_engine,
+        clock=temporal_engine.clock.now_utc,
+        proposal_store=proposal_store,
+        memory_retriever=conversation_retriever,
+    )
     shared_continuity = SharedContinuityService(repository)
     profiles = ModelProfileStore(root / "local-data" / "config" / "models.json")
     selected_router = router or ModelRouter([OllamaProvider()])
     reflection = ReflectionService(
         repository=repository,
         identity_kernel=identity,
-        memory_retriever=MemoryRetriever(repository),
+        memory_retriever=conversation_retriever,
         router=selected_router,
         model_profiles=profiles,
     )
@@ -209,7 +222,7 @@ def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
             clock=temporal_engine.clock.now_utc,
         ),
         memory_intent_handler=MemoryIntentHandler(
-            proposal_store=MemoryProposalStore(root / "local-data" / "memory-proposals.json"),
+            proposal_store=proposal_store,
             confirmed_memory=ConfirmedMemoryService(repository),
             memory_management=memory_management,
             shared_continuity=shared_continuity,
@@ -221,6 +234,7 @@ def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
                     model_profiles=profiles,
                 )
             ),
+            human_information=human_information,
         ),
         model_profiles=profiles,
         proactive_interactions=ProactiveInteractionStore(
@@ -232,6 +246,7 @@ def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
         reflection_intent_handler=ReflectionIntentHandler(reflection),
         reflection_service=reflection,
         passive_memory_service=passive_memory,
+        human_information=human_information,
     )
     return _Core(
         project_root=root,
@@ -240,4 +255,5 @@ def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
         identity=identity,
         profiles=profiles,
         router=selected_router,
+        human_information=human_information,
     )

@@ -27,9 +27,10 @@ def test_compiler_preserves_memory_type_semantics_and_bounded_context():
 
     records = request.private_context["memory_context"]
     assert len(records) <= 4
-    assert {record["record_type"] for record in records} == {"fact", "decision", "commitment", "episode"}
-    assert "decision" in next(record for record in records if record["record_type"] == "decision")
-    assert "text" in next(record for record in records if record["record_type"] == "commitment")
+    assert {record["category"] for record in records} == {"факт", "решение", "дело", "эпизод"}
+    assert "Use JSON" in next(record for record in records if record["category"] == "решение")["content"]
+    assert "Check tests" in next(record for record in records if record["category"] == "дело")["content"]
+    assert all("id" not in record and "record_type" not in record for record in records)
     assert request.private_context["current_local_time"] == "2026-08-11T12:30:00+00:00"
     assert "не говори «я запомнила»" in request.private_context["behavioral_contract"]
 

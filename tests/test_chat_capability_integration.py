@@ -377,7 +377,7 @@ def test_scoped_memory_hit_no_match_and_broad_overview_do_not_cross_contaminate(
     assert "learning_python" in broad
 
 
-def test_application_readout_is_typed_before_unrelated_model_turn(tmp_path, memory_path):
+def test_application_readout_remains_in_transcript_but_is_omitted_from_model_history(tmp_path, memory_path):
     service, _ = _service(tmp_path, memory_path)
     conversation_id, readout = _send(service, "Что ты обо мне помнишь?")
     _, telescope = _send(
@@ -391,11 +391,12 @@ def test_application_readout_is_typed_before_unrelated_model_turn(tmp_path, memo
     assert telescope == "model must not run"
     assert request.messages[-1].role.value == "user"
     assert "телескоп" in request.messages[-1].content
-    application_history = [
-        message for message in request.messages
-        if message.role.value == "system" and readout in message.content
-    ]
-    assert len(application_history) == 1
+    assert all(readout not in message.content for message in request.messages)
+    assert readout in {
+        message.content
+        for message in service.history.messages(conversation_id)
+        if message.origin.value == "application"
+    }
 
 
 def test_natural_conversation_memory_creates_and_confirms_episode(tmp_path, memory_path):

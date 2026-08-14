@@ -9,11 +9,18 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 class HumanEntityKind(str, Enum):
     MEMORY = "memory"
-    CONTINUITY = "continuity"
+    HISTORY = "history"
+    TASK = "task"
+    THREAD = "thread"
+    # Compatibility alias for the v0.3 transient reference API. New code uses
+    # THREAD, but existing conversation-scoped references remain valid.
+    CONTINUITY = "thread"
 
 
 class HumanEntityAction(str, Enum):
     FORGET = "forget"
+    RESTORE = "restore"
+    COMPLETE_TASK = "complete_task"
     RESOLVE_CONTINUITY = "resolve_continuity"
 
 
@@ -25,7 +32,7 @@ class HumanEntityRef(BaseModel):
     entity_kind: HumanEntityKind
     entity_id: str = Field(min_length=1)
     human_label: str = Field(min_length=1)
-    allowed_actions: tuple[HumanEntityAction, ...] = Field(min_length=1)
+    allowed_actions: tuple[HumanEntityAction, ...] = ()
 
 
 class PresentedEntityRef(HumanEntityRef):

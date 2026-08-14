@@ -54,6 +54,19 @@ from .contracts import (
     PermissionPendingView,
 )
 from .model_settings import ModelSettingsService
+from .human_information import (
+    HumanAvailability,
+    HumanInformationItem,
+    HumanInformationService,
+    HumanRecallRequest,
+    HumanRecallResult,
+    HumanSearchRequest,
+    HumanSearchResult,
+    HumanSearchScope,
+    HumanTimeFilter,
+    HumanTimePreset,
+    RecallMode,
+)
 
 __all__ = (
     "AgentRunListView",
@@ -76,6 +89,16 @@ __all__ = (
     "HonestHelpResolutionView",
     "MashaApplication",
     "HomeSnapshotView",
+    "HumanAvailability",
+    "HumanInformationItem",
+    "HumanInformationService",
+    "HumanRecallRequest",
+    "HumanRecallResult",
+    "HumanSearchRequest",
+    "HumanSearchResult",
+    "HumanSearchScope",
+    "HumanTimeFilter",
+    "HumanTimePreset",
     "MashaStatusView",
     "MessageView",
     "ModelAvailabilityCode",
@@ -97,6 +120,7 @@ __all__ = (
     "ReflectionResolutionView",
     "ReflectionWorkspaceView",
     "RelationshipMomentView",
+    "RecallMode",
     "ResolvedVisualAsset",
     "SafetyView",
     "SharedContinuityView",

@@ -62,20 +62,28 @@ class ConversationContextCompiler:
                 "behavioral_contract": BEHAVIORAL_CONTRACT,
                 "question_scope": self._question_scope(messages),
                 "shared_continuity_contract": (
-                    "ОБЩАЯ ИСТОРИЯ: RelationshipMemory — подтверждённый общий момент, а НЕ Fact "
-                    "о Мише и не доказательство другого события. ContinuityState — открытая тема, "
-                    "а НЕ Commitment и не разрешение написать первой. Называй эти сущности только "
-                    "общим моментом и открытой нитью. Не придумывай дату, вторую точку зрения, "
+                    "ОБЩАЯ ИСТОРИЯ: подтверждённый общий момент — не факт о Мише и не "
+                    "доказательство другого события. Открытая тема — не дело и не разрешение "
+                    "написать первой. Называй их только общим моментом и открытой нитью. "
+                    "Не придумывай дату, вторую точку зрения, "
                     "завершение нити или отсутствующие подробности. Говори только о записях, "
-                    "переданных в Memory Context. Не обобщай их до «помним каждый шаг», «каждый "
+                    "переданных для текущего ответа. Не обобщай их до «помним каждый шаг», «каждый "
                     "разговор», «каждую строку кода» или «всю историю». Отсутствие записи в "
-                    "bounded context не означает, что все остальные темы завершены."
+                    "текущем ограниченном контексте не означает, что все остальные темы завершены."
                 ),
                 "context_lens": context_lens,
+                "recall_contract": (
+                    "Сохранённая информация ниже — application-owned evidence для этого ответа. "
+                    "Не изменяй и не додумывай числа, цены, даты, отрицания и статусы; сравнивай "
+                    "числа буквально и пиши цены арабскими цифрами. «Актуально» описывает "
+                    "текущее, «из прошлого» — прошлое; забытая информация сюда не передаётся. "
+                    "Если пользователь спрашивает, что уже сделал, можно "
+                    "сообщить переданное завершённое дело как прошлый факт; это не новая мутация."
+                ),
                 "perspective_contract": (
-                    "MashaReflection — субъективное и evidence-linked мнение Маши, а не Fact "
-                    "о Мише. Учитывай confidence и reconsiders_reflection_id. Не превращай "
-                    "рефлексию в диагноз, выполненное действие или новую Identity. Маша может "
+                    "Сохранённое мнение Маши субъективно и опирается на обозначенные основания; "
+                    "это не факт о Мише. Учитывай указанную уверенность и возможность пересмотра. "
+                    "Не превращай рефлексию в диагноз, выполненное действие или новую личность. Маша может "
                     "говорить живо, спорить и органично материться; не делай её стерильным "
                     "корпоративным психологом."
                 ),
@@ -107,6 +115,7 @@ class ConversationContextCompiler:
         memory_markers = (
             "что мы решили", "что ты помнишь", "что ты знаешь обо мне",
             "к чему мы хотели вернуться", "наша история", "нашей истории",
+            "помнишь", "что я уже сделал", "что я уже сделала",
         )
         return (
             "memory_dependent"
@@ -118,54 +127,71 @@ class ConversationContextCompiler:
     def _memory_record(item: dict) -> dict:
         data = item["data"]
         record_type = item["type"]
-        record = {"record_type": record_type, "id": data["id"]}
-        record["memory_reference"] = f"[record_id={data['id']}][type={record_type}]"
-        record["source"] = data.get("source")
-        record["status"] = data.get("status")
-        record["retrieval_reasons"] = item.get("reasons", [])
+        if record_type == "human_information":
+            return {
+                key: data[key]
+                for key in ("category", "content", "state", "time", "confidence")
+                if key in data and data[key] is not None
+            }
+        labels = {
+            "fact": "факт",
+            "decision": "решение",
+            "commitment": "дело",
+            "episode": "эпизод",
+            "relationship_memory": "общий момент",
+            "continuity_state": "общая нить",
+            "reflection": "мнение Маши",
+        }
+        states = {
+            "active": "актуально",
+            "open": "открыто",
+            "current": "актуально",
+            "completed": "завершено",
+            "cancelled": "отменено",
+            "expired": "срок истёк",
+            "superseded": "заменено более новым",
+            "revised": "пересмотрено",
+        }
+        record = {
+            "category": labels.get(record_type, "информация"),
+            "state": states.get(str(data.get("status", "")), "доступно"),
+        }
         if record_type == "fact":
-            record["subject"] = data["subject"]
-            record["key"] = data["key"]
-            record["value"] = data["value"]
+            record["content"] = f"{data['subject']}: {data['key']} — {data['value']}"
+            record["time"] = data.get("created_at")
         elif record_type == "decision":
-            record["title"] = data["title"]
-            record["decision"] = data["decision"]
-            record["status"] = data["status"]
+            record["content"] = f"{data['title']}: {data['decision']}"
+            record["time"] = data.get("created_at")
         elif record_type == "commitment":
-            record["text"] = data["text"]
-            record["status"] = data["status"]
+            record["content"] = data["text"]
+            record["time"] = data.get("completed_at") or data.get("created_at")
         elif record_type == "episode":
-            record["title"] = data["title"]
-            record["summary"] = data["summary"]
-            record["occurred_at"] = data["occurred_at"]
+            record["content"] = f"{data['title']}: {data['summary']}"
+            record["time"] = data.get("occurred_at")
         elif record_type == "relationship_memory":
-            record["kind"] = data["kind"]
-            record["title"] = data["title"]
-            record["content"] = data["content"]
-            record["status"] = data["status"]
+            content = data["content"]
+            if isinstance(content, dict):
+                content = content.get("text") or " ".join(
+                    str(value) for value in content.values() if value
+                )
+            record["content"] = f"{data['title']}: {content}"
+            record["time"] = data.get("created_at")
         elif record_type == "continuity_state":
-            record["relationship_key"] = data["relationship_key"]
-            record["current_focus"] = [
+            current_focus = [
                 value
                 for value in data["current_focus"]
                 if is_readable_continuity_text(value)
             ]
-            record["open_follow_ups"] = [
-                {
-                    "topic": follow_up["topic"],
-                    "summary": follow_up["summary"],
-                    "reason_to_return": follow_up["reason_to_return"],
-                    "revisit_after": follow_up["revisit_after"],
-                }
+            follow_ups = [
+                f"{follow_up['summary']}. Зачем вернуться: {follow_up['reason_to_return']}"
                 for follow_up in data["intended_follow_ups"]
                 if follow_up["status"] == "open"
                 and is_readable_continuity_text(follow_up["summary"])
                 and is_readable_continuity_text(follow_up["reason_to_return"])
             ]
+            record["content"] = " ".join([*current_focus, *follow_ups])
         elif record_type == "reflection":
-            record["text"] = data["text"]
-            record["meaning"] = data["meaning"]
+            record["content"] = f"{data['text']} {data['meaning']}".strip()
             record["confidence"] = data["confidence"]
-            record["importance"] = data["importance"]
-            record["reconsiders_reflection_id"] = data["reconsiders_reflection_id"]
-        return record
+            record["time"] = data.get("created_at")
+        return {key: value for key, value in record.items() if value is not None}

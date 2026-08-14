@@ -12,6 +12,8 @@ import re
 from collections import deque
 from datetime import datetime, timezone
 
+from backend.memory.text_normalization import meaningful_tokens
+
 
 _FIRST_PERSON_MUTATION = re.compile(
     r"(?:^|[.!?]\s+)(?:я\s+)?(?:"
@@ -39,7 +41,7 @@ _ENGLISH_MUTATION = re.compile(
 _SUCCESS_MUTATION_SEQUENCE = re.compile(
     r"\b(?:готово|сделано|успешно|уже|вс[её])\b.{0,80}\b(?:"
     r"сохран\w*|запис\w*|добав\w*|созда\w*|измен\w*|обнов\w*|"
-    r"заб\w*|удал\w*|скр\w*|заверш\w*|закр\w*|выполн\w*|отправ\w*"
+    r"заб(?:ыл|ыла|ыли|ыто)|удал\w*|скр\w*|заверш\w*|закр\w*|выполн\w*|отправ\w*"
     r")\b",
     re.IGNORECASE | re.DOTALL,
 )
@@ -114,7 +116,40 @@ def _is_application_claim(rule: str, text: str, match: re.Match[str]) -> bool:
     )
 
 
-def render_model_response(text: str, *, application_receipts: tuple[str, ...] = ()) -> str:
+def _is_grounded_completed_readout(
+    rule: str,
+    text: str,
+    match: re.Match[str],
+    grounded_completed_items: tuple[str, ...],
+) -> bool:
+    """Allow a read-only report of an actually supplied completed task."""
+    if rule not in {
+        "result_state_claim",
+        "success_mutation_sequence",
+        "execution_mutation_form",
+    }:
+        return False
+    sentence = _sentence_for_match(text, match)
+    if re.search(r"\b(?:завершен\w*|выполнен\w*)\b", sentence, re.IGNORECASE) is None:
+        return False
+    sentence_tokens = set(meaningful_tokens(sentence))
+    for content in grounded_completed_items:
+        content_tokens = set(meaningful_tokens(content))
+        distinctive = {
+            token for token in content_tokens
+            if token not in {"заверш", "завершен", "выполн", "выполнен", "статус"}
+        }
+        if distinctive & sentence_tokens:
+            return True
+    return False
+
+
+def render_model_response(
+    text: str,
+    *,
+    application_receipts: tuple[str, ...] = (),
+    grounded_completed_items: tuple[str, ...] = (),
+) -> str:
     """Return mutation-success wording only when the application issued a receipt.
 
     The receipt allowlist is structural. Lexical detection is a final output
@@ -124,7 +159,16 @@ def render_model_response(text: str, *, application_receipts: tuple[str, ...] = 
         return text
     for rule, pattern in _GUARD_PATTERNS:
         match = pattern.search(text)
-        if match and _is_application_claim(rule, text, match):
+        if (
+            match
+            and not _is_grounded_completed_readout(
+                rule,
+                text,
+                match,
+                grounded_completed_items,
+            )
+            and _is_application_claim(rule, text, match)
+        ):
             _BLOCKED_DIAGNOSTICS.append({
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "rule": rule,

@@ -190,17 +190,18 @@ def test_retrieval_and_context_keep_shared_semantics_bounded(tmp_path):
     )
     records = request.private_context["memory_context"]
 
-    assert {item["record_type"] for item in records} == {
-        "relationship_memory",
-        "continuity_state",
+    assert {item["category"] for item in records} == {
+        "общий момент",
+        "общая нить",
     }
-    relationship = next(item for item in records if item["record_type"] == "relationship_memory")
-    state = next(item for item in records if item["record_type"] == "continuity_state")
-    assert relationship["content"]["text"] == "первый локальный запуск"
-    assert state["open_follow_ups"][0]["summary"] == "вернуться к характеру Маши"
+    relationship = next(item for item in records if item["category"] == "общий момент")
+    state = next(item for item in records if item["category"] == "общая нить")
+    assert "первый локальный запуск" in relationship["content"]
+    assert "вернуться к характеру Маши" in state["content"]
     assert "intended_follow_ups" not in state
     assert "affective_record_ids" not in state
-    assert "НЕ Commitment" in request.private_context["shared_continuity_contract"]
+    assert all("id" not in item for item in records)
+    assert "не дело" in request.private_context["shared_continuity_contract"]
     assert "Не обобщай" in request.private_context["shared_continuity_contract"]
     assert all("broad_lens_selection" in item["reasons"] for item in shared)
 
@@ -332,7 +333,7 @@ def test_shared_continuity_question_activates_bounded_context_lens(tmp_path):
     memory_context = provider.last_request.private_context["memory_context"]
 
     assert provider.last_request.private_context["context_lens"] == "shared_continuity"
-    assert {item["record_type"] for item in memory_context} == {
-        "relationship_memory",
-        "continuity_state",
+    assert {item["category"] for item in memory_context} == {
+        "общий момент",
+        "общая нить",
     }
