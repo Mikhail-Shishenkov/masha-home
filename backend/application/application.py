@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from backend.conversation.human_reference import PresentedEntitySet
+
 from .contracts import (
     AgentRunListView,
     ConversationTurnResult,
@@ -171,6 +173,29 @@ class MashaApplication:
     def search_information(self, request: HumanSearchRequest) -> HumanSearchResult:
         """Typed future-UI boundary; no synthetic conversation command required."""
         return self._human_information.search_information(request)
+
+    def register_presented_information(
+        self,
+        result: HumanSearchResult,
+        *,
+        conversation_id: str,
+    ) -> PresentedEntitySet | None:
+        """Make the exact application-rendered order the one ordinal truth."""
+        presented = self._human_information.presented_entity_set(
+            result,
+            conversation_id=conversation_id,
+        )
+        if presented is None:
+            self._conversation.discard_presented_entity_set(conversation_id)
+        else:
+            self._conversation.remember_presented_entity_set(presented)
+        return presented
+
+    def presented_information(self, conversation_id: str) -> PresentedEntitySet | None:
+        return self._conversation.presented_entity_set(conversation_id)
+
+    def discard_presented_information(self, conversation_id: str) -> None:
+        self._conversation.discard_presented_entity_set(conversation_id)
 
     def recall_information(self, request: HumanRecallRequest) -> HumanRecallResult:
         """Reusable deterministic recall for future application-owned callers."""

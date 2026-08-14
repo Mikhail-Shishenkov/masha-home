@@ -35,7 +35,7 @@ class LocalConversationBridge(QObject):
         self._conversation_id: str | None = None
         self._conversation_page_revision = 0
         self._human_search_revision = 0
-        self._human_search_refs: dict[str, str] = {}
+        self._human_search_action_refs: dict[str, str] = {}
         self._turn_in_flight = False
         self._proactive_refresh_in_flight = False
         self._visible_proactive_ids: set[str] = set()
@@ -49,8 +49,8 @@ class LocalConversationBridge(QObject):
         self._session = self._application.open_home_session()
         snapshot = self._session_snapshot("opened")
         conversation = self._application.latest_conversation()
-        if conversation is not None:
-            self._conversation_id = conversation.conversation_id
+        self._conversation_id = None if conversation is None else conversation.conversation_id
+        self._clear_human_search_context()
         pending = (
             None
             if conversation is None
@@ -310,8 +310,8 @@ class LocalConversationBridge(QObject):
             }
         )
 
-    @Slot(str, str)
-    def searchInformation(self, query: str, scope: str):  # noqa: N802
+    @Slot(str, str, bool)
+    def searchInformation(self, query: str, scope: str, forgotten: bool):  # noqa: N802
         """Project existing Human Information search without a chat turn."""
         if self._application is None or self._turn_in_flight:
             self._emit({"kind": "human_search_unavailable"})
@@ -322,44 +322,37 @@ class LocalConversationBridge(QObject):
             self._emit({"kind": "human_search_unavailable"})
             return
         normalized_query = query.strip()
-        current_and_past = self._application.search_information(HumanSearchRequest(
+        result = self._application.search_information(HumanSearchRequest(
             query=normalized_query,
             scope=selected_scope,
             project_id=HOME_PROJECT_ID,
-            mode=RecallMode.RETROSPECTIVE,
-            limit=20,
-        ))
-        forgotten = self._application.search_information(HumanSearchRequest(
-            query=normalized_query,
-            scope=selected_scope,
-            project_id=HOME_PROJECT_ID,
-            mode=RecallMode.FORGOTTEN_REVIEW,
-            limit=20,
-        ))
-        matches_by_id = {}
-        for match in (*current_and_past.matches, *forgotten.matches):
-            existing = matches_by_id.get(match.item.ref.entity_id)
-            if existing is None or match.relevance > existing.relevance:
-                matches_by_id[match.item.ref.entity_id] = match
-        matches = sorted(
-            matches_by_id.values(),
-            key=lambda match: (
-                -match.relevance,
-                0 if match.item.availability.value == "active" else 1,
-                match.item.label.casefold(),
-                match.item.ref.entity_id,
+            mode=(
+                RecallMode.FORGOTTEN_REVIEW
+                if forgotten
+                else RecallMode.RETROSPECTIVE
             ),
-        )[:20]
+            limit=20,
+        ))
+        matches = result.matches
+        if self._conversation_id is not None:
+            self._application.register_presented_information(
+                result,
+                conversation_id=self._conversation_id,
+            )
         self._human_search_revision += 1
-        self._human_search_refs = {
+        self._human_search_action_refs = {
             f"result-{self._human_search_revision}-{index}": match.item.ref.entity_id
             for index, match in enumerate(matches, 1)
         }
-        ref_by_record = {record_id: ref for ref, record_id in self._human_search_refs.items()}
+        ref_by_record = {
+            record_id: ref
+            for ref, record_id in self._human_search_action_refs.items()
+        }
         self._emit({
             "kind": "human_search_loaded",
             "query": normalized_query,
             "scope": selected_scope.value,
+            "forgotten": forgotten,
             "items": [
                 {
                     "kind": match.item.kind.value,
@@ -368,7 +361,8 @@ class LocalConversationBridge(QObject):
                     "availability": match.item.availability.value,
                     "reference": ref_by_record[match.item.ref.entity_id],
                     "can_restore": (
-                        match.item.availability.value == "forgotten"
+                        forgotten
+                        and match.item.availability.value == "forgotten"
                         and "restore" in {
                             action.value for action in match.item.ref.allowed_actions
                         }
@@ -378,13 +372,18 @@ class LocalConversationBridge(QObject):
             ],
         })
 
+    @Slot()
+    def clearInformationSearch(self):  # noqa: N802
+        """Clear UI action tokens and the one application-owned ordinal context."""
+        self._clear_human_search_context()
+
     @Slot(str)
     def restoreInformation(self, reference: str):  # noqa: N802
         """Propose restoring one result selected from the latest search page."""
         if self._application is None or self._turn_in_flight:
             self._emit({"kind": "memory_restore_unavailable"})
             return
-        record_id = self._human_search_refs.get(reference)
+        record_id = self._human_search_action_refs.get(reference)
         if record_id is None:
             self._emit({"kind": "memory_restore_unavailable"})
             return
@@ -683,7 +682,9 @@ class LocalConversationBridge(QObject):
         except Exception:
             self._emit({"kind": "conversation_unavailable"})
             return
+        self._clear_human_search_context()
         self._conversation_id = conversation.conversation_id
+        self._application.discard_presented_information(self._conversation_id)
         self._session = self._application.open_home_session()
         pending = self._application.pending_confirmation(conversation.conversation_id)
         snapshot = self._session_snapshot("opened")
@@ -712,6 +713,7 @@ class LocalConversationBridge(QObject):
         if self._turn_in_flight:
             self._emit({"kind": "turn_rejected", "reason": "turn_in_flight"})
             return
+        self._clear_human_search_context()
         self._conversation_id = None
         self._session = self._application.open_home_session()
         self._emit(
@@ -737,6 +739,11 @@ class LocalConversationBridge(QObject):
             self._emit({"kind": "turn_rejected", "reason": "turn_in_flight"})
             return
 
+        # Direct UI action tokens never survive a conversation turn. The
+        # application-owned PresentedEntitySet remains available just long
+        # enough for the capability router to resolve an ordinal command; an
+        # unhandled/model turn invalidates it inside ConversationService.
+        self._invalidate_human_search_tokens()
         self._turn_in_flight = True
         self._emit(
             {
@@ -1003,7 +1010,17 @@ class LocalConversationBridge(QObject):
         )
 
     def close(self) -> None:
+        self._clear_human_search_context()
         self._executor.shutdown(wait=False, cancel_futures=True)
+
+    def _invalidate_human_search_tokens(self) -> None:
+        self._human_search_revision += 1
+        self._human_search_action_refs = {}
+
+    def _clear_human_search_context(self) -> None:
+        self._invalidate_human_search_tokens()
+        if self._application is not None and self._conversation_id is not None:
+            self._application.discard_presented_information(self._conversation_id)
 
     def _active_model_name(self) -> str:
         if self._session is None:

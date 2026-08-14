@@ -84,7 +84,7 @@
       <div class="history-search">
         <label class="sr-only" for="history-search-input">Найти в нашей истории и делах</label>
         <input id="history-search-input" type="search" maxlength="240" autocomplete="off" placeholder="Найти в нашем доме">
-        <div class="history-search-scopes" role="group" aria-label="Где искать"><button class="is-active" type="button" data-search-scope="all">Всё</button><button type="button" data-search-scope="history">История</button><button type="button" data-search-scope="tasks">Дела</button></div>
+        <div class="history-search-controls"><div class="history-search-scopes" role="group" aria-label="Где искать"><button class="is-active" type="button" data-search-scope="all">Всё</button><button type="button" data-search-scope="history">История</button><button type="button" data-search-scope="tasks">Дела</button></div><button class="forgotten-search-toggle" id="forgotten-search-toggle" type="button" aria-pressed="false">Забытое</button></div>
         <p class="history-search-hint" id="history-search-hint">Здесь находятся и нынешние дела, и то, что уже осталось в прошлом.</p>
         <ol class="history-search-results" id="history-search-results" aria-live="polite" hidden></ol>
       </div>
@@ -176,6 +176,8 @@
   <script src="renderer/interaction-safety.js"></script>
   <script src="renderer/safe-markdown.js"></script>
   <script src="renderer/human-information.js"></script>
+  <script src="renderer/candidate-presentation.js"></script>
+  <script src="renderer/exclusive-view-transition.js"></script>
   <script src="renderer/app.js"></script>
 </body>
 </html>

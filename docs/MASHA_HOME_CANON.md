@@ -311,7 +311,7 @@ Production composition использует SQLite `masha.sqlite3`, Identity Ker
 
 Не blockers текущего этапа, но отслеживаются:
 
-- Human Home UX для памяти/поиска ещё не завершён;
+- Presence/Home UX v0.3.2 ещё проходит финальную ручную приёмку;
 - `MemoryIntentHandler` уже слишком велик и не должен принимать новые доменные
   обязанности;
 - `ConversationStore` JSON не рассчитан на годы transcript history;
@@ -333,6 +333,8 @@ Human Reference Resolution и application-owned ordinal context.
 
 ### v0.3.1 — Human Information & Recall
 
+Статус: **DONE — manually accepted**.
+
 Два slice, один release.
 
 Slice A — Foundation: HumanEntity model, ACTIVE / ARCHIVED / FORGOTTEN,
@@ -346,13 +348,21 @@ search, human result kinds, completed tasks hidden from normal Home, `Наша
 история` as a human aggregation, typed UI actions, limited frontend/bridge
 structural split, no dashboard.
 
-After Slice A + Slice B: tag `v0.3.1`.
+Slice A и Slice B приняты как единый checkpoint `v0.3.1`.
 
 ### v0.3.2 — Presence & Home UX Foundation
+
+Статус: **IMPLEMENTED CANDIDATE — under final manual acceptance**.
 
 Place × state scene matrix, about 10-14 canonical scenes, deterministic
 presence state, time-of-day ambience, subtle room motion, contextual surfaces
 integrated into room, responsive Home, no LLM mood inference.
+
+Текущий кандидат включает curated day/evening Presence families,
+детерминированный выбор сцены из Presentation Runtime, простой Human Search,
+passive memory review и отдельный явный доступ к забытому. Special evening
+сохранён, но ждёт будущего authored Presentation Runtime cue и не выбирается
+случайно или по обычному времени.
 
 ### v0.4 — Tool Gateway + Web Read-only
 
@@ -417,8 +427,8 @@ IV.  PERFORMS BOUNDED LONGER WORK
      v0.7 -> v1.0
 ```
 
-Текущий проект находится в эпохе II: Human Information foundation уже
-реализован, следующий практический шаг — Human Home UX для памяти и поиска.
+Текущий проект находится в эпохе II: v0.3.1 принят, а v0.3.2 проходит финальную
+ручную приёмку Presence и Human Home UX.
 
 ## Исторические документы
 

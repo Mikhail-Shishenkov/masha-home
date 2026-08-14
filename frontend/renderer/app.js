@@ -89,6 +89,7 @@ const historySearchResults = document.getElementById("history-search-results");
 const historySearchHint = document.getElementById("history-search-hint");
 const continuityColumns = document.getElementById("continuity-columns");
 const historySearchScopes = [...document.querySelectorAll("[data-search-scope]")];
+const forgottenSearchToggle = document.getElementById("forgotten-search-toggle");
 const memoryCandidateSurface = document.getElementById("memory-candidate-surface");
 const memoryCandidateEyebrow = document.getElementById("memory-candidate-eyebrow");
 const memoryCandidateTitle = document.getElementById("memory-candidate-title");
@@ -112,6 +113,7 @@ let activeSceneChangedAt = performance.now();
 let pendingConfirmation = null;
 let pendingMemoryCandidate = null;
 let historySearchScope = "all";
+let historySearchForgotten = false;
 let historySearchTimer = null;
 let pendingSkillInstall = null;
 let continuityCreateKind = null;
@@ -120,6 +122,21 @@ const COMPOSER_MAX_HEIGHT = 112;
 const SURFACE_EXIT_MS = 200;
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 let surfaceTransitionTimer = null;
+const candidatePresentation = window.MashaCandidatePresentation.create({
+  delayMs: 1200,
+  isQuiet: isCandidatePresentationQuiet,
+  onReveal: revealMemoryCandidate,
+  setTimer: window.setTimeout.bind(window),
+  clearTimer: window.clearTimeout.bind(window),
+});
+const historyViewTransition = window.MashaExclusiveViewTransition.create({
+  history: continuityColumns,
+  search: historySearchResults,
+  exitMs: reducedMotion.matches ? 0 : 110,
+  setTimer: window.setTimeout.bind(window),
+  clearTimer: window.clearTimeout.bind(window),
+  requestFrame: window.requestAnimationFrame.bind(window),
+});
 
 function fitComposer() {
   input.style.height = `${COMPOSER_MIN_HEIGHT}px`;
@@ -251,7 +268,8 @@ function closeTemporarySurfaces() {
   workbenchTrigger.setAttribute("aria-expanded", "false");
 }
 
-function transitionToSurface(open) {
+function transitionToSurface(open, { preserveCandidate = false } = {}) {
+  if (!preserveCandidate) candidatePresentation.defer();
   clearTimeout(surfaceTransitionTimer);
   const visible = [
     surface,
@@ -278,6 +296,7 @@ function transitionToSurface(open) {
 }
 
 function returnToConversation() {
+  candidatePresentation.defer();
   clearTimeout(surfaceTransitionTimer);
   const visible = [commitmentsSurface, activitySurface, proactiveSurface, continuitySurface, reflectionsSurface, workbenchSurface, operationSurface]
     .filter((element) => !element.hidden);
@@ -293,6 +312,7 @@ function returnToConversation() {
     void surface.offsetWidth;
     surface.classList.remove("is-surface-concealed");
     input.focus();
+    candidatePresentation.reconsider();
   }, reducedMotion.matches ? 0 : SURFACE_EXIT_MS);
 }
 
@@ -393,15 +413,6 @@ function renderWorkbench(view) {
 function renderContinuity(view) {
   relationshipMoments.replaceChildren();
   continuityThreads.replaceChildren();
-  for (const memory of view?.confirmed_memories || []) {
-    const item = document.createElement("li");
-    item.className = "continuity-item is-memory";
-    item.append(
-      Object.assign(document.createElement("span"), { className: "continuity-context", textContent: "то, что осталось с нами" }),
-      Object.assign(document.createElement("strong"), { textContent: memory.text }),
-    );
-    relationshipMoments.append(item);
-  }
   for (const moment of view?.moments || []) {
     const item = document.createElement("li");
     item.className = "continuity-item";
@@ -439,14 +450,21 @@ function renderContinuity(view) {
 
 function renderHumanSearch(items, query) {
   historySearchResults.replaceChildren();
-  historySearchResults.hidden = !query;
-  continuityColumns.hidden = Boolean(query);
-  historySearchHint.textContent = query
-    ? "Текущее остаётся ближе; завершённое и забытое отмечено тише."
-    : "Здесь находятся и нынешние дела, и то, что уже осталось в прошлом.";
-  if (!query) return;
+  if (!query) {
+    historySearchHint.textContent = "Здесь находятся и нынешние дела, и то, что уже осталось в прошлом.";
+    historyViewTransition.show("history");
+    return;
+  }
+  historySearchHint.textContent = historySearchForgotten
+    ? "Это то, что ты просил меня не использовать. Вернуть можно только с твоего подтверждения."
+    : "Текущее остаётся ближе, а завершённое и прошлое отмечены тише.";
   if (!items.length) {
-    historySearchResults.append(objectEmpty("Пока ничего похожего не нашла."));
+    historySearchResults.append(objectEmpty(
+      historySearchForgotten
+        ? "Среди забытого ничего похожего не нашла."
+        : "Пока ничего похожего не нашла.",
+    ));
+    historyViewTransition.show("search");
     return;
   }
   for (const result of items) {
@@ -470,14 +488,65 @@ function renderHumanSearch(items, query) {
     }
     historySearchResults.append(row);
   }
+  historyViewTransition.show("search");
+}
+
+function showHumanSearchPending(query) {
+  if (!query) return;
+  historySearchResults.replaceChildren(objectEmpty("Ищу в нашем доме…"));
+  historySearchHint.textContent = historySearchForgotten
+    ? "Это то, что ты просил меня не использовать."
+    : "Ищу среди нынешнего и того, что осталось в прошлом.";
+  historyViewTransition.show("search");
+}
+
+function resetHumanSearchUi() {
+  clearTimeout(historySearchTimer);
+  historySearchInput.value = "";
+  historySearchInput.placeholder = "Найти в нашем доме";
+  historySearchScope = "all";
+  historySearchForgotten = false;
+  forgottenSearchToggle.classList.remove("is-active");
+  forgottenSearchToggle.setAttribute("aria-pressed", "false");
+  for (const choice of historySearchScopes) {
+    choice.classList.toggle("is-active", choice.dataset.searchScope === "all");
+  }
+  renderHumanSearch([], "");
+}
+
+function isCandidatePresentationQuiet() {
+  const objectSurface = document.documentElement.dataset.objectSurface;
+  return Boolean(
+    ready
+    && pendingMemoryCandidate
+    && !inFlight
+    && !pendingConfirmation
+    && !input.value.trim()
+    && safetyOverlay.hidden
+    && !surface.hidden
+    && recentPanel.hidden
+    && [undefined, "", "closed"].includes(objectSurface)
+    && operationSurface.hidden
+    && memoryCandidateSurface.hidden
+  );
 }
 
 function renderMemoryCandidate(candidate) {
   pendingMemoryCandidate = candidate || null;
-  if (!candidate || pendingConfirmation) {
+  if (!candidate) {
+    candidatePresentation.clear();
     memoryCandidateSurface.hidden = true;
     return;
   }
+  candidatePresentation.offer(candidate);
+}
+
+function revealMemoryCandidate(candidate) {
+  if (
+    !candidate
+    || candidate !== pendingMemoryCandidate
+    || !isCandidatePresentationQuiet()
+  ) return;
   const isUpdate = candidate.relation === "possible_update";
   memoryCandidateEyebrow.textContent = isUpdate ? "похоже, это изменилось" : "мне кажется, это стоит помнить";
   memoryCandidateTitle.textContent = isUpdate ? "Оставить новое?" : "Может быть, это стоит помнить?";
@@ -491,7 +560,7 @@ function renderMemoryCandidate(candidate) {
   transitionToSurface(() => {
     memoryCandidateSurface.hidden = false;
     document.documentElement.dataset.operation = "candidate";
-  });
+  }, { preserveCandidate: true });
 }
 
 function objectEmpty(text) {
@@ -690,8 +759,10 @@ function renderPendingConfirmation(confirmation) {
   if (!confirmation) {
     hideOperationSurface();
     setComposerState({ enabled: ready, waiting: inFlight });
+    candidatePresentation.reconsider();
     return;
   }
+  candidatePresentation.defer();
   operationEyebrow.textContent = "нужно твоё решение";
   operationTitle.textContent = confirmation.title;
   operationSubject.textContent = confirmation.subject;
@@ -766,7 +837,12 @@ function applySafety(engaged) {
   document.documentElement.dataset.safety = engaged ? "autonomy_stopped" : "autonomy_active";
   safetyOverlay.hidden = !engaged;
   safetyTrigger.hidden = engaged;
-  if (engaged) closeTemporarySurfaces();
+  if (engaged) {
+    candidatePresentation.defer();
+    closeTemporarySurfaces();
+  } else {
+    candidatePresentation.reconsider();
+  }
 }
 
 function messageKey(message) {
@@ -895,6 +971,7 @@ function handleBridgeEvent(encoded) {
   }
 
   if (payload.kind === "home_initial") {
+    resetHumanSearchUi();
     applySnapshot(payload.snapshot);
     renderConversation(payload.conversation);
     activeConversationId = payload.conversation?.conversation_id || null;
@@ -1101,6 +1178,7 @@ function handleBridgeEvent(encoded) {
     return;
   }
   if (payload.kind === "conversation_started") {
+    resetHumanSearchUi();
     applySnapshot(payload.snapshot);
     renderConversation(null);
     clearLocalFailure();
@@ -1111,6 +1189,7 @@ function handleBridgeEvent(encoded) {
     input.focus();
     pendingConfirmation = null;
     hideOperationSurface();
+    candidatePresentation.reconsider();
     return;
   }
   if (payload.kind === "recent_conversations") {
@@ -1133,6 +1212,8 @@ function handleBridgeEvent(encoded) {
     return;
   }
   if (payload.kind === "conversation_opened") {
+    candidatePresentation.defer();
+    resetHumanSearchUi();
     applySnapshot(payload.snapshot);
     renderConversation(payload.conversation);
     activeConversationId = payload.conversation.conversation_id;
@@ -1146,6 +1227,7 @@ function handleBridgeEvent(encoded) {
     return;
   }
   if (payload.kind === "turn_started") {
+    candidatePresentation.defer();
     clearLocalFailure();
     provisionalUser = renderMessage({ role: "user", content: payload.content }, { provisional: true });
     surface.classList.add("has-history");
@@ -1234,6 +1316,7 @@ function handleBridgeEvent(encoded) {
     return;
   }
   if (payload.kind === "home_unavailable") {
+    candidatePresentation.defer();
     ready = false;
     setComposerState({ enabled: false });
     showLocalFailure("Локальный Дом сейчас не готов к разговору.");
@@ -1244,6 +1327,7 @@ composer.addEventListener("submit", (event) => {
   event.preventDefault();
   const content = input.value.trim();
   if (!ready || inFlight || !content) return;
+  candidatePresentation.defer();
   input.value = "";
   fitComposer();
   setComposerState({ enabled: true, waiting: true });
@@ -1252,6 +1336,7 @@ composer.addEventListener("submit", (event) => {
 
 newConversationButton.addEventListener("click", () => {
   if (!ready || inFlight) return;
+  candidatePresentation.defer();
   bridge.startNewConversation();
 });
 
@@ -1259,6 +1344,7 @@ recentToggle.addEventListener("click", () => {
   if (!ready || inFlight) return;
   const opening = recentPanel.hidden;
   if (opening) {
+    candidatePresentation.defer();
     // The shelf belongs to the conversation surface.  Make it readable first;
     // never hide its parent while opening it.
     recentPanel.hidden = false;
@@ -1270,6 +1356,7 @@ recentToggle.addEventListener("click", () => {
     surface.classList.remove("is-shelf-open");
     recentToggle.setAttribute("aria-expanded", "false");
     input.focus();
+    candidatePresentation.reconsider();
   }
 });
 
@@ -1385,12 +1472,14 @@ function requestHumanSearch() {
   clearTimeout(historySearchTimer);
   const query = historySearchInput.value.trim();
   if (!ready || inFlight) return;
+  bridge.clearInformationSearch();
   if (!query) {
     renderHumanSearch([], "");
     return;
   }
+  showHumanSearchPending(query);
   historySearchTimer = window.setTimeout(
-    () => bridge.searchInformation(query, historySearchScope),
+    () => bridge.searchInformation(query, historySearchScope, historySearchForgotten),
     reducedMotion.matches ? 0 : 160,
   );
 }
@@ -1404,6 +1493,16 @@ for (const button of historySearchScopes) {
     requestHumanSearch();
   });
 }
+
+forgottenSearchToggle.addEventListener("click", () => {
+  historySearchForgotten = !historySearchForgotten;
+  forgottenSearchToggle.classList.toggle("is-active", historySearchForgotten);
+  forgottenSearchToggle.setAttribute("aria-pressed", String(historySearchForgotten));
+  historySearchInput.placeholder = historySearchForgotten
+    ? "Найти среди забытого"
+    : "Найти в нашем доме";
+  requestHumanSearch();
+});
 
 approveMemoryCandidate.addEventListener("click", () => {
   if (!ready || inFlight || !pendingMemoryCandidate) return;
@@ -1475,6 +1574,7 @@ rejectSkillInstall.addEventListener("click", () => {
 
 safetyTrigger.addEventListener("click", () => {
   if (!ready) return;
+  candidatePresentation.defer();
   bridge.engageEmergencyStop();
 });
 
@@ -1538,6 +1638,8 @@ input.addEventListener("keydown", (event) => {
 input.addEventListener("input", () => {
   fitComposer();
   setComposerState({ enabled: ready, waiting: inFlight });
+  if (input.value.trim()) candidatePresentation.defer();
+  else candidatePresentation.reconsider();
 });
 fitComposer();
 document.documentElement.dataset.homeAttention = "closed";

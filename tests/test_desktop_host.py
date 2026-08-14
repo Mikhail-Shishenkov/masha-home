@@ -121,10 +121,18 @@ def test_production_frontend_keeps_desktop_composition_and_accessibility_contrac
     assert "memory_schema.json" not in app_source
     assert "add-shared-moment" in html
     assert "add-continuity-thread" in html
+    assert "forgotten-search-toggle" in html
+    assert "renderer/candidate-presentation.js" in html
+    assert "renderer/exclusive-view-transition.js" in html
     assert "continuityTrigger.hidden = false" in app_source
     assert "surface.hidden = true" in app_source
     assert 'bridge.resolveConfirmation(pendingConfirmation.proposal_id, "confirm")' in app_source
     assert 'bridge.resolveConfirmation(pendingConfirmation.proposal_id, "reject")' in app_source
+    assert "delayMs: 1200" in app_source
+    assert "candidatePresentation.defer()" in app_source
+    assert "historyViewTransition.show" in app_source
+    assert "view?.confirmed_memories" not in app_source
+    assert "bridge.searchInformation(query, historySearchScope, historySearchForgotten)" in app_source
     scene_map = FRONTEND_ROOT.joinpath("scenes", "scene-map.js").read_text(encoding="utf-8")
     assert "TRANSITION_POLICY" in scene_map
     assert 'enterMs: 330' in scene_map
@@ -167,6 +175,7 @@ def test_webchannel_bridge_exposes_only_typed_allowlisted_slots():
         "loadSharedContinuity",
         "continueContinuityThread",
         "searchInformation",
+        "clearInformationSearch",
         "restoreInformation",
         "resolveMemoryCandidate",
         "loadReflectionWorkspace",
@@ -187,8 +196,11 @@ def test_webchannel_bridge_exposes_only_typed_allowlisted_slots():
     bridge.close()
 
 
-def test_human_search_projects_forgotten_memory_and_restores_via_typed_confirmation(tmp_path):
-    from backend.application import build_masha_application
+def test_human_search_projects_forgotten_memory_and_restores_via_typed_confirmation(
+    tmp_path,
+    monkeypatch,
+):
+    from backend.application import RecallMode, build_masha_application
     from backend.llm.model_router import ModelRouter
     from backend.memory.memory_models import MemoryDocument
     from backend.memory.sqlite_repository import MemorySqliteRepository
@@ -209,14 +221,32 @@ def test_human_search_projects_forgotten_memory_and_restores_via_typed_confirmat
     )
     turn = application.send_message("Привет", project_id="project_masha_home")
     assert turn.conversation_id is not None
+    requested_modes = []
+    real_search = application.search_information
+
+    def observed_search(request):
+        requested_modes.append(request.mode)
+        return real_search(request)
+
+    monkeypatch.setattr(application, "search_information", observed_search)
 
     bridge = LocalConversationBridge(application)
     emitted: list[dict] = []
     bridge.event.connect(lambda encoded: emitted.append(json.loads(encoded)))
     bridge.loadInitialState()
-    bridge.searchInformation("забытая цена MacBook", "history")
+    bridge.searchInformation("забытая цена MacBook", "history", False)
 
-    search = next(item for item in emitted if item["kind"] == "human_search_loaded")
+    normal_search = next(item for item in emitted if item["kind"] == "human_search_loaded")
+    assert requested_modes == [RecallMode.RETROSPECTIVE]
+    assert all(item["availability"] != "forgotten" for item in normal_search["items"])
+    assert all(item["can_restore"] is False for item in normal_search["items"])
+
+    requested_modes.clear()
+    bridge.searchInformation("забытая цена MacBook", "history", True)
+
+    search = [item for item in emitted if item["kind"] == "human_search_loaded"][-1]
+    assert requested_modes == [RecallMode.FORGOTTEN_REVIEW]
+    assert search["forgotten"] is True
     forgotten = next(item for item in search["items"] if item["availability"] == "forgotten")
     assert forgotten["can_restore"] is True
     assert forgotten["reference"].startswith("result-")
@@ -237,6 +267,116 @@ def test_human_search_projects_forgotten_memory_and_restores_via_typed_confirmat
     assert resolved["result"]["status"] == "confirmed"
     restored = next(item for item in repository.read_document().facts if item.id == FORGOTTEN_MAC_ID)
     assert restored.visibility.value == "visible"
+    bridge.close()
+
+
+def test_ui_search_order_registers_the_existing_presented_entity_truth(
+    tmp_path,
+    monkeypatch,
+):
+    from backend.application import build_masha_application
+    from backend.application.human_information import (
+        HumanSearchRequest,
+        HumanSearchResult,
+        RecallMode,
+    )
+    from backend.llm.model_router import ModelRouter
+    from backend.memory.memory_models import MemoryDocument
+    from backend.memory.sqlite_repository import MemorySqliteRepository
+    from backend.ui.conversation_bridge import LocalConversationBridge
+    from tests.human_information_fixture import (
+        ACTIVE_MAC_ID,
+        COMPLETED_MAC_TASK_ID,
+        RESOLVED_THREAD_ID,
+        human_information_document,
+    )
+    from tests.test_application_boundary import LocalProfileProvider, _isolated_root
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    root = _isolated_root(tmp_path)
+    repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")
+    repository.replace_document(
+        MemoryDocument.model_validate(human_information_document()),
+        action="test_ui_presented_order",
+    )
+    provider = LocalProfileProvider(response_text="Этот ответ не должен понадобиться.")
+    application = build_masha_application(
+        project_root=root,
+        router=ModelRouter([provider]),
+    )
+    initial = application.send_message(
+        "Что ты помнишь про MacBook?",
+        project_id="project_masha_home",
+    )
+    conversation_id = initial.conversation_id
+    assert conversation_id is not None and provider.last_request is None
+
+    request = HumanSearchRequest(
+        query="",
+        project_id="project_masha_home",
+        mode=RecallMode.RETROSPECTIVE,
+        limit=100,
+    )
+    available = application.search_information(request)
+    by_id = {match.item.ref.entity_id: match for match in available.matches}
+    expected_ids = (RESOLVED_THREAD_ID, ACTIVE_MAC_ID, COMPLETED_MAC_TASK_ID)
+    ordered = HumanSearchResult(
+        request=request,
+        matches=tuple(by_id[entity_id] for entity_id in expected_ids),
+    )
+    selected_result = {"value": ordered}
+    monkeypatch.setattr(
+        application,
+        "search_information",
+        lambda _request: selected_result["value"],
+    )
+
+    bridge = LocalConversationBridge(application)
+    emitted: list[dict] = []
+    bridge.event.connect(lambda encoded: emitted.append(json.loads(encoded)))
+    bridge.loadInitialState()
+    bridge.searchInformation("дом", "all", False)
+
+    search = next(item for item in emitted if item["kind"] == "human_search_loaded")
+    presented = application.presented_information(conversation_id)
+    assert presented is not None
+    assert tuple(item.ordinal for item in presented.items) == (1, 2, 3)
+    assert tuple(item.entity_id for item in presented.items) == expected_ids
+    assert tuple(item["label"] for item in search["items"]) == tuple(
+        item.human_label for item in presented.items
+    )
+
+    selected_result["value"] = ordered.model_copy(
+        update={"matches": tuple(reversed(ordered.matches))},
+    )
+    bridge.searchInformation("другой запрос", "all", False)
+    replaced = application.presented_information(conversation_id)
+    assert replaced is not None
+    assert tuple(item.entity_id for item in replaced.items) == tuple(reversed(expected_ids))
+
+    selected_result["value"] = ordered
+    bridge.searchInformation("дом", "all", False)
+    presented = application.presented_information(conversation_id)
+    assert presented is not None
+
+    bridge.submitMessage("что было в первой?")
+    deadline = time.monotonic() + 3
+    while not any(item["kind"] == "turn_result" for item in emitted) and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    turn = next(item for item in emitted if item["kind"] == "turn_result")
+    answer = turn["result"]["assistant_message"]["content"]
+    assert presented.items[0].human_label in answer
+    assert presented.items[1].human_label not in answer
+    assert presented.items[2].human_label not in answer
+    assert provider.last_request is None
+
+    bridge.clearInformationSearch()
+    assert application.presented_information(conversation_id) is None
+    bridge.searchInformation("дом", "all", False)
+    assert application.presented_information(conversation_id) is not None
+    bridge.startNewConversation()
+    assert application.presented_information(conversation_id) is None
     bridge.close()
 
 

@@ -13,6 +13,7 @@ from backend.conversation.conversation_models import (
     ConversationMessageOrigin,
     ConversationRole,
 )
+from backend.conversation.human_reference import PresentedEntitySet
 from backend.conversation.conversation_service import ConversationService, ConversationUnavailableError
 from backend.llm.model_provider import ModelProviderUnavailableError, ModelTimeoutError
 
@@ -154,6 +155,21 @@ class ConversationApplicationService:
             due_at=payload.get("due_at"),
             created_at=proposal.created_at,
         )
+
+    def remember_presented_entity_set(self, presented: PresentedEntitySet) -> None:
+        """Register one application-rendered list in the existing reference truth."""
+        handler = self._conversation.memory_intent_handler
+        if handler is not None:
+            handler.remember_presented_entity_set(presented)
+
+    def presented_entity_set(self, conversation_id: str) -> PresentedEntitySet | None:
+        handler = self._conversation.memory_intent_handler
+        return None if handler is None else handler.presented_entity_set(conversation_id)
+
+    def discard_presented_entity_set(self, conversation_id: str) -> None:
+        handler = self._conversation.memory_intent_handler
+        if handler is not None:
+            handler.discard_presented_entity_set(conversation_id)
 
     def _confirmation_copy(self, proposal):
         payload = proposal.record_payload
