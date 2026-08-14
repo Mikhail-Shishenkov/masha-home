@@ -230,6 +230,29 @@ def test_forgotten_review_restore_requires_confirmation_and_preserves_state(tmp_
     assert provider.last_request is None
 
 
+def test_restored_memory_state_is_authoritative_over_prior_mutation_turns(tmp_path, human_repository):
+    service, provider, _ = _conversation(tmp_path, human_repository)
+    conversation_id, _ = service.send(
+        "Что я просил тебя забыть про MacBook?", project_id=PROJECT_ID,
+    )
+    service.send("Верни её", project_id=PROJECT_ID, conversation_id=conversation_id)
+    service.send("да", project_id=PROJECT_ID, conversation_id=conversation_id)
+
+    provider.response_text = "Ты предпочитаешь MacBook M2 Pro."
+    _, answer = service.send(
+        "Какой MacBook я предпочитаю?", project_id=PROJECT_ID,
+        conversation_id=conversation_id,
+    )
+
+    request = provider.last_request
+    model_history = "\n".join(message.content for message in request.messages)
+    memory_context = json.dumps(request.private_context["memory_context"], ensure_ascii=False)
+    assert answer == "Ты предпочитаешь MacBook M2 Pro."
+    assert "Верни её" not in model_history
+    assert "подтверждаю" not in model_history.casefold()
+    assert "секретная забытая цена" in memory_context
+
+
 def test_restore_of_hidden_superseded_record_returns_to_archived_not_current(tmp_path, human_repository):
     management = MemoryManagementService(human_repository)
     management.apply(

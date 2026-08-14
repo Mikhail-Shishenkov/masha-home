@@ -251,11 +251,7 @@ class ConversationService:
             self.working_memory.load(memories)
         active_profile = None if self.model_profiles is None else self.model_profiles.get_active_profile()
         request = self.context_compiler.compile(
-            messages=tuple(
-                self._model_history_message(message)
-                for message in self.history.messages(conversation.id, limit=self.history_limit)
-                if message.origin is not ConversationMessageOrigin.APPLICATION
-            ),
+            messages=self._model_history(conversation.id),
             identity_context=self.identity_kernel.build_context(),
             working_memory=self.working_memory.get_all(),
             temporal_context=temporal_context,
@@ -382,3 +378,24 @@ class ConversationService:
     @staticmethod
     def _model_history_message(message) -> ModelMessage:
         return ModelMessage(role=message.role.value, content=message.content)
+
+    def _model_history(self, conversation_id: str) -> tuple[ModelMessage, ...]:
+        """Return prose context that cannot contradict application-owned state.
+
+        Application readouts intentionally remain out of the model prompt.  A
+        user command immediately preceding such a readout cannot be replayed
+        by itself: it would invite the model to invent whether the mutation
+        succeeded.  The application state injected through Recall is the sole
+        authority after an application boundary.
+        """
+        messages = self.history.messages(conversation_id, limit=self.history_limit)
+        last_application = max(
+            (index for index, message in enumerate(messages)
+             if message.origin is ConversationMessageOrigin.APPLICATION),
+            default=-1,
+        )
+        return tuple(
+            self._model_history_message(message)
+            for message in messages[last_application + 1 :]
+            if message.origin is not ConversationMessageOrigin.APPLICATION
+        )
