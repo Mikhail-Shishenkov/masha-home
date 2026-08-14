@@ -206,6 +206,13 @@ class ConversationService:
                 )
                 return conversation.id, intent.response
 
+        # Arbitrary model prose may contain numbered lists, but it never owns
+        # selection truth for application entities. Invalidate an older list
+        # before this unhandled turn so a later ordinal cannot be mistaken for
+        # a reference to model-authored numbering.
+        if self.memory_intent_handler is not None:
+            self.memory_intent_handler.discard_presented_entity_set(conversation.id)
+
         context_lens = select_context_lens(user_message)
         recent_user_messages = tuple(
             message.content

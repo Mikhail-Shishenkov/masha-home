@@ -40,6 +40,14 @@ from backend.temporal.temporal_engine import TemporalEngine
 from backend.memory.memory_management import MemoryMutationOperation
 from backend.memory.text_normalization import meaningful_tokens, stem_russian_token
 from .conversation_models import ConversationMessage
+from .human_reference import (
+    HumanEntityAction,
+    HumanEntityClarification,
+    HumanEntityKind,
+    HumanEntityRef,
+    PresentedEntityRef,
+    PresentedEntitySet,
+)
 from .capability_router import (
     CapabilityIntent,
     NaturalLanguageCapabilityRouter,
@@ -128,6 +136,32 @@ _FORGET = re.compile(
     r"^\s*(?:маша\s*,?\s*)?(?:забудь|удали\s+из\s+памяти|это\s+больше\s+не\s+актуально,?\s+забудь)\s*[,!:—-]?\s*(?P<body>.+?)\s*$",
     re.IGNORECASE,
 )
+_HUMAN_REMOVE = re.compile(
+    r"^\s*(?:маша\s*[,!:-]?\s*)?(?:"
+    r"(?P<verb>забудь|удал(?:и|ить)|уб(?:ери|рать))\b(?:\s+из\s+памяти)?\s*[,!:—-]?\s*(?P<body>.*?)|"
+    r"(?P<suffix_body>.+?)\s+(?P<suffix_verb>забудь|удали|убери)|"
+    r"(?P<deictic>это\s+больше\s+не\s+нужно)"
+    r")\s*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+_ORDINAL_WORDS = {
+    "первая": 1, "первую": 1, "первый": 1,
+    "вторая": 2, "вторую": 2, "второй": 2,
+    "третья": 3, "третью": 3, "третий": 3,
+    "четвертая": 4, "четвертую": 4, "четвертый": 4,
+    "пятая": 5, "пятую": 5, "пятый": 5,
+    "шестая": 6, "шестую": 6, "шестой": 6,
+    "седьмая": 7, "седьмую": 7, "седьмой": 7,
+    "восьмая": 8, "восьмую": 8, "восьмой": 8,
+    "девятая": 9, "девятую": 9, "девятый": 9,
+    "десятая": 10, "десятую": 10, "десятый": 10,
+    "одиннадцатая": 11, "одиннадцатую": 11, "одиннадцатый": 11,
+    "двенадцатая": 12, "двенадцатую": 12, "двенадцатый": 12,
+}
+_DEICTIC_ONLY = {
+    "ее", "её", "эту", "это", "вот эту", "она", "это больше не нужно",
+}
+_REMOVABLE_MEMORY_TYPES = {"fact", "decision", "episode", "relationship_memory"}
 _UPDATE = re.compile(
     r"^\s*(?:маша\s*,?\s*)?(?:обнови|измени)\s+(?:в\s+памяти\s+)?(?P<old>.+?)\s+на\s+(?P<new>.+?)\s*$",
     re.IGNORECASE,
@@ -283,16 +317,6 @@ class ContinuityResolveClarification(BaseModel):
     original_query: str = Field(min_length=1)
 
 
-class ForgetClarification(BaseModel):
-    """Conversation-scoped candidates for one ambiguous forget request."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    conversation_id: str = Field(min_length=1)
-    candidate_record_ids: tuple[str, ...] = Field(min_length=2, max_length=5)
-    original_query: str = Field(min_length=1)
-
-
 class ConfirmationFailureDiagnostic(BaseModel):
     """Safe local metadata for a failed confirmed mutation."""
 
@@ -332,7 +356,8 @@ class MemoryIntentHandler:
         self.shared_continuity = shared_continuity
         self.capability_router = capability_router or NaturalLanguageCapabilityRouter()
         self._continuity_clarifications: dict[str, ContinuityResolveClarification] = {}
-        self._forget_clarifications: dict[str, ForgetClarification] = {}
+        self._human_entity_clarifications: dict[str, HumanEntityClarification] = {}
+        self._presented_entity_sets: dict[str, PresentedEntitySet] = {}
         self._diagnostic_path = proposal_store.file_path.with_name(
             "confirmation-failures.json"
         )
@@ -360,9 +385,20 @@ class MemoryIntentHandler:
                     response="Сначала уточни, какую именно нить закрыть — пока ничего не меняю.",
                 )
             self._continuity_clarifications.pop(conversation_id, None)
-            self._forget_clarifications.pop(conversation_id, None)
+            self._human_entity_clarifications.pop(conversation_id, None)
             return self._confirm(confirm.group("id"), conversation_id)
         if reject := _REJECT.match(message):
+            human_clarification = self._human_entity_clarifications.get(conversation_id)
+            if (
+                human_clarification is not None
+                and reject.group("id") is None
+                and self.proposal_store.current_for_conversation(conversation_id) is None
+            ):
+                self._human_entity_clarifications.pop(conversation_id, None)
+                return MemoryIntentResult(
+                    handled=True,
+                    response="Хорошо, ничего не убираю.",
+                )
             clarification = self._continuity_clarifications.get(conversation_id)
             if (
                 clarification is not None
@@ -375,9 +411,22 @@ class MemoryIntentHandler:
                     response="Хорошо, ничего не закрываю.",
                 )
             self._continuity_clarifications.pop(conversation_id, None)
-            self._forget_clarifications.pop(conversation_id, None)
+            self._human_entity_clarifications.pop(conversation_id, None)
             return self._cancel(reject.group("id"), conversation_id)
         pending = self.proposal_store.current_for_conversation(conversation_id) is not None
+
+        human_clarification = self._human_entity_clarifications.get(conversation_id)
+        if human_clarification is not None:
+            remove_query = self._human_remove_query(message)
+            parsed_clarification = self.capability_router.route(message)
+            if remove_query is not None or parsed_clarification is None:
+                if pending:
+                    return self._pending_conflict()
+                return self._refine_human_remove(
+                    message if remove_query is None else remove_query,
+                    human_clarification,
+                )
+            self._human_entity_clarifications.pop(conversation_id, None)
 
         clarification = self._continuity_clarifications.get(conversation_id)
         if clarification is not None:
@@ -387,13 +436,6 @@ class MemoryIntentHandler:
             # A new explicit action replaces the abandoned clarification.  A
             # repeated resolve command starts a fresh candidate set below.
             self._continuity_clarifications.pop(conversation_id, None)
-
-        forget_clarification = self._forget_clarifications.get(conversation_id)
-        if forget_clarification is not None:
-            parsed_clarification = self.capability_router.route(message)
-            if parsed_clarification is None:
-                return self._refine_forget(message, forget_clarification)
-            self._forget_clarifications.pop(conversation_id, None)
 
         # A resumed thread is a real conversational context, not a one-turn
         # prompt trick.  Deictic follow-ups refer to that existing thread and
@@ -416,6 +458,14 @@ class MemoryIntentHandler:
             return self._show_memory(query, project_id)
         if _LIST_COMMITMENTS.match(message):
             return self._list_commitments(project_id)
+        if (remove_query := self._human_remove_query(message)) is not None:
+            if pending:
+                return self._pending_conflict()
+            return self._propose_human_remove(
+                remove_query,
+                conversation_id=conversation_id,
+                project_id=project_id,
+            )
         if create := _CREATE_COMMITMENT.match(message):
             if pending:
                 return self._pending_conflict()
@@ -423,7 +473,11 @@ class MemoryIntentHandler:
         if forget := _FORGET.match(message):
             if pending:
                 return self._pending_conflict()
-            return self._propose_forget(forget.group("body"), conversation_id)
+            return self._propose_human_remove(
+                forget.group("body"),
+                conversation_id=conversation_id,
+                project_id=project_id,
+            )
         if update := _UPDATE.match(message):
             if pending:
                 return self._pending_conflict()
@@ -522,7 +576,11 @@ class MemoryIntentHandler:
         if parsed.intent is CapabilityIntent.QUERY_MEMORY:
             return self._show_memory(parsed.entity, project_id)
         if parsed.intent is CapabilityIntent.FORGET_MEMORY:
-            return self._propose_forget(parsed.entity or "это", conversation_id)
+            return self._propose_human_remove(
+                parsed.entity or "это",
+                conversation_id=conversation_id,
+                project_id=project_id,
+            )
         if parsed.intent is CapabilityIntent.QUERY_COMMITMENTS:
             return self._list_commitments(project_id, query=parsed.entity, temporal_scope=parsed.temporal_scope)
         if parsed.intent is CapabilityIntent.CREATE_COMMITMENT:
@@ -530,7 +588,10 @@ class MemoryIntentHandler:
         if parsed.intent is CapabilityIntent.COMPLETE_COMMITMENT:
             return self._propose_completion(parsed.entity or "", conversation_id)
         if parsed.intent is CapabilityIntent.QUERY_CONTINUITY:
-            return self._list_continuity(parsed.entity)
+            return self._list_continuity(
+                parsed.entity,
+                conversation_id=conversation_id,
+            )
         if parsed.intent is CapabilityIntent.OPEN_CONTINUITY:
             if not parsed.entity:
                 return MemoryIntentResult(handled=True, response="Какую именно тему оставить открытой? Назови её — я не буду угадывать по истории чата.")
@@ -607,7 +668,309 @@ class MemoryIntentHandler:
             lines.append(f"— {item.payload['text']}{due}")
         return MemoryIntentResult(handled=True, response="\n".join(lines))
 
-    def _list_continuity(self, query: str | None = None) -> MemoryIntentResult:
+    def presented_entity_set(self, conversation_id: str) -> PresentedEntitySet | None:
+        """Inspect the latest application-owned selection truth for a conversation."""
+        return self._presented_entity_sets.get(conversation_id)
+
+    def discard_presented_entity_set(self, conversation_id: str) -> None:
+        """Invalidate ordinal truth before an unowned model presentation."""
+        self._presented_entity_sets.pop(conversation_id, None)
+
+    @staticmethod
+    def _human_remove_query(message: str) -> str | None:
+        match = _HUMAN_REMOVE.match(message)
+        if match is None:
+            return None
+        body = (
+            match.group("body")
+            or match.group("suffix_body")
+            or match.group("deictic")
+            or ""
+        ).strip()
+        return body.strip(" ,:;—-«»\"'")
+
+    @staticmethod
+    def _ordinal_from_text(value: str) -> int | None:
+        normalized = normalize_utterance(value)
+        words = normalized.split()
+        positional_fillers = {"по", "списку", "в", "списке", "пункт", "пункта", "номер"}
+        for index, word in enumerate(words):
+            if word in _ORDINAL_WORDS:
+                remaining = words[:index] + words[index + 1 :]
+                return (
+                    _ORDINAL_WORDS[word]
+                    if all(item in positional_fillers for item in remaining)
+                    else None
+                )
+        for index, word in enumerate(words):
+            if word.isdigit() and len(word) <= 2:
+                remaining = words[:index] + words[index + 1 :]
+                return int(word) if all(item in positional_fillers for item in remaining) else None
+        return None
+
+    def _propose_human_remove(
+        self,
+        query: str,
+        *,
+        conversation_id: str,
+        project_id: str,
+    ) -> MemoryIntentResult:
+        ordinal = self._ordinal_from_text(query)
+        if ordinal is not None:
+            presented = self._presented_entity_sets.get(conversation_id)
+            if presented is None:
+                return MemoryIntentResult(
+                    handled=True,
+                    response=(
+                        "Сначала попроси показать нашу историю, а затем назови номер. "
+                        "Без списка приложения я не буду угадывать, что значит этот номер."
+                    ),
+                )
+            selected = next(
+                (item for item in presented.items if item.ordinal == ordinal),
+                None,
+            )
+            if selected is None:
+                return MemoryIntentResult(
+                    handled=True,
+                    response=f"В последнем показанном списке нет пункта {ordinal}. Уточни, что именно убрать.",
+                )
+            ref = HumanEntityRef(
+                entity_kind=selected.entity_kind,
+                entity_id=selected.entity_id,
+                human_label=selected.human_label,
+                allowed_actions=selected.allowed_actions,
+            )
+            if not self._human_entity_is_current(ref):
+                return MemoryIntentResult(
+                    handled=True,
+                    response="Этот список уже устарел. Покажи нашу историю ещё раз — пока ничего не меняю.",
+                )
+            return self._dispatch_human_remove(ref, conversation_id)
+
+        normalized = normalize_utterance(query)
+        if normalized in {"память", "все"}:
+            return MemoryIntentResult(
+                handled=True,
+                response="Уточни, какое именно воспоминание или открытую тему убрать. Я не буду выбирать всё сразу.",
+            )
+        if not normalized or normalized in _DEICTIC_ONLY:
+            presented = self._presented_entity_sets.get(conversation_id)
+            if presented is not None and len(presented.items) == 1:
+                selected = presented.items[0]
+                ref = HumanEntityRef(
+                    entity_kind=selected.entity_kind,
+                    entity_id=selected.entity_id,
+                    human_label=selected.human_label,
+                    allowed_actions=selected.allowed_actions,
+                )
+                if self._human_entity_is_current(ref):
+                    return self._dispatch_human_remove(ref, conversation_id)
+            return MemoryIntentResult(
+                handled=True,
+                response="Уточни, какое именно воспоминание или открытую тему убрать. Я не буду выбирать по догадке.",
+            )
+
+        matches = self._rank_human_entities(
+            self._human_removable_entities(project_id),
+            query,
+        )
+        if not matches:
+            return MemoryIntentResult(
+                handled=True,
+                response=(
+                    "Не нашла такую открытую нить или подходящее воспоминание. "
+                    "Пока ничего не меняю."
+                ),
+            )
+        if len(matches) > 1:
+            bounded = tuple(matches[:5])
+            self._human_entity_clarifications[conversation_id] = HumanEntityClarification(
+                conversation_id=conversation_id,
+                candidates=bounded,
+                original_query=query.strip(),
+            )
+            return self._human_entity_clarification_response(
+                bounded,
+                conversation_id=conversation_id,
+            )
+        return self._dispatch_human_remove(matches[0], conversation_id)
+
+    def _human_removable_entities(self, project_id: str) -> list[HumanEntityRef]:
+        refs: list[HumanEntityRef] = []
+        if self.memory_management is not None:
+            for view in self.memory_management.list(
+                project_id=project_id,
+                include_hidden=False,
+            ):
+                if view.record_type not in _REMOVABLE_MEMORY_TYPES:
+                    continue
+                if view.record_type == "fact" and view.payload.get("status") != "active":
+                    continue
+                if view.record_type == "decision" and view.payload.get("status") != "active":
+                    continue
+                if (
+                    view.record_type == "relationship_memory"
+                    and view.payload.get("status") != "current"
+                ):
+                    continue
+                refs.append(HumanEntityRef(
+                    entity_kind=HumanEntityKind.MEMORY,
+                    entity_id=view.record_id,
+                    human_label=self._memory_line(view),
+                    allowed_actions=(HumanEntityAction.FORGET,),
+                ))
+        if self.shared_continuity is not None:
+            refs.extend(
+                HumanEntityRef(
+                    entity_kind=HumanEntityKind.CONTINUITY,
+                    entity_id=follow_up.id,
+                    human_label=follow_up.summary,
+                    allowed_actions=(HumanEntityAction.RESOLVE_CONTINUITY,),
+                )
+                for _, follow_up in self.shared_continuity.open_follow_ups()
+            )
+        return refs
+
+    @classmethod
+    def _rank_human_entities(
+        cls,
+        refs: list[HumanEntityRef] | tuple[HumanEntityRef, ...],
+        query: str,
+    ) -> list[HumanEntityRef]:
+        return cls._rank_records(refs, query, lambda ref: ref.human_label)
+
+    def _human_entity_is_current(self, ref: HumanEntityRef) -> bool:
+        if ref.entity_kind is HumanEntityKind.MEMORY:
+            if self.memory_management is None:
+                return False
+            view = self.memory_management.get(ref.entity_id)
+            return bool(
+                view is not None
+                and view.record_type in _REMOVABLE_MEMORY_TYPES
+                and view.payload.get("visibility", "visible") == "visible"
+                and not (
+                    view.record_type in {"fact", "decision"}
+                    and view.payload.get("status") != "active"
+                )
+                and not (
+                    view.record_type == "relationship_memory"
+                    and view.payload.get("status") != "current"
+                )
+            )
+        return bool(
+            self.shared_continuity is not None
+            and any(
+                follow_up.id == ref.entity_id
+                for _, follow_up in self.shared_continuity.open_follow_ups()
+            )
+        )
+
+    def _dispatch_human_remove(
+        self,
+        ref: HumanEntityRef,
+        conversation_id: str,
+    ) -> MemoryIntentResult:
+        self._human_entity_clarifications.pop(conversation_id, None)
+        if ref.entity_kind is HumanEntityKind.MEMORY:
+            if HumanEntityAction.FORGET not in ref.allowed_actions or self.memory_management is None:
+                return MemoryIntentResult(handled=True, response="Это воспоминание сейчас нельзя убрать.")
+            view = self.memory_management.get(ref.entity_id)
+            if view is None or not self._human_entity_is_current(ref):
+                return MemoryIntentResult(handled=True, response="Это воспоминание уже недоступно; ничего не меняю.")
+            return self._propose_forget_view(view, conversation_id)
+        if HumanEntityAction.RESOLVE_CONTINUITY not in ref.allowed_actions:
+            return MemoryIntentResult(handled=True, response="Эту открытую тему сейчас нельзя убрать.")
+        if not self._human_entity_is_current(ref):
+            return MemoryIntentResult(handled=True, response="Эта открытая тема уже закрыта; ничего не меняю.")
+        return self._propose_resolve_thread(
+            ref.entity_id,
+            conversation_id,
+            display_text=ref.human_label,
+            human_remove=True,
+        )
+
+    def _refine_human_remove(
+        self,
+        query: str,
+        clarification: HumanEntityClarification,
+    ) -> MemoryIntentResult:
+        candidates = tuple(
+            ref for ref in clarification.candidates if self._human_entity_is_current(ref)
+        )
+        if not candidates:
+            self._human_entity_clarifications.pop(clarification.conversation_id, None)
+            return MemoryIntentResult(
+                handled=True,
+                response="Эти варианты уже недоступны. Покажи нашу историю ещё раз — ничего не меняю.",
+            )
+        ordinal = self._ordinal_from_text(query)
+        if ordinal is not None and ordinal <= len(candidates):
+            return self._dispatch_human_remove(
+                candidates[ordinal - 1],
+                clarification.conversation_id,
+            )
+        normalized = normalize_utterance(query)
+        if normalized in _DEICTIC_ONLY:
+            return MemoryIntentResult(
+                handled=True,
+                response="Не поняла, какой именно вариант ты имеешь в виду. Назови номер или несколько слов из него.",
+            )
+        refined = self._rank_human_entities(candidates, query)
+        if not refined:
+            return MemoryIntentResult(
+                handled=True,
+                response="Среди этих вариантов не поняла, что убрать. Назови номер или несколько слов из нужного пункта.",
+            )
+        if len(refined) > 1:
+            bounded = tuple(refined[:5])
+            self._human_entity_clarifications[clarification.conversation_id] = clarification.model_copy(
+                update={"candidates": bounded}
+            )
+            return self._human_entity_clarification_response(
+                bounded,
+                conversation_id=clarification.conversation_id,
+            )
+        return self._dispatch_human_remove(refined[0], clarification.conversation_id)
+
+    def _human_entity_clarification_response(
+        self,
+        matches: tuple[HumanEntityRef, ...],
+        *,
+        conversation_id: str,
+    ) -> MemoryIntentResult:
+        kinds = {ref.entity_kind for ref in matches}
+        lines = [
+            "Нашла несколько похожих нитей и вещей:"
+            if kinds == {HumanEntityKind.CONTINUITY}
+            else "Нашла несколько похожих вещей:"
+        ]
+        presented: list[PresentedEntityRef] = []
+        for ordinal, ref in enumerate(matches, 1):
+            kind = "воспоминание" if ref.entity_kind is HumanEntityKind.MEMORY else "открытая тема"
+            lines.append(f"{ordinal}. {kind}: {ref.human_label}")
+            presented.append(PresentedEntityRef(
+                ordinal=ordinal,
+                entity_kind=ref.entity_kind,
+                entity_id=ref.entity_id,
+                human_label=ref.human_label,
+                allowed_actions=ref.allowed_actions,
+            ))
+        lines.append("Что именно убрать?")
+        self._presented_entity_sets[conversation_id] = PresentedEntitySet(
+            conversation_id=conversation_id,
+            source_kind="remove_clarification",
+            created_at=self._now(),
+            items=tuple(presented),
+        )
+        return MemoryIntentResult(handled=True, response="\n".join(lines))
+
+    def _list_continuity(
+        self,
+        query: str | None = None,
+        *,
+        conversation_id: str,
+    ) -> MemoryIntentResult:
         if self.shared_continuity is None:
             return MemoryIntentResult(handled=True, response="Общие нити сейчас недоступны.")
         moments = list(self.shared_continuity.relationship_memories(limit=8))
@@ -620,10 +983,37 @@ class MemoryIntentHandler:
             )
             rows = self._rank_text_rows(rows, query, lambda row: f"{row[1].topic} {row[1].summary}")
         if not moments and not rows:
+            self._presented_entity_sets.pop(conversation_id, None)
             return MemoryIntentResult(handled=True, response="В нашей сохранённой истории пока нет подходящих моментов или открытых нитей.")
         lines = ["Вот что есть в нашей сохранённой истории:"]
-        lines.extend(f"— {self.shared_continuity.relationship_text(item)}" for item in moments[:6])
-        lines.extend(f"— Открытая тема: {item.summary}" for _, item in rows[:6])
+        refs: list[PresentedEntityRef] = []
+        for item in moments[:6]:
+            label = self.shared_continuity.relationship_text(item)
+            ordinal = len(refs) + 1
+            lines.append(f"{ordinal}. Воспоминание: {label}")
+            refs.append(PresentedEntityRef(
+                ordinal=ordinal,
+                entity_kind=HumanEntityKind.MEMORY,
+                entity_id=item.id,
+                human_label=label,
+                allowed_actions=(HumanEntityAction.FORGET,),
+            ))
+        for _, item in rows[:6]:
+            ordinal = len(refs) + 1
+            lines.append(f"{ordinal}. Открытая тема: {item.summary}")
+            refs.append(PresentedEntityRef(
+                ordinal=ordinal,
+                entity_kind=HumanEntityKind.CONTINUITY,
+                entity_id=item.id,
+                human_label=item.summary,
+                allowed_actions=(HumanEntityAction.RESOLVE_CONTINUITY,),
+            ))
+        self._presented_entity_sets[conversation_id] = PresentedEntitySet(
+            conversation_id=conversation_id,
+            source_kind="shared_history",
+            created_at=self._now(),
+            items=tuple(refs),
+        )
         return MemoryIntentResult(handled=True, response="\n".join(lines))
 
     def _propose_commitment(self, body: str, conversation_id: str, project_id: str) -> MemoryIntentResult:
@@ -647,30 +1037,6 @@ class MemoryIntentHandler:
         ))
         return MemoryIntentResult(handled=True, response=self._proposal_text(proposal, record))
 
-    def _propose_forget(self, query: str, conversation_id: str) -> MemoryIntentResult:
-        if query.strip().casefold() in {"это", "память", "всё", "все"}:
-            return MemoryIntentResult(
-                handled=True,
-                response="Уточни, какую именно запись забыть. Я не буду прятать память целиком по одной фразе.",
-            )
-        if self.memory_management is None:
-            return MemoryIntentResult(handled=True, response="Изменение памяти сейчас недоступно.")
-        matches = self._find_memories(query)
-        if not matches:
-            return self._mutation_lookup_problem(matches, "забыть")
-        if len(matches) > 1:
-            bounded = matches[:5]
-            self._forget_clarifications[conversation_id] = ForgetClarification(
-                conversation_id=conversation_id,
-                candidate_record_ids=tuple(item.record_id for item in bounded),
-                original_query=query.strip(),
-            )
-            return self._forget_clarification_response(
-                bounded,
-                truncated=len(matches) > len(bounded),
-            )
-        return self._propose_forget_view(matches[0], conversation_id)
-
     def _propose_forget_view(self, view, conversation_id: str) -> MemoryIntentResult:
         assert self.memory_management is not None
         self.memory_management.propose(
@@ -679,56 +1045,13 @@ class MemoryIntentHandler:
             record_id=view.record_id,
             conversation_id=conversation_id,
         )
-        self._forget_clarifications.pop(conversation_id, None)
         return MemoryIntentResult(
             handled=True,
             response=(
-                f"Скрыть из активной памяти: «{self._memory_line(view)}»? "
+                f"Скрыть из активной памяти это воспоминание: «{self._memory_line(view)}»? "
                 "Это не удалит историю безвозвратно.\n"
                 "Подтверди обычным «да» или выбери «не сейчас»."
             ),
-        )
-
-    def _refine_forget(
-        self,
-        query: str,
-        clarification: ForgetClarification,
-    ) -> MemoryIntentResult:
-        assert self.memory_management is not None
-        candidates = [
-            view
-            for record_id in clarification.candidate_record_ids
-            if (view := self.memory_management.get(record_id)) is not None
-        ]
-        ordinal = {
-            "первая": 0, "первую": 0, "вторая": 1, "вторую": 1,
-            "третья": 2, "третью": 2, "четвертая": 3, "четвертую": 3,
-            "пятая": 4, "пятую": 4,
-        }.get(normalize_utterance(query))
-        if ordinal is not None and ordinal < len(candidates):
-            return self._propose_forget_view(
-                candidates[ordinal],
-                clarification.conversation_id,
-            )
-        refined = self._rank_records(candidates, query, self._memory_line)
-        if not refined:
-            return MemoryIntentResult(
-                handled=True,
-                response="Среди этих вариантов не поняла, какую запись выбрать. Назови её словами или номером.",
-            )
-        if len(refined) > 1:
-            self._forget_clarifications[clarification.conversation_id] = clarification.model_copy(
-                update={"candidate_record_ids": tuple(item.record_id for item in refined[:5])}
-            )
-            return self._forget_clarification_response(refined[:5], truncated=False)
-        return self._propose_forget_view(refined[0], clarification.conversation_id)
-
-    def _forget_clarification_response(self, matches, *, truncated: bool) -> MemoryIntentResult:
-        descriptions = "\n".join(f"— {self._memory_line(item)}" for item in matches)
-        prefix = "Показываю самые похожие" if truncated else "Нашла несколько"
-        return MemoryIntentResult(
-            handled=True,
-            response=f"{prefix} записей:\n{descriptions}\nКакую убрать?",
         )
 
     def _propose_update(self, old: str, new: str, conversation_id: str) -> MemoryIntentResult:
@@ -936,6 +1259,7 @@ class MemoryIntentHandler:
         conversation_id: str,
         *,
         display_text: str | None = None,
+        human_remove: bool = False,
     ) -> MemoryIntentResult:
         if self.shared_continuity is None:
             return MemoryIntentResult(handled=True, response="Общие нити сейчас недоступны.")
@@ -961,6 +1285,15 @@ class MemoryIntentHandler:
             self._continuity_clarifications.pop(conversation_id, None)
             return MemoryIntentResult(handled=True, response="Не нашла такую открытую нить.")
         self._continuity_clarifications.pop(conversation_id, None)
+        if human_remove:
+            return MemoryIntentResult(
+                handled=True,
+                response=(
+                    "Убрать открытую тему:\n"
+                    f"«{(display_text or selected.summary).strip()}»?\n"
+                    "Подтверди обычным «да» или выбери «не сейчас»."
+                ),
+            )
         return MemoryIntentResult(
             handled=True,
             response=(
@@ -1252,7 +1585,7 @@ class MemoryIntentHandler:
     @staticmethod
     def _confirmation_success(proposal: MemoryProposal) -> MemoryIntentResult:
         if proposal.operation in {"continuity_create", "continuity_update"}:
-            response = "Готово. Наша общая нить обновлена."
+            response = "Готово. Наша история обновлена."
         elif proposal.operation == MemoryMutationOperation.FORGET.value:
             response = "Готово. Эта запись больше не используется как активная память."
         elif proposal.operation == MemoryMutationOperation.EDIT.value:
@@ -1327,8 +1660,23 @@ class MemoryIntentHandler:
         assert proposal is not None
         if proposal.status == ProposalStatus.PENDING:
             self.proposal_store.set_status(proposal.id, ProposalStatus.CANCELLED)
-            return MemoryIntentResult(handled=True, response="Хорошо, не сохраняю.")
+            if self._proposal_resolves_open_continuity(proposal):
+                response = "Хорошо, открытую тему не убираю."
+            else:
+                response = "Хорошо, не сохраняю."
+            return MemoryIntentResult(handled=True, response=response)
         return MemoryIntentResult(handled=True, response="Это предложение уже не ожидает подтверждения.")
+
+    def _proposal_resolves_open_continuity(self, proposal: MemoryProposal) -> bool:
+        if proposal.record_type != "continuity_state" or self.shared_continuity is None:
+            return False
+        open_ids = {
+            follow_up.id for _, follow_up in self.shared_continuity.open_follow_ups()
+        }
+        return any(
+            item.get("id") in open_ids and item.get("status") == "resolved"
+            for item in proposal.record_payload.get("intended_follow_ups", ())
+        )
 
     def _resolve(self, proposal_id: str | None, conversation_id: str) -> tuple[MemoryProposal | None, str | None]:
         if proposal_id:
