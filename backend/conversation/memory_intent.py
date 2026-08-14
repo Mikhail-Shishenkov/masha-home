@@ -455,7 +455,11 @@ class MemoryIntentHandler:
         # cannot be hallucinated as a model capability and never expose storage.
         if show := _SHOW_MEMORY.match(message):
             query = show.group("remember_query") or show.group("query")
-            return self._show_memory(query, project_id)
+            return self._show_memory(
+                query,
+                project_id,
+                conversation_id=conversation_id,
+            )
         if _LIST_COMMITMENTS.match(message):
             return self._list_commitments(project_id)
         if (remove_query := self._human_remove_query(message)) is not None:
@@ -574,7 +578,11 @@ class MemoryIntentHandler:
         active_continuity_thread_id: str | None = None,
     ) -> MemoryIntentResult:
         if parsed.intent is CapabilityIntent.QUERY_MEMORY:
-            return self._show_memory(parsed.entity, project_id)
+            return self._show_memory(
+                parsed.entity,
+                project_id,
+                conversation_id=conversation_id,
+            )
         if parsed.intent is CapabilityIntent.FORGET_MEMORY:
             return self._propose_human_remove(
                 parsed.entity or "это",
@@ -614,14 +622,22 @@ class MemoryIntentHandler:
             )
         return MemoryIntentResult(handled=False)
 
-    def _show_memory(self, query: str | None, project_id: str) -> MemoryIntentResult:
+    def _show_memory(
+        self,
+        query: str | None,
+        project_id: str,
+        *,
+        conversation_id: str,
+    ) -> MemoryIntentResult:
         if self.memory_management is None:
+            self._presented_entity_sets.pop(conversation_id, None)
             return MemoryIntentResult(handled=True, response="Сейчас не могу прочитать локальную память.")
         records = self.memory_management.list(project_id=project_id, include_hidden=False)
         visible = [item for item in records if item.record_type in {"fact", "decision", "episode"}]
         if query:
             visible = self._rank_records(visible, query, self._memory_line)
         if not visible:
+            self._presented_entity_sets.pop(conversation_id, None)
             return MemoryIntentResult(
                 handled=True,
                 response=(
@@ -631,10 +647,26 @@ class MemoryIntentHandler:
                 ),
             )
         lines = ["Вот что у меня подтверждённо есть в памяти:"]
+        refs: list[PresentedEntityRef] = []
         for item in visible[:6]:
-            lines.append(f"— {self._memory_line(item)}")
+            label = self._memory_line(item)
+            ordinal = len(refs) + 1
+            lines.append(f"{ordinal}. {label}")
+            refs.append(PresentedEntityRef(
+                ordinal=ordinal,
+                entity_kind=HumanEntityKind.MEMORY,
+                entity_id=item.record_id,
+                human_label=label,
+                allowed_actions=(HumanEntityAction.FORGET,),
+            ))
         if len(visible) > 6:
             lines.append(f"И ещё {len(visible) - 6}. Могу сузить вопрос.")
+        self._presented_entity_sets[conversation_id] = PresentedEntitySet(
+            conversation_id=conversation_id,
+            source_kind="confirmed_memory",
+            created_at=self._now(),
+            items=tuple(refs),
+        )
         return MemoryIntentResult(handled=True, response="\n".join(lines))
 
     def _list_commitments(self, project_id: str, *, query: str | None = None, temporal_scope: str | None = None) -> MemoryIntentResult:
@@ -693,7 +725,11 @@ class MemoryIntentHandler:
     def _ordinal_from_text(value: str) -> int | None:
         normalized = normalize_utterance(value)
         words = normalized.split()
-        positional_fillers = {"по", "списку", "в", "списке", "пункт", "пункта", "номер"}
+        positional_fillers = {
+            "по", "списку", "в", "списке", "пункт", "пункта", "пункту",
+            "строка", "строку", "строчки", "строчку", "строке",
+            "запись", "записи", "записью", "номер",
+        }
         for index, word in enumerate(words):
             if word in _ORDINAL_WORDS:
                 remaining = words[:index] + words[index + 1 :]
