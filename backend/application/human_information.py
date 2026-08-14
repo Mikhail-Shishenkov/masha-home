@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Callable
@@ -188,6 +189,7 @@ _STATE_LABELS = {
     "resolved": "закрыто",
     "snoozed": "отложено",
 }
+_INTERNAL_FACT_LABEL_PART = re.compile(r"^[a-z][a-z0-9_]{1,80}$", re.IGNORECASE)
 _QUERY_GLUE = {
     "найд", "покаж", "информац", "памят", "вспомн", "прос", "забыт",
     "верн", "сдел", "сделал", "над", "раньш", "прошл", "повод", "касал",
@@ -592,12 +594,24 @@ class HumanInformationService:
             active_states={"active"},
         )
         text = f"{item.subject}: {item.key} — {item.value}"
+        label = self._human_fact_label(item, text)
         return self._item(
             entity_id=item.id, kind=HumanEntityKind.MEMORY, record_type="fact",
-            label=text, searchable_text=text, domain_state=item.status.value,
+            label=label, searchable_text=text, domain_state=item.status.value,
             availability=availability, timestamp=item.created_at,
             project_ids=tuple(item.project_ids),
         )
+
+    @staticmethod
+    def _human_fact_label(item, fallback: str) -> str:
+        """Hide storage-shaped Fact keys while preserving searchable source text."""
+        if not (
+            _INTERNAL_FACT_LABEL_PART.fullmatch(item.subject)
+            and _INTERNAL_FACT_LABEL_PART.fullmatch(item.key)
+        ):
+            return fallback
+        state = _STATE_LABELS.get(item.status.value, "доступно")
+        return f"Память · {state} — {item.value}"
 
     def _decision(self, item) -> HumanInformationItem:
         availability = self._availability(
