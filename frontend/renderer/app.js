@@ -84,6 +84,15 @@ const continuityCreateTitle = document.getElementById("continuity-create-title")
 const continuityCreateText = document.getElementById("continuity-create-text");
 const submitContinuity = document.getElementById("submit-continuity");
 const cancelContinuity = document.getElementById("cancel-continuity");
+const historySearchInput = document.getElementById("history-search-input");
+const historySearchResults = document.getElementById("history-search-results");
+const historySearchScopes = [...document.querySelectorAll("[data-search-scope]")];
+const memoryCandidateSurface = document.getElementById("memory-candidate-surface");
+const memoryCandidateEyebrow = document.getElementById("memory-candidate-eyebrow");
+const memoryCandidateTitle = document.getElementById("memory-candidate-title");
+const memoryCandidateSummary = document.getElementById("memory-candidate-summary");
+const approveMemoryCandidate = document.getElementById("approve-memory-candidate");
+const rejectMemoryCandidate = document.getElementById("reject-memory-candidate");
 
 let bridge = null;
 let ready = false;
@@ -98,6 +107,8 @@ let sceneTransitionTimer = null;
 let sceneSettleTimer = null;
 let activeSceneChangedAt = performance.now();
 let pendingConfirmation = null;
+let pendingMemoryCandidate = null;
+let historySearchScope = "all";
 let pendingSkillInstall = null;
 let continuityCreateKind = null;
 const COMPOSER_MIN_HEIGHT = 44;
@@ -222,6 +233,7 @@ function closeTemporarySurfaces() {
   commitmentCreateSurface.hidden = true;
   skillInstallSurface.hidden = true;
   continuityCreateSurface.hidden = true;
+  memoryCandidateSurface.hidden = true;
   document.documentElement.dataset.commitments = "closed";
   document.documentElement.dataset.homeAttention = "closed";
   document.documentElement.dataset.objectSurface = "closed";
@@ -247,7 +259,7 @@ function transitionToSurface(open) {
     continuitySurface,
     reflectionsSurface,
     workbenchSurface,
-    operationSurface, commitmentCreateSurface, skillInstallSurface, continuityCreateSurface,
+    operationSurface, memoryCandidateSurface, commitmentCreateSurface, skillInstallSurface, continuityCreateSurface,
   ].filter((element) => !element.hidden);
   for (const element of visible) element.classList.add("is-surface-leaving");
   surfaceTransitionTimer = window.setTimeout(() => {
@@ -407,6 +419,41 @@ function renderContinuity(view) {
   }
   if (!relationshipMoments.children.length) relationshipMoments.append(objectEmpty("Наших сохранённых моментов пока нет."));
   if (!continuityThreads.children.length) continuityThreads.append(objectEmpty("Открытых нитей сейчас нет."));
+}
+
+function renderHumanSearch(items, query) {
+  historySearchResults.replaceChildren();
+  historySearchResults.hidden = !query;
+  if (!query) return;
+  if (!items.length) {
+    historySearchResults.append(objectEmpty("Пока ничего похожего не нашла."));
+    return;
+  }
+  for (const result of items) {
+    const row = document.createElement("li");
+    row.className = "continuity-item";
+    row.append(Object.assign(document.createElement("p"), { textContent: result.label }));
+    historySearchResults.append(row);
+  }
+}
+
+function renderMemoryCandidate(candidate) {
+  pendingMemoryCandidate = candidate || null;
+  if (!candidate || pendingConfirmation) {
+    memoryCandidateSurface.hidden = true;
+    return;
+  }
+  const isUpdate = candidate.relation === "possible_update";
+  memoryCandidateEyebrow.textContent = isUpdate ? "похоже, это изменилось" : "мне кажется, это стоит помнить";
+  memoryCandidateTitle.textContent = isUpdate ? "Обновить то, что я помню?" : "Сохранить это?";
+  memoryCandidateSummary.textContent = candidate.summary;
+  approveMemoryCandidate.textContent = isUpdate ? "Обновить" : "Запомнить";
+  approveMemoryCandidate.disabled = false;
+  rejectMemoryCandidate.disabled = false;
+  transitionToSurface(() => {
+    memoryCandidateSurface.hidden = false;
+    document.documentElement.dataset.operation = "candidate";
+  });
 }
 
 function objectEmpty(text) {
@@ -825,6 +872,7 @@ function handleBridgeEvent(encoded) {
     clearLocalFailure();
     setComposerState({ enabled: true });
     renderPendingConfirmation(payload.pending_confirmation);
+    renderMemoryCandidate(payload.memory_candidate);
     return;
   }
   if (payload.kind === "workbench_loaded") {
@@ -945,6 +993,20 @@ function handleBridgeEvent(encoded) {
     continuityTrigger.setAttribute("aria-expanded", "true");
     return;
   }
+  if (payload.kind === "human_search_loaded") {
+    renderHumanSearch(payload.items || [], payload.query || "");
+    return;
+  }
+  if (payload.kind === "memory_candidate_resolved") {
+    pendingMemoryCandidate = null;
+    memoryCandidateSurface.hidden = true;
+    document.documentElement.dataset.operation = "none";
+    surface.hidden = false;
+    surface.classList.remove("is-surface-concealed");
+    surfaceStatus.textContent = payload.message;
+    renderMemoryCandidate(payload.memory_candidate);
+    return;
+  }
   if (payload.kind === "reflection_workspace_loaded") {
     applySnapshot(payload.snapshot);
     renderReflections(payload.workspace);
@@ -982,6 +1044,10 @@ function handleBridgeEvent(encoded) {
   }
   if (["activities_unavailable", "proactive_unavailable", "proactive_resolution_rejected", "continuity_unavailable", "reflections_unavailable", "reflection_resolution_rejected", "honest_help_rejected", "workbench_unavailable"].includes(payload.kind)) {
     showLocalFailure("Локальное состояние сейчас не удалось открыть.");
+    return;
+  }
+  if (["human_search_unavailable", "memory_candidate_rejected"].includes(payload.kind)) {
+    showLocalFailure("Сейчас это действие недоступно. Попробуй ещё раз чуть позже.");
     return;
   }
   if (payload.kind === "commitment_operation_rejected" || payload.kind === "commitments_unavailable") {
@@ -1071,6 +1137,7 @@ function handleBridgeEvent(encoded) {
     bridge.loadRecentConversations();
     setComposerState({ enabled: ready });
     renderPendingConfirmation(result?.pending_confirmation);
+    renderMemoryCandidate(payload.memory_candidate);
     scrollToLatestIfAppropriate(true);
     return;
   }
@@ -1269,6 +1336,39 @@ closeProactive.addEventListener("click", () => {
 
 closeContinuity.addEventListener("click", () => {
   returnToConversation();
+});
+
+historySearchInput.addEventListener("input", () => {
+  const query = historySearchInput.value.trim();
+  if (!ready || inFlight) return;
+  if (!query) {
+    renderHumanSearch([], "");
+    return;
+  }
+  bridge.searchInformation(query, historySearchScope);
+});
+
+for (const button of historySearchScopes) {
+  button.addEventListener("click", () => {
+    historySearchScope = button.dataset.searchScope;
+    for (const choice of historySearchScopes) choice.classList.toggle("is-active", choice === button);
+    const query = historySearchInput.value.trim();
+    if (query && ready && !inFlight) bridge.searchInformation(query, historySearchScope);
+  });
+}
+
+approveMemoryCandidate.addEventListener("click", () => {
+  if (!ready || inFlight || !pendingMemoryCandidate) return;
+  approveMemoryCandidate.disabled = true;
+  rejectMemoryCandidate.disabled = true;
+  bridge.resolveMemoryCandidate(pendingMemoryCandidate.candidate_id, "approve");
+});
+
+rejectMemoryCandidate.addEventListener("click", () => {
+  if (!ready || inFlight || !pendingMemoryCandidate) return;
+  approveMemoryCandidate.disabled = true;
+  rejectMemoryCandidate.disabled = true;
+  bridge.resolveMemoryCandidate(pendingMemoryCandidate.candidate_id, "reject");
 });
 
 closeReflections.addEventListener("click", () => {

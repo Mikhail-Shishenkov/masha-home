@@ -102,6 +102,12 @@ html[data-home-attention="active"] .conversation-surface.is-surface-concealed { 
 .continuity-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
 .continuity-columns h3 { margin: 0 0 12px; color: rgba(238,201,146,.68); text-transform: uppercase; letter-spacing: .1em; font: 600 10px system-ui, sans-serif; }
 .continuity-list, .reflection-list { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.history-search { display: grid; gap: 10px; margin: 0 0 24px; }
+.history-search input { box-sizing: border-box; width: 100%; padding: 11px 13px; color: rgba(248,237,224,.94); border: 1px solid rgba(226,188,126,.28); background: rgba(255,255,255,.025); font: 400 14px system-ui, sans-serif; }
+.history-search-scopes { display: flex; gap: 14px; }
+.history-search-scopes button { padding: 4px 0; border: 0; border-bottom: 1px solid transparent; color: rgba(236,223,207,.55); background: none; font: 600 10px system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; cursor: pointer; }
+.history-search-scopes button.is-active { color: #e9c58e; border-bottom-color: rgba(233,197,142,.42); }
+.history-search-results { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .continuity-item, .reflection-item { padding: 16px 17px; border-left: 1px solid rgba(226,188,126,.23); background: rgba(255,245,228,.035); }
 .continuity-item strong, .reflection-item h3 { display: block; margin: 0 0 7px; color: rgba(252,240,223,.92); font: 500 16px/1.35 system-ui, sans-serif; }
 .continuity-item p, .reflection-item p { margin: 0; color: rgba(244,229,209,.66); font: 400 13px/1.5 system-ui, sans-serif; }
@@ -183,7 +189,7 @@ html[data-object-surface="workbench"] .conversation-surface { opacity: .16; poin
 .operation-steps li[data-state="done"] { color: rgba(217,237,229,.72); }
 .operation-steps li[data-state="done"]::before { content: "●"; color: #a9d0c3; }
 .operation-close { margin-top: 24px; color: #b9d8cd; border-bottom-color: rgba(169,208,195,.35); }
-html[data-operation="confirmation"] .conversation-surface { opacity: .17; pointer-events: none; }
+html[data-operation="confirmation"] .conversation-surface, html[data-operation="candidate"] .conversation-surface { opacity: .17; pointer-events: none; }
 html[data-operation="activity"] .conversation-surface { opacity: .24; pointer-events: none; }
 html[data-operation="activity"] .ambient { background: radial-gradient(ellipse at 77% 33%, rgba(122,181,166,.14), transparent 30%), linear-gradient(90deg, rgba(0,0,0,.08), transparent 54%, rgba(0,0,0,.32)); }
 html[data-home-attention="active"] .conversation-surface { opacity: .16; pointer-events: none; }

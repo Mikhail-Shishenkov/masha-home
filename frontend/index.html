@@ -81,6 +81,7 @@
         <div class="object-header-actions"><button class="surface-action" id="add-shared-moment" type="button">Сохранить момент</button><button class="surface-action" id="add-continuity-thread" type="button">Оставить нить</button><button class="surface-close" id="close-continuity" type="button">Закрыть</button></div>
       </header>
       <p class="object-intro">Не досье — только то, что действительно осталось с нами и к чему хочется вернуться.</p>
+      <div class="history-search"><input id="history-search-input" type="search" maxlength="240" placeholder="Найти в нашей истории"><div class="history-search-scopes" role="group" aria-label="Где искать"><button type="button" data-search-scope="all">Всё</button><button type="button" data-search-scope="history">История</button><button type="button" data-search-scope="tasks">Дела</button></div><ol id="history-search-results" hidden></ol></div>
       <div class="continuity-columns">
         <section><h3>Наши моменты</h3><ol class="continuity-list" id="relationship-moments"></ol></section>
         <section><h3>К чему стоит вернуться</h3><ol class="continuity-list" id="continuity-threads"></ol></section>
@@ -109,6 +110,12 @@
       <section class="workbench-section">
         <h3>Что мне можно</h3><ol class="workbench-list" id="workbench-permissions"></ol>
       </section>
+    </aside>
+    <aside class="operation-surface" id="memory-candidate-surface" aria-live="polite" hidden>
+      <p class="eyebrow" id="memory-candidate-eyebrow">мне кажется, это стоит помнить</p>
+      <h2 id="memory-candidate-title">Сохранить это?</h2>
+      <p class="operation-subject" id="memory-candidate-summary"></p>
+      <div class="operation-actions"><button class="operation-action is-primary" id="approve-memory-candidate" type="button">Запомнить</button><button class="operation-action" id="reject-memory-candidate" type="button">Не надо</button></div>
     </aside>
     <aside class="operation-surface" id="operation-surface" aria-live="polite" hidden>
       <p class="eyebrow" id="operation-eyebrow">нужно твоё решение</p>

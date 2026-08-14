@@ -10,6 +10,7 @@ from PySide6.QtCore import QObject, Signal, Slot
 from PySide6.QtWidgets import QFileDialog
 
 from backend.application import ConversationTurnStatus, MashaApplication
+from backend.application.human_information import HumanSearchRequest, HumanSearchScope
 
 
 HOME_PROJECT_ID = "project_masha_home"
@@ -72,6 +73,7 @@ class LocalConversationBridge(QObject):
                 "continuity_count": self._continuity_count(),
                 "reflection_items_count": self._reflection_count(),
                 "pending_confirmation": None if pending is None else pending.model_dump(mode="json"),
+                "memory_candidate": self._memory_candidate_payload(pending=pending),
             }
         )
 
@@ -301,6 +303,68 @@ class LocalConversationBridge(QObject):
                 "snapshot": snapshot.model_dump(mode="json"),
             }
         )
+
+    @Slot(str, str)
+    def searchInformation(self, query: str, scope: str):  # noqa: N802
+        """Project existing Human Information search without a chat turn."""
+        if self._application is None or self._turn_in_flight:
+            self._emit({"kind": "human_search_unavailable"})
+            return
+        try:
+            selected_scope = HumanSearchScope(scope)
+        except ValueError:
+            self._emit({"kind": "human_search_unavailable"})
+            return
+        result = self._application.search_information(HumanSearchRequest(
+            query=query.strip(), scope=selected_scope, project_id=HOME_PROJECT_ID,
+        ))
+        self._emit({
+            "kind": "human_search_loaded",
+            "query": query.strip(),
+            "scope": selected_scope.value,
+            "items": [
+                {
+                    "kind": match.item.kind.value,
+                    "label": match.item.label,
+                    "state": match.item.domain_state,
+                    "availability": match.item.availability.value,
+                }
+                for match in result.matches
+            ],
+        })
+
+    @Slot(str, str)
+    def resolveMemoryCandidate(self, candidate_id: str, decision: str):  # noqa: N802
+        """Resolve one passive candidate through the typed application boundary."""
+        if self._application is None or self._turn_in_flight:
+            self._emit({"kind": "memory_candidate_rejected"})
+            return
+        pending = self._pending_confirmation()
+        candidate = self._memory_candidate_payload(pending=pending)
+        if (
+            candidate is None
+            or candidate["candidate_id"] != candidate_id
+            or decision not in {"approve", "reject"}
+        ):
+            self._emit({"kind": "memory_candidate_rejected"})
+            return
+        try:
+            if decision == "approve":
+                result = self._application.approve_memory_candidate(
+                    candidate_id,
+                    supersede_existing=candidate["relation"] == "possible_update",
+                )
+            else:
+                result = self._application.reject_memory_candidate(candidate_id)
+        except (KeyError, ValueError):
+            self._emit({"kind": "memory_candidate_rejected"})
+            return
+        self._emit({
+            "kind": "memory_candidate_resolved",
+            "status": result.status,
+            "message": "Запомнила." if result.status == "approved" else "Хорошо, не буду сохранять.",
+            "memory_candidate": self._memory_candidate_payload(pending=self._pending_confirmation()),
+        })
 
     @Slot(str)
     def continueContinuityThread(self, thread_id: str):  # noqa: N802
@@ -737,6 +801,9 @@ class LocalConversationBridge(QObject):
                 "kind": "turn_result",
                 "result": result_payload,
                 "snapshot": snapshot.model_dump(mode="json"),
+                "memory_candidate": self._memory_candidate_payload(
+                    pending=None if result_payload is None else result.pending_confirmation,
+                ),
             }
         )
 
@@ -859,6 +926,31 @@ class LocalConversationBridge(QObject):
 
     def _recent_payload(self) -> dict:
         return self._reset_conversation_page_payload()
+
+    def _pending_confirmation(self):
+        if self._application is None or self._conversation_id is None:
+            return None
+        return self._application.pending_confirmation(self._conversation_id)
+
+    def _memory_candidate_payload(self, *, pending) -> dict | None:
+        """One safe, human-only candidate projection; IDs stay bridge-internal."""
+        if self._application is None or pending is not None:
+            return None
+        if self._application.status().emergency_stop_engaged:
+            return None
+        # An existing high-priority operation (including a skill review) wins.
+        if self._application.workbench().pending:
+            return None
+        candidates = self._application.list_pending_memory_candidates()
+        if not candidates:
+            return None
+        item = candidates[0]
+        return {
+            "candidate_id": item.candidate_id,
+            "summary": item.summary,
+            "relation": item.relation,
+            "requires_explicit_supersession": item.requires_explicit_supersession,
+        }
 
     def _reset_conversation_page_payload(self) -> dict:
         self._conversation_page_revision += 1
