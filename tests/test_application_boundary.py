@@ -17,12 +17,15 @@ from backend.application import (
     ConversationTurnStatus,
     MashaApplication,
     build_masha_application,
+    HumanSearchRequest,
+    RecallMode,
 )
 from backend.application.catalogs import error_label, proactive_reason_label
 from backend.application.contracts import ModelAvailabilityCode, ModelSwitchStatus
 from backend.llm.fake_provider import FakeProvider
 from backend.llm.model_router import ModelRouter
 from backend.memory.sqlite_repository import MemorySqliteRepository
+from backend.memory.memory_management import MemoryManagementService, MemoryMutationOperation
 from backend.memory.memory_models import CommitmentStatus
 from backend.presentation import PresenceActivity
 from backend.skills.agent_loop import (
@@ -95,6 +98,40 @@ def test_public_composition_root_builds_without_cli(tmp_path):
     assert isinstance(application, MashaApplication)
     assert application.current_model().profile_id == "primary"
     assert (root / "local-data" / "conversations" / "history.json").exists() is False
+
+
+def test_typed_human_information_api_searches_and_proposes_restore_without_fake_command(tmp_path):
+    root, _, application = _application(tmp_path)
+    repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")
+    management = MemoryManagementService(repository)
+    fact = next(item for item in management.list(record_type="fact") if item.payload["status"] == "active")
+    management.apply(
+        operation=MemoryMutationOperation.FORGET,
+        record_id=fact.record_id,
+        proposal_id="typed-api-test-setup",
+    )
+    turn = application.send_message("Привет", project_id=PROJECT_ID)
+
+    normal = application.search_information(HumanSearchRequest(query=fact.payload["key"]))
+    forgotten = application.search_information(HumanSearchRequest(
+        query=fact.payload["key"], mode=RecallMode.FORGOTTEN_REVIEW,
+    ))
+    pending = application.restore_information(
+        record_id=fact.record_id,
+        conversation_id=turn.conversation_id,
+    )
+
+    assert fact.record_id not in {item.ref.entity_id for item in normal.items}
+    assert fact.record_id in {item.ref.entity_id for item in forgotten.items}
+    assert pending.confirmation_type == "memory_restore"
+    resolution = application.resolve_confirmation(
+        conversation_id=turn.conversation_id,
+        proposal_id=pending.proposal_id,
+        decision="confirm",
+        project_id=PROJECT_ID,
+    )
+    assert resolution.status.value == "confirmed"
+    assert management.get(fact.record_id).payload["visibility"] == "visible"
 
 
 def test_completed_turn_returns_ui_safe_messages_and_survives_restart(tmp_path):
@@ -170,6 +207,24 @@ def test_response_contract_allows_discussion_and_receipted_success():
     assert render_model_response(discussion) == discussion
     assert render_model_response(execution) != execution
     assert render_model_response(execution, application_receipts=("receipt",)) == execution
+
+
+def test_response_contract_allows_grounded_completed_task_readout_but_not_unrelated_write():
+    from backend.conversation.response_contract import render_model_response
+
+    readout = "Дело «Проверить батарею MacBook» уже выполнено."
+    unrelated = "Готово, задача создана: купить билеты."
+    grounded = ("Дело · завершено: Проверить батарею MacBook",)
+
+    assert render_model_response(readout, grounded_completed_items=grounded) == readout
+    assert render_model_response(unrelated, grounded_completed_items=grounded) != unrelated
+
+
+def test_response_contract_does_not_treat_do_not_forget_advice_as_completed_mutation():
+    from backend.conversation.response_contract import render_model_response
+
+    advice = "Дело уже открыто. Не забудь проверить новый вариант."
+    assert render_model_response(advice) == advice
 
 
 @pytest.mark.parametrize(

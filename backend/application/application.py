@@ -35,6 +35,12 @@ from .contracts import (
 )
 from .conversation import ConversationApplicationService
 from .home_snapshot import HomeSnapshotService, HomeSnapshotView
+from .human_information import (
+    HumanRecallRequest,
+    HumanRecallResult,
+    HumanSearchRequest,
+    HumanSearchResult,
+)
 from .model_settings import ModelSettingsService
 from .status import MashaStatusService
 from .visual_assets import VisualIdentityResolver
@@ -58,6 +64,7 @@ class MashaApplication:
         reflections,
         workbench,
         memory_candidates,
+        human_information,
     ):
         self._conversation = conversation
         self._status = status
@@ -71,6 +78,7 @@ class MashaApplication:
         self._reflections = reflections
         self._workbench = workbench
         self._memory_candidates = memory_candidates
+        self._human_information = human_information
 
     def send_message(self, content: str, *, project_id: str, conversation_id: str | None = None) -> ConversationTurnResult:
         return self._conversation.send_message(content, project_id=project_id, conversation_id=conversation_id)
@@ -159,6 +167,25 @@ class MashaApplication:
 
     def memory_provenance(self, record_id: str) -> MemoryProvenanceView:
         return self._memory_candidates.memory_provenance(record_id)
+
+    def search_information(self, request: HumanSearchRequest) -> HumanSearchResult:
+        """Typed future-UI boundary; no synthetic conversation command required."""
+        return self._human_information.search_information(request)
+
+    def recall_information(self, request: HumanRecallRequest) -> HumanRecallResult:
+        """Reusable deterministic recall for future application-owned callers."""
+        return self._human_information.recall_information(request)
+
+    def restore_information(self, *, record_id: str, conversation_id: str) -> PendingConfirmationView:
+        """Create a restore proposal; visibility changes only after confirmation."""
+        self._human_information.restore_information(
+            record_id=record_id,
+            conversation_id=conversation_id,
+        )
+        pending = self._conversation.pending_confirmation(conversation_id)
+        if pending is None:  # pragma: no cover - proposal store contract
+            raise RuntimeError("restore proposal was not created")
+        return pending
 
     def workbench(self) -> WorkbenchView:
         return self._workbench.view()

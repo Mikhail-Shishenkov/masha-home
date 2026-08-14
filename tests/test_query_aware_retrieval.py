@@ -284,15 +284,20 @@ def test_conversation_retrieves_different_context_per_turn_and_can_send_empty(
     greeting_context = list(provider.last_request.private_context["memory_context"])
 
     assert model_context
-    assert {item["id"] for item in model_context} <= {
-        "A_primary_local_model",
-        "B_model_discussion",
-        "G_model_long_context_thread",
+    assert {item["category"] for item in model_context} <= {
+        "решение", "эпизод", "общая нить",
     }
-    assert "B_model_discussion" in {item["id"] for item in model_context}
-    assert [item["id"] for item in drink_context] == ["D_coffee_preference"]
+    assert any(item["category"] == "эпизод" for item in model_context)
+    assert [item["category"] for item in drink_context] == ["факт"]
+    assert "кофе" in drink_context[0]["content"]
     assert greeting_context == []
-    assert all("components" not in item and "total_score" not in item for item in model_context)
+    assert all(
+        "id" not in item
+        and "record_type" not in item
+        and "components" not in item
+        and "total_score" not in item
+        for item in model_context
+    )
 
 
 @pytest.mark.parametrize(
@@ -346,12 +351,13 @@ def test_conversation_automatically_keeps_perspective_distinct_from_general_memo
 
     assert perspective_request.private_context["context_lens"] == "masha_perspective"
     assert [
-        item["id"] for item in perspective_request.private_context["memory_context"]
-    ] == ["H_model_perspective"]
+        item["category"] for item in perspective_request.private_context["memory_context"]
+    ] == ["мнение Маши"]
+    assert "Qwen 3.5 9B" in perspective_request.private_context["memory_context"][0]["content"]
     assert general_request.private_context["context_lens"] == "general"
     general_context = general_request.private_context["memory_context"]
-    assert {item["record_type"] for item in general_context} & {"decision", "episode"}
-    assert "H_model_perspective" not in {item["id"] for item in general_context}
+    assert {item["category"] for item in general_context} & {"решение", "эпизод"}
+    assert "мнение Маши" not in {item["category"] for item in general_context}
 
 
 def test_conversation_automatically_selects_shared_continuity_only_context(
@@ -369,13 +375,9 @@ def test_conversation_automatically_selects_shared_continuity_only_context(
     request = provider.last_request
     assert request is not None
     assert request.private_context["context_lens"] == "shared_continuity"
-    assert {item["id"] for item in request.private_context["memory_context"]} == {
-        "F_first_mvp",
-        "G_model_long_context_thread",
-    }
-    assert {item["record_type"] for item in request.private_context["memory_context"]} == {
-        "relationship_memory",
-        "continuity_state",
+    assert {item["category"] for item in request.private_context["memory_context"]} == {
+        "общий момент",
+        "общая нить",
     }
 
 
@@ -501,8 +503,8 @@ def test_pronoun_perspective_follow_up_uses_only_recent_user_topic(
 
     request = provider.last_request
     assert request.private_context["context_lens"] == "masha_perspective"
-    assert [item["id"] for item in request.private_context["memory_context"]] == [
-        "H_model_perspective"
+    assert [item["category"] for item in request.private_context["memory_context"]] == [
+        "мнение Маши"
     ]
 
 
@@ -516,8 +518,8 @@ def test_explicit_broad_perspective_stays_broad_without_history_rewrite(
 
     request = provider.last_request
     assert request.private_context["context_lens"] == "masha_perspective"
-    assert {item["record_type"] for item in request.private_context["memory_context"]} <= {
-        "reflection"
+    assert {item["category"] for item in request.private_context["memory_context"]} <= {
+        "мнение Маши"
     }
 
 

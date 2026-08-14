@@ -117,6 +117,7 @@ class ConversationService:
         reflection_intent_handler: ReflectionIntentHandler | None = None,
         reflection_service=None,
         passive_memory_service=None,
+        human_information=None,
     ):
         self.identity_kernel = identity_kernel
         self.memory_retriever = memory_retriever
@@ -134,6 +135,8 @@ class ConversationService:
         self.reflection_intent_handler = reflection_intent_handler
         self.reflection_service = reflection_service
         self.passive_memory_service = passive_memory_service
+        self.human_information = human_information
+        self.last_recall_result = None
 
     def send(
         self,
@@ -231,12 +234,27 @@ class ConversationService:
                 lens=context_lens,
             )
         )
-        self.working_memory.load(memories)
+        if self.human_information is not None:
+            recall = self.human_information.recall_for_conversation(
+                query=user_message,
+                project_id=project_id,
+                recent_user_messages=recent_user_messages,
+                current_records=memories,
+                context_lens=context_lens.value,
+                limit=self.memory_limit,
+                force_current=context_lens is not ContextLens.GENERAL,
+            )
+            self.last_recall_result = recall
+            self.working_memory.load(recall.as_working_memory())
+        else:
+            self.last_recall_result = None
+            self.working_memory.load(memories)
         active_profile = None if self.model_profiles is None else self.model_profiles.get_active_profile()
         request = self.context_compiler.compile(
             messages=tuple(
                 self._model_history_message(message)
                 for message in self.history.messages(conversation.id, limit=self.history_limit)
+                if message.origin is not ConversationMessageOrigin.APPLICATION
             ),
             identity_context=self.identity_kernel.build_context(),
             working_memory=self.working_memory.get_all(),
@@ -258,7 +276,23 @@ class ConversationService:
             user_message=user_message,
             context=temporal_context,
         )
-        rendered = render_model_response(grounded_response, application_receipts=())
+        grounded_completed_items = tuple(
+            str(item.get("data", {}).get("content") or item.get("data", {}).get("text") or "")
+            for item in self.working_memory.get_all()
+            if (
+                item.get("type") == "human_information"
+                and item.get("data", {}).get("state") == "завершено"
+            )
+            or (
+                item.get("type") == "commitment"
+                and item.get("data", {}).get("status") == "completed"
+            )
+        )
+        rendered = render_model_response(
+            grounded_response,
+            application_receipts=(),
+            grounded_completed_items=grounded_completed_items,
+        )
         self.history.append(conversation.id, ConversationRole.ASSISTANT, rendered)
         if allow_capability_routing and self.passive_memory_service is not None:
             self.passive_memory_service.observe_safely(
@@ -347,12 +381,4 @@ class ConversationService:
 
     @staticmethod
     def _model_history_message(message) -> ModelMessage:
-        if message.origin is ConversationMessageOrigin.APPLICATION:
-            return ModelMessage(
-                role=MessageRole.SYSTEM,
-                content=(
-                    "Результат приложения из предыдущего хода; это факт интерфейса, "
-                    "а не образец стиля ответа:\n" + message.content
-                ),
-            )
         return ModelMessage(role=message.role.value, content=message.content)

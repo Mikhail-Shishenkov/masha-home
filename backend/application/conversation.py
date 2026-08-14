@@ -159,6 +159,8 @@ class ConversationApplicationService:
         payload = proposal.record_payload
         if proposal.operation == "forget":
             return "memory_forget", "Убрать воспоминание?", ConversationApplicationService._proposal_subject(proposal)
+        if proposal.operation == "restore":
+            return "memory_restore", "Вернуть запись в обычную память?", ConversationApplicationService._proposal_subject(proposal)
         if proposal.record_type == "commitment":
             completion = proposal.operation != "create"
             return (

@@ -250,7 +250,7 @@
 В объёме задачи:
 
 - Temporal Engine;
-- UTC в хранении и `Europe/Moscow` в пользовательском представлении;
+- UTC в хранении и настроенный Home timezone (`Europe/Saratov` по умолчанию) в пользовательском представлении;
 - current time, last interaction и elapsed time;
 - commitments и deadlines;
 - локальный scheduler;

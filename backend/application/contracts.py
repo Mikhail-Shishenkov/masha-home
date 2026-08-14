@@ -269,6 +269,7 @@ class PendingConfirmationView(UiContract):
         "memory_create",
         "memory_update",
         "memory_forget",
+        "memory_restore",
         "commitment_create",
         "commitment_complete",
         "shared_moment_create",

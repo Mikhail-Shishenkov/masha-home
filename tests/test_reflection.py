@@ -344,8 +344,9 @@ def test_perspective_query_receives_only_adopted_reflection_context(tmp_path):
 
     assert answer.startswith("Я всё ещё")
     assert request.private_context["context_lens"] == "masha_perspective"
-    assert {item["record_type"] for item in request.private_context["memory_context"]} == {"reflection"}
-    assert "субъективное" in request.private_context["perspective_contract"]
+    assert {item["category"] for item in request.private_context["memory_context"]} == {"мнение Маши"}
+    assert all("id" not in item for item in request.private_context["memory_context"])
+    assert "субъективно" in request.private_context["perspective_contract"]
 
 
 def test_general_conversation_is_not_automatically_coloured_by_reflections(tmp_path):
