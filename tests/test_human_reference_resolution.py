@@ -184,6 +184,187 @@ def test_direct_forget_language_resolves_continuity_not_memory_storage(tmp_path,
     assert service.memory_intent_handler.shared_continuity.open_follow_ups()[0][1].status.value == "open"
 
 
+def test_confirmed_memory_list_owns_exact_rendered_order_and_forgets_only_third_line(
+    tmp_path,
+    memory_path,
+):
+    service, repository, provider = _service(tmp_path, memory_path)
+
+    conversation_id, rendered = _send(service, "Что ты помнишь?")
+    presented = service.memory_intent_handler.presented_entity_set(conversation_id)
+
+    assert presented is not None
+    assert presented.source_kind == "confirmed_memory"
+    assert len(presented.items) >= 3
+    assert all(item.entity_kind is HumanEntityKind.MEMORY for item in presented.items)
+    assert rendered.splitlines()[1 : 1 + len(presented.items)] == [
+        f"{item.ordinal}. {item.human_label}" for item in presented.items
+    ]
+    selected = presented.items[2]
+    other_ids = {item.entity_id for item in presented.items if item.entity_id != selected.entity_id}
+
+    _, proposal_text = _send(service, "Маша удали третью строчку", conversation_id)
+    proposal = service.memory_intent_handler.proposal_store.current_for_conversation(
+        conversation_id
+    )
+    assert provider.last_request is None
+    assert proposal is not None
+    assert proposal.operation == "forget"
+    assert proposal.target_record_id == selected.entity_id
+    assert selected.human_label in proposal_text
+    assert service.memory_intent_handler.memory_management.get(selected.entity_id).payload["visibility"] == "visible"
+
+    _confirm(service, conversation_id)
+
+    assert service.memory_intent_handler.memory_management.get(selected.entity_id).payload["visibility"] == "hidden"
+    assert all(
+        service.memory_intent_handler.memory_management.get(record_id).payload["visibility"] == "visible"
+        for record_id in other_ids
+    )
+    _, refreshed = _send(service, "Что ты помнишь?", conversation_id)
+    assert selected.human_label not in refreshed
+    assert any(
+        event["action"] == "memory_forget"
+        and event["payload"].get("record_id") == selected.entity_id
+        for event in repository.list_audit_events()
+    )
+
+
+@pytest.mark.parametrize(
+    ("command", "ordinal"),
+    (
+        ("удали третью строчку", 3),
+        ("убери вторую строку", 2),
+        ("забудь первую запись", 1),
+        ("удали пункт 3", 3),
+        ("убери запись номер 2", 2),
+    ),
+)
+def test_memory_list_accepts_bounded_natural_ordinal_vocabulary(
+    tmp_path,
+    memory_path,
+    command,
+    ordinal,
+):
+    service, _, provider = _service(tmp_path, memory_path)
+    conversation_id, _ = _send(service, "Что ты помнишь?")
+    presented = service.memory_intent_handler.presented_entity_set(conversation_id)
+    assert presented is not None and len(presented.items) >= 3
+
+    _, _ = _send(service, command, conversation_id)
+    proposal = service.memory_intent_handler.proposal_store.current_for_conversation(
+        conversation_id
+    )
+
+    assert provider.last_request is None
+    assert proposal is not None and proposal.operation == "forget"
+    assert proposal.target_record_id == presented.items[ordinal - 1].entity_id
+
+
+@pytest.mark.parametrize(
+    "alias",
+    (
+        "что есть в нашей истории?",
+        "что у нас есть в истории?",
+        "что у нас в истории?",
+        "покажи нашу историю",
+        "что сохранено в нашей истории?",
+        "что есть в общей истории?",
+    ),
+)
+def test_shared_history_aliases_are_application_lists_and_never_reach_qwen(
+    tmp_path,
+    memory_path,
+    alias,
+):
+    case = tmp_path / str(abs(hash(alias)))
+    case.mkdir()
+    service, _, provider = _service(case, memory_path)
+    conversation_id = _save_relationship(service, "наш вечер с телескопом")
+    conversation_id = _open_thread(service, "выбрать окуляр", conversation_id)
+
+    _, answer = _send(service, alias, conversation_id)
+    presented = service.memory_intent_handler.presented_entity_set(conversation_id)
+
+    assert provider.last_request is None
+    assert answer.splitlines()[1:] == [
+        "1. Воспоминание: наш вечер с телескопом",
+        "2. Открытая тема: выбрать окуляр",
+    ]
+    assert presented is not None
+    assert [item.human_label for item in presented.items] == [
+        "наш вечер с телескопом",
+        "выбрать окуляр",
+    ]
+
+
+def test_real_shared_history_alias_selects_second_line_without_mutating_before_confirmation(
+    tmp_path,
+    memory_path,
+):
+    service, _, provider = _service(tmp_path, memory_path)
+    conversation_id = _save_relationship(service, "наш вечер с телескопом")
+    conversation_id = _open_thread(service, "выбрать окуляр", conversation_id)
+
+    _, _ = _send(service, "Маша что у нас есть в истории?", conversation_id)
+    presented = service.memory_intent_handler.presented_entity_set(conversation_id)
+    selected = presented.items[1]
+    _, proposal_text = _send(service, "убери вторую строку", conversation_id)
+    proposal = service.memory_intent_handler.proposal_store.current_for_conversation(
+        conversation_id
+    )
+
+    assert provider.last_request is None
+    assert selected.entity_kind is HumanEntityKind.CONTINUITY
+    assert proposal is not None and proposal.operation == "continuity_update"
+    assert selected.human_label in proposal_text
+    assert any(
+        follow_up.id == selected.entity_id
+        for _, follow_up in service.memory_intent_handler.shared_continuity.open_follow_ups()
+    )
+
+
+def test_general_history_question_remains_model_owned_and_invalidates_selection(
+    tmp_path,
+    memory_path,
+):
+    service, _, provider = _service(tmp_path, memory_path)
+    conversation_id, _ = _send(service, "Что ты помнишь?")
+    assert service.memory_intent_handler.presented_entity_set(conversation_id) is not None
+    provider.response_text = "Римская история началась задолго до империи."
+
+    _, answer = _send(service, "Расскажи историю Рима", conversation_id)
+
+    assert answer == provider.response_text
+    assert provider.last_request is not None
+    assert service.memory_intent_handler.presented_entity_set(conversation_id) is None
+
+
+def test_new_application_list_replaces_old_selection_and_empty_list_clears_it(
+    tmp_path,
+    memory_path,
+):
+    service, _, _ = _service(tmp_path, memory_path)
+    conversation_id = _save_relationship(service, "наш вечер с телескопом")
+    conversation_id = _open_thread(service, "выбрать окуляр", conversation_id)
+    _, _ = _send(service, "Что у нас в истории?", conversation_id)
+    history_set = service.memory_intent_handler.presented_entity_set(conversation_id)
+    assert history_set is not None and history_set.source_kind == "shared_history"
+
+    _, _ = _send(service, "Что ты помнишь?", conversation_id)
+    memory_set = service.memory_intent_handler.presented_entity_set(conversation_id)
+    assert memory_set is not None and memory_set.source_kind == "confirmed_memory"
+    assert memory_set != history_set
+
+    _, missing = _send(
+        service,
+        "Что ты знаешь про мою подводную лодку?",
+        conversation_id,
+    )
+    assert "ничего подходящего" in missing
+    assert service.memory_intent_handler.presented_entity_set(conversation_id) is None
+
+
 def test_direct_confirmed_fact_still_uses_memory_forget_proposal(tmp_path, memory_path):
     service, repository, _ = _service(tmp_path, memory_path)
     conversation_id, _ = _send(service, "Запомни, что я люблю блокноты в клетку")
@@ -233,7 +414,7 @@ def test_cross_kind_match_clarifies_and_deictic_topic_refinement_is_typed(tmp_pa
 def test_ordinal_without_application_list_fails_closed_without_model_call(tmp_path, memory_path):
     service, _, provider = _service(tmp_path, memory_path)
 
-    conversation_id, answer = _send(service, "удали третью")
+    conversation_id, answer = _send(service, "удали третью строчку")
 
     assert "Без списка приложения" in answer
     assert service.memory_intent_handler.proposal_store.current_for_conversation(conversation_id) is None
@@ -288,7 +469,7 @@ def test_model_generated_numbered_prose_never_becomes_selection_truth(tmp_path, 
     )
     model_request = provider.last_request
 
-    _, answer = _send(service, "удали третью", conversation_id)
+    _, answer = _send(service, "удали третью строчку", conversation_id)
 
     assert model_answer.startswith("1. Чай")
     assert service.memory_intent_handler.presented_entity_set(conversation_id) is None

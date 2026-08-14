@@ -50,6 +50,52 @@ def test_fixed_allowlist_router_uses_composable_patterns_not_sentence_dictionary
         assert parsed.confidence >= router.CONFIDENCE_THRESHOLD
 
 
+def test_shared_history_aliases_route_locally_without_hijacking_general_history():
+    router = NaturalLanguageCapabilityRouter()
+    for phrase in (
+        "Что есть в нашей истории?",
+        "Что у нас есть в истории?",
+        "Что у нас в истории?",
+        "Покажи нашу историю",
+        "Что сохранено в нашей истории?",
+        "Что есть в общей истории?",
+    ):
+        parsed = router.route(phrase)
+        assert parsed is not None
+        assert parsed.intent is CapabilityIntent.QUERY_CONTINUITY
+
+    assert router.route("Расскажи историю Рима") is None
+
+
+def test_only_shared_history_context_enables_optional_semantic_routing():
+    class SharedHistoryClassifier:
+        def __init__(self):
+            self.calls = []
+
+        def classify(self, message):
+            self.calls.append(message)
+            return ParsedCapabilityIntent(
+                intent=CapabilityIntent.QUERY_CONTINUITY,
+                confidence=0.91,
+                source="local_semantic",
+            )
+
+    classifier = SharedHistoryClassifier()
+    router = NaturalLanguageCapabilityRouter(classifier)
+    phrase = "Может, покажешь, что у нас сохранено в истории?"
+
+    parsed = router.route(phrase)
+
+    assert parsed is not None and parsed.intent is CapabilityIntent.QUERY_CONTINUITY
+    assert classifier.calls == [phrase]
+
+    class Exploding:
+        def classify(self, message):
+            raise AssertionError("general history must not enter capability classification")
+
+    assert NaturalLanguageCapabilityRouter(Exploding()).route("Расскажи историю Рима") is None
+
+
 def test_forget_wins_over_broad_today_query_and_keeps_reference_text():
     parsed = NaturalLanguageCapabilityRouter().route(
         "Забудь, что сегодня мы запустили первый MVP Дома"
@@ -163,6 +209,7 @@ def test_local_semantic_classifier_sees_only_current_utterance_and_fixed_allowli
     assert provider.last_request.private_context == {}
     assert len(provider.last_request.messages) == 2
     assert provider.last_request.messages[0].role is MessageRole.SYSTEM
+    assert "shared history" in provider.last_request.messages[0].content
     assert provider.last_request.messages[1].role is MessageRole.USER
     assert provider.last_request.messages[1].content == "Может, заведём задачу про врача?"
 

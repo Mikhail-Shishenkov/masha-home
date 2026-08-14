@@ -58,6 +58,21 @@ _WORD_NUMBERS = {
     "две": "2", "два": "2",
     "три": "3", "четыре": "4", "пять": "5",
 }
+_SHARED_HISTORY_QUERY = re.compile(
+    r"^(?:"
+    r"что\s+(?:"
+    r"есть\s+в\s+(?:нашей|общей)\s+истории|"
+    r"у\s+нас(?:\s+есть)?\s+в\s+истории|"
+    r"сохранено\s+в\s+нашей\s+истории"
+    r")|"
+    r"покажи\s+нашу\s+историю"
+    r")$"
+)
+_SHARED_HISTORY_SIGNAL = re.compile(
+    r"\b(?:наш\w*|общ\w*)\s+истор\w*\b|"
+    r"\bу\s+нас\b.{0,40}\bистор\w*\b|"
+    r"\bистор\w*\b.{0,40}\bу\s+нас\b"
+)
 
 
 def normalize_utterance(value: str) -> str:
@@ -173,6 +188,11 @@ class NaturalLanguageCapabilityRouter:
             )
 
         # Read routes.
+        if _SHARED_HISTORY_QUERY.match(text):
+            return ParsedCapabilityIntent(
+                intent=CapabilityIntent.QUERY_CONTINUITY,
+                confidence=0.99,
+            )
         if re.search(r"\b(?:к чему|что|какие)\b.*\b(?:вернут|продолжа|не закончил|нить|тем|наш(?:а|ей) истор)\w*\b", text):
             return ParsedCapabilityIntent(intent=CapabilityIntent.QUERY_CONTINUITY, confidence=0.97)
         if re.search(r"\b(?:какие|что|покажи)\b.*\b(?:дел|задач|план|запланир|обязательств)\w*\b", text):
@@ -198,10 +218,13 @@ class NaturalLanguageCapabilityRouter:
 
     @staticmethod
     def _has_capability_signal(text: str) -> bool:
-        return bool(re.search(
-            r"\b(?:помн|забуд|дел|задач|план|напомн|закон|выполн|купил|сделал|нить|тем|вернут)\w*\b",
-            text,
-        ))
+        return bool(
+            _SHARED_HISTORY_SIGNAL.search(text)
+            or re.search(
+                r"\b(?:помн|забуд|дел|задач|план|напомн|закон|выполн|купил|сделал|нить|тем|вернут)\w*\b",
+                text,
+            )
+        )
 
 
 class LocalSemanticIntentClassifier:
@@ -224,7 +247,8 @@ class LocalSemanticIntentClassifier:
                     "complete_commitment means mark an existing task done; query_commitments means ask about "
                     "existing tasks or plans; query_memory means ask for confirmed remembered facts; "
                     "forget_memory means remove a confirmed fact; open_continuity means explicitly preserve "
-                    "a discussion topic for later; query_continuity means ask which preserved topics remain. "
+                    "a discussion topic for later; query_continuity means ask which preserved topics remain "
+                    "or what is stored in our shared history. "
                     "Return JSON only: {\"intent\": string, \"confidence\": 0..1, "
                     "\"entity\": string|null, \"temporal_scope\": string|null}. "
                     "For create/complete/forget/open intents, entity is the concise object or action "
