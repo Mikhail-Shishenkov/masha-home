@@ -171,6 +171,45 @@ html[data-home-attention="active"] .conversation-surface.is-surface-concealed { 
 .commitment-item { display: flex; align-items: center; gap: 18px; justify-content: space-between; padding: 18px 2px 18px 16px; border-left: 2px solid rgba(211,169,111,.3); border-bottom: 1px solid rgba(232,207,174,.09); background: linear-gradient(90deg, rgba(127,85,48,.1), transparent 62%); }
 .commitment-item[data-status="overdue"] { border-left-color: rgba(222,118,82,.78); }
 .commitment-item[data-status="completed"], .commitment-item[data-status="cancelled"] { opacity: .56; }
+/* UI-02 — quiet commitment overflow */
+
+.commitment-item.is-collapsed {
+  display: none;
+}
+
+.commitments-reveal {
+  display: flex;
+  justify-content: center;
+  padding: 14px 0 4px;
+  list-style: none;
+}
+
+.commitments-reveal-action {
+  appearance: none;
+  padding: 7px 2px;
+
+  border: 0;
+  border-bottom: 1px solid rgba(226, 188, 126, .25);
+
+  color: rgba(239, 202, 147, .66);
+  background: transparent;
+
+  text-transform: uppercase;
+  letter-spacing: .09em;
+  font: 600 10px/1.2 system-ui, sans-serif;
+
+  cursor: pointer;
+
+  transition:
+    color 180ms ease,
+    border-color 180ms ease;
+}
+
+.commitments-reveal-action:hover,
+.commitments-reveal-action:focus-visible {
+  color: #f8dfb7;
+  border-bottom-color: rgba(248, 223, 183, .55);
+}
 .commitment-copy { min-width: 0; }
 .commitment-text { margin: 0 0 7px; color: rgba(250,240,228,.93); font: 400 clamp(16px, 1.2vw, 20px)/1.35 system-ui, sans-serif; overflow-wrap: anywhere; }
 .commitment-meta { margin: 0; color: rgba(225,198,159,.62); text-transform: uppercase; letter-spacing: .09em; font: 600 10px/1.4 system-ui, sans-serif; }
@@ -241,4 +280,176 @@ html[data-safety="autonomy_stopped"] .ambient { background: linear-gradient(90de
 @media (max-width: 1280px) { .conversation-surface { right: 4vw; width: min(39vw, 520px); }.home-attention, .operation-surface, .commitments-surface, .activity-surface, .proactive-surface, .continuity-surface, .reflections-surface, .workbench-surface { right: 4vw; width: 42vw; }.recent-list { grid-template-columns: 1fr; }.continuity-columns { grid-template-columns: 1fr; } }
 @media (max-width: 1000px) { .scene { object-position: 43% center; }.conversation-surface { right: 3vw; width: min(46vw, 500px); }.safety-overlay { padding: 55px; }.safety-copy { width: min(46vw, 480px); } }
 @media (max-width: 780px) { body { min-width: 640px; }.scene { object-position: 40% center; }.conversation-surface { right: 20px; bottom: 70px; width: min(58vw, 450px); min-width: 330px; max-height: 66vh; padding: 22px 24px 20px; }.transcript { max-height: 34vh; }.home-attention { right: 20px; bottom: 92px; width: min(58vw, 420px); min-width: 330px; }.operation-surface, .commitments-surface, .activity-surface, .proactive-surface, .continuity-surface, .reflections-surface, .workbench-surface { right: 20px; top: 72px; width: min(58vw, 450px); min-width: 350px; max-height: calc(100vh - 150px); padding: 25px 27px; }.safety-overlay { padding: 36px; }.safety-copy { width: 55vw; }.home-attention-trigger { left: 20px; }.safety-trigger { right: 20px; } }
+/* UI-01 — centered Home navigation */
+
+.home-nav {
+  position: absolute;
+  z-index: 8;
+  left: 50%;
+  bottom: clamp(18px, 2.2vh, 30px);
+
+  display: flex;
+  align-items: center;
+  gap: 4px;
+
+  padding: 4px;
+
+  border: 1px solid rgba(239, 215, 180, .12);
+  border-radius: 24px;
+
+  background: rgba(22, 17, 12, .84);
+  box-shadow: 0 12px 38px rgba(0, 0, 0, .20);
+
+  transform: translateX(-50%);
+}
+
+.home-nav [hidden] {
+  display: none;
+}
+
+.home-nav .commitments-trigger,
+.home-nav .continuity-trigger,
+.home-nav .workbench-trigger {
+  position: static;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+
+  min-width: 88px;
+  min-height: 34px;
+
+  margin: 0;
+  padding: 0 14px;
+
+  border: 0;
+  border-radius: 18px;
+
+  color: rgba(244, 226, 203, .58);
+  background: transparent;
+  box-shadow: none;
+
+  text-transform: uppercase;
+  letter-spacing: .10em;
+  font: 600 9px/1 system-ui, sans-serif;
+
+  cursor: pointer;
+  transform: none;
+
+  transition:
+    color 180ms ease,
+    background 180ms ease,
+    opacity 180ms ease;
+}
+
+.home-nav .commitments-trigger:hover:not(:disabled),
+.home-nav .continuity-trigger:hover:not(:disabled),
+.home-nav .workbench-trigger:hover:not(:disabled),
+.home-nav .commitments-trigger:focus-visible,
+.home-nav .continuity-trigger:focus-visible,
+.home-nav .workbench-trigger:focus-visible {
+  color: #fae6c7;
+  background: rgba(226, 188, 126, .08);
+}
+
+.home-nav .commitments-trigger[aria-expanded="true"],
+.home-nav .continuity-trigger[aria-expanded="true"],
+.home-nav .workbench-trigger[aria-expanded="true"] {
+  color: #f0c98f;
+  background: rgba(194, 139, 78, .13);
+}
+
+.home-nav .commitments-trigger:disabled,
+.home-nav .continuity-trigger:disabled,
+.home-nav .workbench-trigger:disabled {
+  opacity: .34;
+  cursor: not-allowed;
+}
+
+.home-nav .commitments-count {
+  display: grid;
+  place-items: center;
+
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+
+  border-radius: 9px;
+
+  color: rgba(251, 230, 196, .88);
+  background: rgba(194, 139, 78, .18);
+
+  font-size: 9px;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 780px) {
+  .home-nav {
+    gap: 2px;
+    padding: 3px;
+  }
+
+  .home-nav .commitments-trigger,
+  .home-nav .continuity-trigger,
+  .home-nav .workbench-trigger {
+    min-width: 74px;
+    padding: 0 10px;
+    letter-spacing: .08em;
+  }
+}
+/* UI-03 — conversation header actions */
+
+.surface-actions {
+  gap: clamp(22px, 1.35vw, 34px);
+}
+
+.recent-conversations-toggle,
+.new-conversation {
+  min-height: 28px;
+  padding: 5px 1px;
+
+  border-bottom-color: transparent;
+
+  transition:
+    color 180ms ease,
+    border-color 180ms ease,
+    opacity 180ms ease;
+}
+
+/* "Разговоры" — спокойное место, куда можно заглянуть */
+.recent-conversations-toggle {
+  color: rgba(233, 197, 142, .62);
+}
+
+/* "Новый разговор" — действие, поэтому немного теплее */
+.new-conversation {
+  color: rgba(239, 202, 147, .88);
+  border-bottom-color: rgba(226, 188, 126, .22);
+}
+
+.recent-conversations-toggle:hover:not(:disabled),
+.recent-conversations-toggle:focus-visible {
+  color: #f8dfb7;
+  border-bottom-color: rgba(248, 223, 183, .42);
+}
+
+.new-conversation:hover:not(:disabled),
+.new-conversation:focus-visible {
+  color: #fff0d5;
+  border-bottom-color: rgba(248, 223, 183, .68);
+}
+
+/* Когда полка разговоров действительно открыта */
+.recent-conversations-toggle[aria-expanded="true"] {
+  color: #f0c98f;
+  border-bottom-color: rgba(233, 197, 142, .55);
+}
+
+@media (max-width: 780px) {
+  .surface-actions {
+    gap: 18px;
+  }
+}
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

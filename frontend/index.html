@@ -20,14 +20,82 @@
     <button class="safety-trigger" id="safety-trigger" type="button" disabled>
       <span class="safety-mark" aria-hidden="true"></span><span>Стоп</span>
     </button>
-    <button class="commitments-trigger" id="commitments-trigger" type="button" aria-expanded="false" aria-controls="commitments-surface" disabled>
-      <span>Дела</span><span class="commitments-count" id="commitments-count" aria-label="Количество дел">0</span>
-    </button>
-    <button class="activity-trigger" id="activity-trigger" type="button" aria-expanded="false" aria-controls="activity-surface" disabled hidden>Работа</button>
-    <button class="proactive-trigger" id="proactive-trigger" type="button" aria-expanded="false" aria-controls="proactive-surface" disabled hidden>Рядом</button>
-    <button class="continuity-trigger" id="continuity-trigger" type="button" aria-expanded="false" aria-controls="continuity-surface" disabled hidden>Наша история</button>
-    <button class="reflections-trigger" id="reflections-trigger" type="button" aria-expanded="false" aria-controls="reflections-surface" disabled hidden>Мысли</button>
-    <button class="workbench-trigger" id="workbench-trigger" type="button" aria-expanded="false" aria-controls="workbench-surface" disabled>Уголок</button>
+    <nav class="home-nav" aria-label="Основные места Дома">
+  <button
+    class="commitments-trigger"
+    id="commitments-trigger"
+    type="button"
+    aria-expanded="false"
+    aria-controls="commitments-surface"
+    disabled
+  >
+    <span>Дела</span>
+    <span
+      class="commitments-count"
+      id="commitments-count"
+      aria-label="Количество дел"
+    >0</span>
+  </button>
+
+  <button
+    class="continuity-trigger"
+    id="continuity-trigger"
+    type="button"
+    aria-expanded="false"
+    aria-controls="continuity-surface"
+    disabled
+    hidden
+  >
+    История
+  </button>
+
+  <button
+    class="workbench-trigger"
+    id="workbench-trigger"
+    type="button"
+    aria-expanded="false"
+    aria-controls="workbench-surface"
+    disabled
+  >
+    Уголок
+  </button>
+</nav>
+
+<button
+  class="activity-trigger"
+  id="activity-trigger"
+  type="button"
+  aria-expanded="false"
+  aria-controls="activity-surface"
+  disabled
+  hidden
+>
+  Работа
+</button>
+
+<button
+  class="proactive-trigger"
+  id="proactive-trigger"
+  type="button"
+  aria-expanded="false"
+  aria-controls="proactive-surface"
+  disabled
+  hidden
+>
+  Рядом
+</button>
+
+<button
+  class="reflections-trigger"
+  id="reflections-trigger"
+  type="button"
+  aria-expanded="false"
+  aria-controls="reflections-surface"
+  disabled
+  hidden
+>
+  Мысли
+</button>
     <section class="conversation-surface" id="conversation-surface" aria-label="Разговор с Машей">
       <header class="surface-header">
         <p class="eyebrow">между нами</p>

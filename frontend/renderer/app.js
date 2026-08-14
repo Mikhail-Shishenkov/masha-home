@@ -696,6 +696,8 @@ function formatDueAt(value) {
   }).format(new Date(value));
 }
 
+const COMMITMENTS_VISIBLE_INITIAL = 4;
+
 const commitmentStatusLabels = {
   open: "открыто",
   upcoming: "впереди",
@@ -706,47 +708,108 @@ const commitmentStatusLabels = {
 
 function renderCommitments(view, { append = false } = {}) {
   const items = view?.items || [];
-  commitmentsCount.textContent = String(view?.actionable_total ?? view?.total ?? items.length);
+  commitmentsCount.textContent = String(
+    view?.actionable_total ?? view?.total ?? items.length
+  );
+
   if (!append) commitmentsList.replaceChildren();
+
   if (!items.length && !append) {
     const empty = document.createElement("li");
     empty.className = "commitment-empty";
-    empty.textContent = "Сейчас здесь спокойно — открытых обязательств нет.";
+    empty.textContent = "Сейчас здесь спокойно — открытых дел нет.";
     commitmentsList.append(empty);
     loadMoreCommitments.hidden = true;
     return;
   }
+
   for (const item of items) {
     const row = document.createElement("li");
     row.className = "commitment-item";
     row.dataset.status = item.status;
+
     const copy = document.createElement("div");
     copy.className = "commitment-copy";
+
     const text = document.createElement("p");
     text.className = "commitment-text";
     text.textContent = item.text;
+
     const meta = document.createElement("p");
     meta.className = "commitment-meta";
-    const due = item.due_at ? ` · до ${formatDueAt(item.due_at)}` : "";
-    meta.textContent = `${commitmentStatusLabels[item.status] || item.status}${due}`;
+
+    const due = item.due_at
+      ? ` · до ${formatDueAt(item.due_at)}`
+      : "";
+
+    meta.textContent =
+      `${commitmentStatusLabels[item.status] || item.status}${due}`;
+
     copy.append(text, meta);
     row.append(copy);
+
     if (item.can_propose_completion) {
       const complete = document.createElement("button");
       complete.type = "button";
       complete.className = "commitment-complete";
       complete.textContent = "Готово";
+
       complete.addEventListener("click", () => {
         if (!ready || inFlight || pendingConfirmation) return;
         complete.disabled = true;
         bridge.proposeCommitmentCompletion(item.commitment_id);
       });
+
       row.append(complete);
     }
+
     commitmentsList.append(row);
   }
+
+  const rows = [...commitmentsList.querySelectorAll(".commitment-item")];
+
+  let reveal = commitmentsList.querySelector(".commitments-reveal");
+
+  if (reveal) reveal.remove();
+
+  if (rows.length > COMMITMENTS_VISIBLE_INITIAL) {
+    const hiddenRows = rows.slice(COMMITMENTS_VISIBLE_INITIAL);
+
+    for (const row of hiddenRows) {
+      row.classList.add("is-collapsed");
+    }
+
+    reveal = document.createElement("li");
+    reveal.className = "commitments-reveal";
+
+    const revealButton = document.createElement("button");
+    revealButton.type = "button";
+    revealButton.className = "commitments-reveal-action";
+    revealButton.textContent = `Ещё ${hiddenRows.length} ${
+      hiddenRows.length === 1 ? "дело" :
+      hiddenRows.length >= 2 && hiddenRows.length <= 4 ? "дела" :
+      "дел"
+    }`;
+
+    revealButton.addEventListener("click", () => {
+      const collapsed = [
+        ...commitmentsList.querySelectorAll(".commitment-item.is-collapsed")
+      ];
+
+      for (const row of collapsed) {
+        row.classList.remove("is-collapsed");
+      }
+
+      reveal.remove();
+    });
+
+    reveal.append(revealButton);
+    commitmentsList.append(reveal);
+  }
+
   loadMoreCommitments.hidden = !view?.has_more;
-  loadMoreCommitments.dataset.nextOffset = String(view?.next_offset ?? "");
+  loadMoreCommitments.dataset.nextOffset =
+    String(view?.next_offset ?? "");
 }
 
 function hideOperationSurface() {
