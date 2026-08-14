@@ -4,6 +4,10 @@
 а не целевая схема. Он не означает, что незакоммиченные изменения уже образуют
 релиз или что любая описанная возможность подключена к живому диалогу.
 
+> **Historical architecture snapshot:** этот документ сохраняет состояние и
+> контекст ранних этапов. Текущий roadmap и архитектурный канон находятся в
+> [MASHA_HOME_CANON.md](MASHA_HOME_CANON.md).
+
 > **Superseded runtime note (ID-02, 2026-08-11):** the historical audit below
 > describes the pre-consolidation state. The section `CURRENT — ID-02 IDENTITY
 > RUNTIME CONSOLIDATION` is authoritative for the active identity runtime.
