@@ -841,11 +841,34 @@ boundary to advance the existing background-policy cycle and project newly
 delivered interactions. Stable event IDs and interaction state prevent repeat
 delivery; the renderer receives no runtime or persistence authority.
 
+### DEC-097. Project canon supersedes the early implementation roadmap
+
+Статус: **Принято**
+
+`docs/MASHA_HOME_CANON.md` is the current architecture and roadmap source for
+Masha Home. `IMPLEMENTATION_PLAN.md`, `ARCHITECTURE_SNAPSHOT.md` and
+`PROJECT_CONTEXT.md` remain historical records rather than the active planning
+authority. `MEMORY_SPEC.md` remains the normative Memory v0.4 contract and must
+not be turned into a roadmap.
+
+The active product model is a local-first single-user Home where Identity,
+Memory, History, Time, permissions and visual canon belong to the application.
+LLMs are replaceable cognitive engines. Human Information Slice A is the
+implemented v0.3.1 foundation; Slice B is the next UX-facing step before the
+`v0.3.1` release tag.
+
 ## 6. Открытые вопросы ближайших этапов
 
-- Формат identity manifest.
-- Формат хранения визуальных assets и их версий.
-- Состав регрессионного набора личности.
-- Политика шифрования локальной БД и резервных копий.
-- Конкретная технология локального UI.
-- Пределы контекста и критерии выбора локальной модели.
+- Точный Human Home UX для v0.3.1 Slice B: passive memory review, possible
+  updates, unified search, `Наша история`, typed UI actions and limited
+  frontend/bridge split.
+- Финальная форма v0.3.2 Presence foundation: canonical scenes, scene/state
+  matrix, time-of-day ambience and responsive Home without LLM mood inference.
+- Home-wide backup/recovery beyond memory DB, including conversation history,
+  configuration, skills state and future connector state.
+- Privacy model for future hard delete, local encryption and export/import of
+  the whole Home.
+- Read-only connector order and permission policy before v0.4/v0.5 external
+  expansion.
+- Criteria for introducing semantic knowledge/RAG only if lexical retrieval is
+  demonstrably insufficient.
