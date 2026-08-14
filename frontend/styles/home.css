@@ -452,4 +452,55 @@ html[data-safety="autonomy_stopped"] .ambient { background: linear-gradient(90de
     gap: 18px;
   }
 }
+/* UI-04 — quiet new conversation */
+
+/*
+ * Empty conversation is a meeting place, not an empty transcript.
+ * Keep the room visible until there is actually something to display.
+ */
+.conversation-surface {
+  transition:
+    opacity 300ms ease,
+    background 460ms ease,
+    transform 360ms var(--ease-home),
+    height 360ms var(--ease-home);
+}
+
+/*
+ * A fresh conversation stays compact.
+ * Opening the conversation shelf deliberately restores the full surface.
+ */
+.conversation-surface:not(.has-history):not(.is-shelf-open) {
+  height: clamp(310px, 31vh, 390px);
+  min-height: 0;
+}
+
+/*
+ * An empty transcript must not reserve the large flexible conversation area.
+ */
+.conversation-surface:not(.has-history):not(.is-shelf-open) .transcript {
+  flex: 0 0 0;
+  width: 100%;
+  height: 0;
+  min-height: 0;
+  max-height: 0;
+
+  margin: 0;
+  padding: 0;
+
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Give the greeting room to breathe without creating a second empty zone. */
+.conversation-surface:not(.has-history):not(.is-shelf-open) .surface-status {
+  min-height: 0;
+  margin: -7px 0 22px;
+}
+
+/* Composer remains the natural final action in the compact surface. */
+.conversation-surface:not(.has-history):not(.is-shelf-open) .composer {
+  margin-top: auto;
+}
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

@@ -1245,7 +1245,6 @@ function handleBridgeEvent(encoded) {
     applySnapshot(payload.snapshot);
     renderConversation(null);
     clearLocalFailure();
-    surfaceStatus.textContent = "Новый разговор. Прежняя история сохранена.";
     activeConversationId = null;
     bridge.loadRecentConversations();
     setComposerState({ enabled: ready });
@@ -1295,14 +1294,15 @@ function handleBridgeEvent(encoded) {
     provisionalUser = renderMessage({ role: "user", content: payload.content }, { provisional: true });
     surface.classList.add("has-history");
     title.textContent = "Слушаю.";
-    surfaceStatus.textContent = "Слушаю…";
+    surfaceStatus.textContent = "";
     applySnapshot(payload.snapshot);
     scrollToLatestIfAppropriate(true);
     return;
   }
   if (payload.kind === "turn_thinking") {
     applySnapshot(payload.snapshot);
-    surfaceStatus.textContent = "Думаю…";
+    title.textContent = "Я рядом.";
+    surfaceStatus.textContent = "";
     return;
   }
   if (payload.kind === "turn_result") {
@@ -1314,7 +1314,7 @@ function handleBridgeEvent(encoded) {
     }
     if (result?.status === "completed" && result.assistant_message) {
       renderMessage(result.assistant_message);
-      title.textContent = "Я здесь.";
+      title.textContent = "Я рядом.";
       surfaceStatus.textContent = "";
     } else {
       title.textContent = "Я рядом.";
