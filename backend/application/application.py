@@ -20,6 +20,9 @@ from .contracts import (
     ModelProfileView,
     ModelSwitchResult,
     PendingConfirmationView,
+    PassiveMemoryCandidateResolutionView,
+    PassiveMemoryCandidateView,
+    MemoryProvenanceView,
     ProactiveInteractionListView,
     ProactiveInteractionView,
     ReflectionResolutionView,
@@ -54,6 +57,7 @@ class MashaApplication:
         continuity,
         reflections,
         workbench,
+        memory_candidates,
     ):
         self._conversation = conversation
         self._status = status
@@ -66,6 +70,7 @@ class MashaApplication:
         self._continuity = continuity
         self._reflections = reflections
         self._workbench = workbench
+        self._memory_candidates = memory_candidates
 
     def send_message(self, content: str, *, project_id: str, conversation_id: str | None = None) -> ConversationTurnResult:
         return self._conversation.send_message(content, project_id=project_id, conversation_id=conversation_id)
@@ -129,6 +134,31 @@ class MashaApplication:
 
     def resolve_honest_help(self, candidate_id: str, decision: str) -> HonestHelpResolutionView:
         return self._reflections.resolve_help(candidate_id, decision)
+
+    def list_pending_memory_candidates(
+        self,
+    ) -> tuple[PassiveMemoryCandidateView, ...]:
+        return self._memory_candidates.list_pending_memory_candidates()
+
+    def approve_memory_candidate(
+        self,
+        candidate_id: str,
+        *,
+        supersede_existing: bool = False,
+    ) -> PassiveMemoryCandidateResolutionView:
+        return self._memory_candidates.approve_memory_candidate(
+            candidate_id,
+            supersede_existing=supersede_existing,
+        )
+
+    def reject_memory_candidate(
+        self,
+        candidate_id: str,
+    ) -> PassiveMemoryCandidateResolutionView:
+        return self._memory_candidates.reject_memory_candidate(candidate_id)
+
+    def memory_provenance(self, record_id: str) -> MemoryProvenanceView:
+        return self._memory_candidates.memory_provenance(record_id)
 
     def workbench(self) -> WorkbenchView:
         return self._workbench.view()

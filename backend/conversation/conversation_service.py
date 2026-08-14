@@ -9,6 +9,7 @@ from backend.llm.model_provider import ModelProviderUnavailableError, ModelTimeo
 from backend.llm.model_router import ModelRouter
 from backend.llm.model_profiles import ModelProfileStore
 from backend.memory.memory_retriever import ContextLens, MemoryRetrievalRequest, MemoryRetriever
+from backend.memory.passive_detection import MemoryCandidateDetectionRequest
 from backend.memory.working_memory import WorkingMemory
 from backend.temporal.temporal_engine import TemporalEngine
 from backend.temporal.temporal_intent import temporal_readout
@@ -115,6 +116,7 @@ class ConversationService:
         shared_continuity=None,
         reflection_intent_handler: ReflectionIntentHandler | None = None,
         reflection_service=None,
+        passive_memory_service=None,
     ):
         self.identity_kernel = identity_kernel
         self.memory_retriever = memory_retriever
@@ -131,6 +133,7 @@ class ConversationService:
         self.shared_continuity = shared_continuity
         self.reflection_intent_handler = reflection_intent_handler
         self.reflection_service = reflection_service
+        self.passive_memory_service = passive_memory_service
 
     def send(
         self,
@@ -203,6 +206,13 @@ class ConversationService:
                 )
                 return conversation.id, intent.response
 
+        # Arbitrary model prose may contain numbered lists, but it never owns
+        # selection truth for application entities. Invalidate an older list
+        # before this unhandled turn so a later ordinal cannot be mistaken for
+        # a reference to model-authored numbering.
+        if self.memory_intent_handler is not None:
+            self.memory_intent_handler.discard_presented_entity_set(conversation.id)
+
         context_lens = select_context_lens(user_message)
         recent_user_messages = tuple(
             message.content
@@ -250,6 +260,16 @@ class ConversationService:
         )
         rendered = render_model_response(grounded_response, application_receipts=())
         self.history.append(conversation.id, ConversationRole.ASSISTANT, rendered)
+        if allow_capability_routing and self.passive_memory_service is not None:
+            self.passive_memory_service.observe_safely(
+                MemoryCandidateDetectionRequest(
+                    conversation_id=conversation.id,
+                    project_id=project_id,
+                    current_user_message=user_history_message,
+                    recent_messages=self.history.messages(conversation.id, limit=8),
+                    temporal_context=temporal_context,
+                )
+            )
         return conversation.id, rendered
 
     def resolve_memory_proposal(

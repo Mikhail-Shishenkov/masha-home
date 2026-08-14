@@ -158,7 +158,7 @@ class ConversationApplicationService:
     def _confirmation_copy(self, proposal):
         payload = proposal.record_payload
         if proposal.operation == "forget":
-            return "memory_forget", "Убрать запись из активной памяти?", ConversationApplicationService._proposal_subject(proposal)
+            return "memory_forget", "Убрать воспоминание?", ConversationApplicationService._proposal_subject(proposal)
         if proposal.record_type == "commitment":
             completion = proposal.operation != "create"
             return (
@@ -189,7 +189,7 @@ class ConversationApplicationService:
             )
             subject = (resolved or (rows[-1] if rows else {})).get("summary", "Общая нить")
             if resolved is not None:
-                return "continuity_update", "Закрыть нашу общую нить?", str(subject)
+                return "continuity_update", "Убрать открытую тему?", str(subject)
             return "continuity_update", "Обновить нашу общую нить?", str(subject)
         if proposal.operation in {"edit", "supersede"}:
             return "memory_update", "Обновить подтверждённую память?", ConversationApplicationService._proposal_subject(proposal)

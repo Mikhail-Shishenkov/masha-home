@@ -212,6 +212,46 @@ class ReflectionResolutionView(UiContract):
     message: str
 
 
+class PassiveMemoryCandidateView(UiContract):
+    candidate_id: str = Field(min_length=1)
+    candidate_type: Literal["fact", "decision", "commitment", "relationship_memory"]
+    summary: str = Field(min_length=1, max_length=500)
+    reason: str = Field(min_length=1, max_length=240)
+    confidence: float = Field(ge=0.0, le=1.0)
+    detected_at: datetime
+    expires_at: datetime
+    relation: Literal["new", "possible_update"]
+    related_memory_id: str | None
+    requires_explicit_supersession: bool
+    allowed_actions: tuple[Literal["approve", "reject"], ...] = (
+        "approve",
+        "reject",
+    )
+
+
+class PassiveMemoryCandidateResolutionView(UiContract):
+    candidate_id: str = Field(min_length=1)
+    status: Literal["approved", "rejected"]
+    result_memory_id: str | None
+
+
+class MemoryProvenanceView(UiContract):
+    record_id: str = Field(min_length=1)
+    source: Literal["conversation"]
+    candidate_id: str = Field(min_length=1)
+    conversation_id: str = Field(min_length=1)
+    project_id: str = Field(min_length=1)
+    evidence_message_ids: tuple[str, ...]
+    detector_version: str = Field(min_length=1)
+    reason: str = Field(min_length=1, max_length=240)
+    confidence: float = Field(ge=0.0, le=1.0)
+    detected_at: datetime
+    reviewed_by: Literal["misha"]
+    reviewed_at: datetime
+    relation: Literal["new", "possible_update"]
+    related_memory_id: str | None
+
+
 class HonestHelpResolutionView(UiContract):
     candidate_id: str
     status: Literal["delivered", "dismissed", "model_unavailable"]

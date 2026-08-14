@@ -14,6 +14,9 @@ class MemoryStore(BaseStore):
         *,
         action: str = "replace_document",
         audit_payload: dict | None = None,
+        audit_entity_type: str = "memory_document",
+        audit_entity_id: str | None = None,
+        additional_audit_events: tuple[dict, ...] = (),
     ) -> None:
         """Persist only a fully validated document to the active JSON store."""
         validated = MemoryDocument.model_validate(document)

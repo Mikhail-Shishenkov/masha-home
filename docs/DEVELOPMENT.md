@@ -107,10 +107,12 @@ python -c "from backend.memory.sqlite_repository import MemorySqliteRepository a
 > same SQLite repository as conversation retrieval. Its inspection, trace and
 > explicit mutation proposals do not create an alternative memory store.
 
-> **MEM-11 status:** time is deterministic and application-owned: UTC is
-> canonical, Moscow is offline UTC+03:00, and due dates are stored in UTC.
-> Overdue is computed at runtime. A Commitment is created or completed only by
-> explicit proposal and confirmation; ordinary conversation never changes it.
+> **MEM-11/v0.2.2 status:** time is deterministic and application-owned: UTC
+> is canonical, the configured Home zone defaults to `Europe/Saratov` with an
+> explicit portable offset fallback, and due dates are stored in UTC. Overdue
+> is computed at runtime. Explicit Commitment commands still use proposal and
+> confirmation; v0.3 passive Commitment candidates use the same Home clock but
+> remain pending until a separate typed review.
 
 > **MEM-10.1 status (2026-08-11):** user-facing memory CLI output is
 > human-readable by default; JSON identifiers, audit payloads and retrieval
@@ -133,6 +135,15 @@ use `think=false`. The command verifies local Ollama and the target model
 before changing the file. It never downloads models and never falls back.
 Profiles do not change Masha's identity, SQLite memory, conversation history,
 or temporal state.
+
+## Passive Memory v0.3
+
+Ordinary eligible USER turns may create a pending candidate after the model
+response, but never confirmed memory. Candidate review, source lineage,
+sensitivity, duplicate/conflict handling, seven-day expiration and performance
+boundaries are documented in `docs/PASSIVE_MEMORY_V0.3.md`. The public
+application facade exposes typed list/approve/reject/provenance methods; the
+Home candidate surface remains deferred to v0.3.1.
 
 ## MEM-12.1 temporal foundation
 
