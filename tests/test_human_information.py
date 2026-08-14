@@ -132,6 +132,40 @@ def test_search_scopes_defaults_no_match_and_time_filters(human_service):
     assert RESOLVED_THREAD_ID not in _ids(last_7)  # no trustworthy own timestamp
 
 
+def test_search_humanizes_internal_fact_keys_without_changing_searchable_text(human_repository, human_service):
+    document = human_repository.read_document()
+    template = document.facts[0]
+    internal = template.model_copy(update={
+        "id": "10101010-1010-4010-8010-101010101010",
+        "subject": "misha",
+        "key": "learning_python",
+        "value": "Изучает Python внутри проекта Masha Home",
+    })
+    ordinary = template.model_copy(update={
+        "id": "20202020-2020-4020-8020-202020202020",
+        "subject": "Миша",
+        "key": "любимый напиток",
+        "value": "чай без сахара",
+    })
+    human_repository.replace_document(
+        document.model_copy(update={"facts": [*document.facts, internal, ordinary]}),
+        action="test_search_human_labels",
+    )
+
+    by_internal_key = human_service.search_information(HumanSearchRequest(query="learning_python"))
+    by_value = human_service.search_information(HumanSearchRequest(query="Python"))
+    ordinary_result = human_service.search_information(HumanSearchRequest(query="чай без сахара"))
+    internal_label = next(match.item.label for match in by_value.matches if match.item.ref.entity_id == internal.id)
+    ordinary_label = next(match.item.label for match in ordinary_result.matches if match.item.ref.entity_id == ordinary.id)
+
+    assert internal.id in _ids(by_internal_key)  # relevance still sees internal searchable text
+    assert internal_label == "Память · актуально — Изучает Python внутри проекта Masha Home"
+    assert "misha" not in internal_label.casefold()
+    assert "learning_python" not in internal_label
+    assert internal.id not in internal_label
+    assert ordinary_label == "Миша: любимый напиток — чай без сахара"
+
+
 def test_current_retrospective_task_thread_and_forgotten_recall(human_service):
     current = human_service.recall_information(HumanRecallRequest(
         query="Нашёл ещё один M2 Pro за 115 тысяч.", mode=RecallMode.CURRENT,
