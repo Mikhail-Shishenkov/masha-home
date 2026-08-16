@@ -136,7 +136,12 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
         status=status,
         visuals=visuals,
         models=models,
-        home_snapshot=HomeSnapshotService(status=status, models=models, visuals=visuals),
+        home_snapshot=HomeSnapshotService(
+            status=status,
+            models=models,
+            visuals=visuals,
+            clock=core.conversation.temporal_engine.now_local,
+        ),
         commitments=CommitmentApplicationService(conversation=core.conversation),
         activities=ActivityApplicationService(
             store=AgentRunStore(runtime / "agent-runs.json")

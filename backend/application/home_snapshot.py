@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 
 from backend.presentation import (
@@ -60,17 +61,19 @@ class HomeSnapshotService:
     """Build one deterministic UI projection from existing read-only services."""
 
     def __init__(
-        self,
-        *,
-        status: MashaStatusService,
-        models: ModelSettingsService,
-        visuals: VisualIdentityResolver,
-        composition: CompositionResolver | None = None,
+            self,
+            *,
+            status: MashaStatusService,
+            models: ModelSettingsService,
+            visuals: VisualIdentityResolver,
+            composition: CompositionResolver | None = None,
+            clock: Callable[[], datetime] | None = None,
     ):
         self._status = status
         self._models = models
         self._visuals = visuals
         self._composition = composition or CompositionResolver()
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
 
     def snapshot(
         self,
@@ -78,7 +81,7 @@ class HomeSnapshotService:
         viewport: ViewportCharacteristics | None = None,
     ) -> HomeSnapshotView:
         """Read local state without mutating persistence or invoking a model."""
-        observed_at = datetime.now(timezone.utc)
+        observed_at = self._clock()
         status = self._status.snapshot()
         active_model = self._models.current()
         visual_assets = self._visuals.canonical_assets()
@@ -103,33 +106,50 @@ class HomeSnapshotService:
 
     def open_session(self) -> "HomePresentationSession":
         """Create a local UI-only presentation session from the current snapshot."""
-        return HomePresentationSession(self.snapshot(), composition=self._composition)
+        return HomePresentationSession(
+            self.snapshot(),
+            composition=self._composition,
+            clock=self._clock,
+        )
 
 
 class HomePresentationSession:
     """Deterministic UI session; it owns no domain data and performs no mutation."""
 
-    def __init__(self, snapshot: HomeSnapshotView, *, composition: CompositionResolver):
+    def __init__(
+            self,
+            snapshot: HomeSnapshotView,
+            *,
+            composition: CompositionResolver,
+            clock: Callable[[], datetime] | None = None,
+    ):
         self._status = snapshot.status
         self._active_model = snapshot.active_model
         self._visual_assets = snapshot.visual_assets
         self._composition = composition
+        self._clock = clock or (lambda: self._now())
         self._runtime = PresentationRuntime(snapshot.presentation)
 
+    def _now(self) -> datetime:
+        now = self._clock()
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("presentation clock must return timezone-aware datetime")
+        return now
+
     def opened(self) -> HomeSnapshotView:
-        return self._dispatch(UserOpenedApplication(occurred_at=datetime.now(timezone.utc)))
+        return self._dispatch(UserOpenedApplication(occurred_at=self._now()))
 
     def user_sent(self) -> HomeSnapshotView:
-        return self._dispatch(UserSentMessage(occurred_at=datetime.now(timezone.utc)))
+        return self._dispatch(UserSentMessage(occurred_at=self._now()))
 
     def assistant_thinking(self) -> HomeSnapshotView:
-        return self._dispatch(AssistantStartedThinking(occurred_at=datetime.now(timezone.utc)))
+        return self._dispatch(AssistantStartedThinking(occurred_at=self._now()))
 
     def assistant_responded(self) -> HomeSnapshotView:
-        return self._dispatch(AssistantResponded(occurred_at=datetime.now(timezone.utc)))
+        return self._dispatch(AssistantResponded(occurred_at=self._now()))
 
     def confirmation_requested(self, *, title: str, summary: str) -> HomeSnapshotView:
-        now = datetime.now(timezone.utc)
+        now = self._now()
         self._dispatch(
             SurfaceCreated(
                 occurred_at=now,
@@ -150,7 +170,7 @@ class HomePresentationSession:
         )
 
     def commitments_opened(self, *, summary: str) -> HomeSnapshotView:
-        now = datetime.now(timezone.utc)
+        now = self._now()
         self._dispatch(
             SurfaceCreated(
                 occurred_at=now,
@@ -168,7 +188,7 @@ class HomePresentationSession:
         return self._dispatch(SurfaceFocused(occurred_at=now, surface_id="home.commitments"))
 
     def activity_opened(self, *, run_id: str, title: str, status: str) -> HomeSnapshotView:
-        now = datetime.now(timezone.utc)
+        now = self._now()
         activity_id = f"agent.{run_id}"
         surface_id = f"agent.{run_id}"
         self._dispatch(
@@ -216,7 +236,7 @@ class HomePresentationSession:
         )
 
     def proactive_opened(self, *, event_id: str, text: str) -> HomeSnapshotView:
-        now = datetime.now(timezone.utc)
+        now = self._now()
         self._dispatch(ProactiveDelivered(occurred_at=now, event_id=event_id, text=text))
         return self._dispatch(
             SurfaceFocused(occurred_at=now, surface_id=f"proactive:{event_id}")
@@ -224,9 +244,9 @@ class HomePresentationSession:
 
     def proactive_resolved(self, *, event_id: str, decision: str) -> HomeSnapshotView:
         event = (
-            ProactiveAcknowledged(occurred_at=datetime.now(timezone.utc), event_id=event_id)
+            ProactiveAcknowledged(occurred_at=self._now(), event_id=event_id)
             if decision == "acknowledge"
-            else ProactiveDismissed(occurred_at=datetime.now(timezone.utc), event_id=event_id)
+            else ProactiveDismissed(occurred_at=self._now(), event_id=event_id)
         )
         return self._dispatch(event)
 
@@ -249,7 +269,7 @@ class HomePresentationSession:
     def reflection_action_started(self, *, title: str) -> HomeSnapshotView:
         return self._dispatch(
             ActivityStarted(
-                occurred_at=datetime.now(timezone.utc),
+                occurred_at=self._now(),
                 activity_id="activity.reflection",
                 surface_id="activity.reflection",
                 title=title,
@@ -260,7 +280,7 @@ class HomePresentationSession:
     def reflection_action_resolved(self, *, summary: str) -> HomeSnapshotView:
         return self._dispatch(
             ActivityCompleted(
-                occurred_at=datetime.now(timezone.utc),
+                occurred_at=self._now(),
                 activity_id="activity.reflection",
                 summary=summary,
             )
@@ -269,7 +289,7 @@ class HomePresentationSession:
     def reflection_action_failed(self, *, summary: str) -> HomeSnapshotView:
         return self._dispatch(
             ActivityFailed(
-                occurred_at=datetime.now(timezone.utc),
+                occurred_at=self._now(),
                 activity_id="activity.reflection",
                 summary=summary,
                 reason_code="reflection_action_failed",
@@ -277,7 +297,7 @@ class HomePresentationSession:
         )
 
     def workbench_opened(self, *, summary: str, decision: bool) -> HomeSnapshotView:
-        now = datetime.now(timezone.utc)
+        now = self._now()
         self._dispatch(
             SurfaceCreated(
                 occurred_at=now,
@@ -300,7 +320,7 @@ class HomePresentationSession:
         return self._dispatch(SurfaceFocused(occurred_at=now, surface_id="home.workbench"))
 
     def model_switch_started(self) -> HomeSnapshotView:
-        return self._dispatch(ModelSwitchStarted(occurred_at=datetime.now(timezone.utc)))
+        return self._dispatch(ModelSwitchStarted(occurred_at=self._now()))
 
     def model_changed(
         self,
@@ -312,14 +332,14 @@ class HomePresentationSession:
         self._status = status
         return self._dispatch(
             ModelChanged(
-                occurred_at=datetime.now(timezone.utc),
+                occurred_at=self._now(),
                 profile_id=active_model.profile_id,
                 display_name=active_model.display_name,
             )
         )
 
     def confirmation_resolving(self, *, title: str) -> HomeSnapshotView:
-        now = datetime.now(timezone.utc)
+        now = self._now()
         self._dispatch(
             SurfaceCompleted(occurred_at=now, surface_id="confirmation.commitment")
         )
@@ -341,7 +361,7 @@ class HomePresentationSession:
         summary: str,
         decision: bool,
     ) -> HomeSnapshotView:
-        now = datetime.now(timezone.utc)
+        now = self._now()
         self._dispatch(
             SurfaceCreated(
                 occurred_at=now,
@@ -366,7 +386,7 @@ class HomePresentationSession:
     def confirmation_resolved(self, *, summary: str) -> HomeSnapshotView:
         return self._dispatch(
             ActivityCompleted(
-                occurred_at=datetime.now(timezone.utc),
+                occurred_at=self._now(),
                 activity_id="activity.confirmation",
                 summary=summary,
             )
@@ -375,7 +395,7 @@ class HomePresentationSession:
     def confirmation_failed(self, *, summary: str) -> HomeSnapshotView:
         return self._dispatch(
             ActivityFailed(
-                occurred_at=datetime.now(timezone.utc),
+                occurred_at=self._now(),
                 activity_id="activity.confirmation",
                 summary=summary,
                 reason_code="confirmation_failed",
@@ -385,7 +405,7 @@ class HomePresentationSession:
     def model_unavailable(self, *, profile_id: str, display_name: str) -> HomeSnapshotView:
         return self._dispatch(
             ModelUnavailable(
-                occurred_at=datetime.now(timezone.utc),
+                occurred_at=self._now(),
                 profile_id=profile_id,
                 display_name=display_name,
             )
@@ -400,7 +420,7 @@ class HomePresentationSession:
         )
         return self._dispatch(
             EmergencyStopEngaged(
-                occurred_at=datetime.now(timezone.utc),
+                occurred_at=self._now(),
                 reason=reason,
             )
         )
@@ -412,7 +432,7 @@ class HomePresentationSession:
                 "safety_label": "Аварийная остановка выключена",
             }
         )
-        return self._dispatch(AutonomyResumed(occurred_at=datetime.now(timezone.utc)))
+        return self._dispatch(AutonomyResumed(occurred_at=self._now()))
 
     @property
     def active_model_display_name(self) -> str:
