@@ -21,8 +21,9 @@
     listening: scene("day", "listening", "assets/presence/day/listening.png", "Маша внимательно слушает в светлой гостиной"),
     thinking: scene("day", "thinking", "assets/presence/day/thinking.png", "Маша задумалась в светлой гостиной"),
     activity: scene("day", "activity", "assets/presence/day/activity.png", "Маша занята делом дома при дневном свете"),
+    speakingOpen: scene("day", "speaking_open", "assets/presence/day/speaking-open.png", "Маша тепло и открыто отвечает в дневной гостиной"),
     quietBeside: scene("day", "quiet_beside", "assets/presence/day/listening.png", "Маша тихо рядом в светлой гостиной"),
-    firmDisagreement: scene("day", "firm_disagreement", "assets/presence/day/listening.png", "Маша спокойно и твёрдо не согласна"),
+    firmDisagreement: scene("day", "firm_disagreement", "assets/presence/day/boundary.png", "Маша спокойно и твёрдо не согласна"),
   });
 
   const EVENING_SCENES = Object.freeze({
@@ -31,10 +32,10 @@
     listening: scene("evening", "listening", "assets/presence/evening/listening.png", "Маша внимательно слушает в вечерней гостиной"),
     thinking: scene("evening", "thinking", "assets/presence/evening/thinking.png", "Маша задумалась в вечерней гостиной"),
     activity: scene("evening", "activity", "assets/presence/evening/activity.png", "Маша занята делом в вечернем доме"),
-    speakingOpen: scene("evening", "speaking_open", "assets/presence/context/speaking-open.png", "Маша тепло отвечает и открыто обращается к тебе"),
-    listeningWithMug: scene("evening", "listening_with_mug", "assets/presence/context/listening-with-mug.png", "Маша внимательно слушает с кружкой в руках"),
-    thoughtfulAway: scene("evening", "thoughtful_away", "assets/presence/context/thoughtful-away.png", "Маша ненадолго отвела взгляд, обдумывая ответ"),
-    focusedWork: scene("evening", "focused_work", "assets/presence/context/focused-work.png", "Маша сосредоточенно занята делом"),
+    speakingOpen: scene("evening", "speaking_open", "assets/presence/evening/speaking-open.png", "Маша тепло отвечает и открыто обращается к тебе"),
+    listeningWithMug: scene("evening", "listening_with_mug", "assets/presence/evening/listeningWithMug.png", "Маша внимательно слушает с кружкой в руках"),
+    thoughtfulAway: scene("evening", "thoughtful_away", "assets/presence/evening/thoughtful-away.png", "Маша ненадолго отвела взгляд, обдумывая ответ"),
+    focusedWork: scene("evening", "focused_work", "assets/presence/evening/focused-work.png", "Маша сосредоточенно занята делом"),
     quietBeside: scene("evening", "quiet_beside", "assets/presence/evening/quiet-beside.png", "Маша тихо рядом в вечерней гостиной"),
     firmDisagreement: scene("evening", "firm_disagreement", "assets/presence/evening/boundary.png", "Маша спокойно и твёрдо не согласна"),
     specialEvening: scene("evening", "special", "assets/presence/evening/special-cozy-wide.png", "Особенный тихий вечер дома с Машей"),
@@ -97,13 +98,22 @@
 
   switch (activity) {
     case "speaking":
-      if (canUseEveningVariants && expression === "warm_smile") {
+      if (period === "day" && expression === "warm_smile") {
         return chooseVariant(
           presentation,
           scenes.conversation,
           scenes.speakingOpen
         );
       }
+
+  if (canUseEveningVariants && expression === "warm_smile") {
+        return chooseVariant(
+          presentation,
+          scenes.conversation,
+          scenes.speakingOpen
+        );
+      }
+
       return scenes.conversation;
 
     case "listening":

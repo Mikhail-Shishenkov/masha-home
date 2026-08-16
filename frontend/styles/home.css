@@ -617,4 +617,11 @@ html[data-safety="autonomy_stopped"] .ambient { background: linear-gradient(90de
     padding: 25px 27px;
   }
 }
+/* VISUAL-02 — legacy proactive entry stays internal.
+ * Initiative belongs to Home Attention / future ambient magic,
+ * not to the ordinary bottom navigation.
+ */
+.proactive-trigger {
+  display: none !important;
+}
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
