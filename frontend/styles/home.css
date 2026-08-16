@@ -503,4 +503,118 @@ html[data-safety="autonomy_stopped"] .ambient { background: linear-gradient(90de
 .conversation-surface:not(.has-history):not(.is-shelf-open) .composer {
   margin-top: auto;
 }
+/* UI-05 — shared Home object surface geometry */
+
+/*
+ * Ordinary Home places share one spatial plane.
+ * They may have different character/content, but they must feel
+ * like different objects placed in the same part of the room.
+ */
+.commitments-surface,
+.activity-surface,
+.proactive-surface,
+.reflections-surface,
+.workbench-surface {
+  right: clamp(40px, 7vw, 150px);
+  top: clamp(88px, 11.5vh, 145px);
+
+  width: clamp(500px, 34vw, 640px);
+  min-width: 0;
+  max-height: min(74vh, 800px);
+}
+
+/*
+ * History deliberately has more breathing room because it contains
+ * search + two semantic columns, but keeps the same right/top anchor.
+ */
+.continuity-surface {
+  right: clamp(40px, 7vw, 150px);
+  top: clamp(88px, 11.5vh, 145px);
+
+  width: clamp(660px, 40vw, 780px);
+  min-width: 0;
+  max-height: min(74vh, 800px);
+}
+
+/* "Дела" use the same inner rhythm as the other Home places. */
+.commitments-surface {
+  padding: 32px 34px 34px;
+}
+
+.commitments-header {
+  gap: 20px;
+}
+
+.commitments-header h2,
+.object-header h2 {
+  font-size: clamp(32px, 2.5vw, 48px);
+  line-height: 1.05;
+}
+
+.commitments-intro {
+  margin: 20px 0 24px;
+}
+
+/*
+ * On large displays the Home surfaces grow together instead of
+ * leaving Workbench/Tasks tiny while Conversation/History scale up.
+ */
+@media (min-width: 1800px) {
+  .commitments-surface,
+  .activity-surface,
+  .proactive-surface,
+  .reflections-surface,
+  .workbench-surface {
+    right: clamp(80px, 6vw, 230px);
+
+    width: clamp(640px, 29vw, 900px);
+    max-height: min(76vh, 1080px);
+  }
+
+  .continuity-surface {
+    right: clamp(80px, 6vw, 230px);
+
+    width: clamp(760px, 32vw, 1040px);
+    max-height: min(76vh, 1080px);
+  }
+}
+
+/*
+ * Medium screens preserve the same hierarchy:
+ * ordinary place < wider History.
+ */
+@media (max-width: 1280px) {
+  .commitments-surface,
+  .activity-surface,
+  .proactive-surface,
+  .reflections-surface,
+  .workbench-surface {
+    right: 4vw;
+    width: min(42vw, 560px);
+  }
+
+  .continuity-surface {
+    right: 4vw;
+    width: min(48vw, 640px);
+  }
+}
+
+/* Existing compact layout wins on the smallest supported Home size. */
+@media (max-width: 780px) {
+  .commitments-surface,
+  .activity-surface,
+  .proactive-surface,
+  .continuity-surface,
+  .reflections-surface,
+  .workbench-surface {
+    right: 20px;
+    top: 72px;
+
+    width: min(58vw, 450px);
+    min-width: 350px;
+    max-height: calc(100vh - 150px);
+
+    padding: 25px 27px;
+  }
+}
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

@@ -173,49 +173,112 @@ function applyScene(presentation) {
 
 function commitScene(next, transition, revision) {
   if (revision !== sceneTransitionRevision || next.id === activeSceneId) return;
+
   const current = sceneLayers[activeSceneLayer];
   const incoming = sceneLayers[1 - activeSceneLayer];
+
   document.documentElement.dataset.sceneTransition = transition.kind;
-  document.documentElement.style.setProperty("--scene-exit-ms", `${transition.exitMs}ms`);
-  document.documentElement.style.setProperty("--scene-enter-ms", `${transition.enterMs}ms`);
+  document.documentElement.style.setProperty(
+    "--scene-exit-ms",
+    `${transition.exitMs}ms`
+  );
+  document.documentElement.style.setProperty(
+    "--scene-enter-ms",
+    `${transition.enterMs}ms`
+  );
+
   clearTimeout(sceneTransitionTimer);
+
   let transitionStarted = false;
+
+  /*
+   * Always begin from a known two-layer state.
+   * The current scene stays fully visible underneath the incoming scene.
+   */
   for (const layer of sceneLayers) {
     layer.onload = null;
     layer.onerror = null;
-    layer.classList.remove("is-incoming", "is-revealed", "is-leaving");
+    layer.classList.remove(
+      "is-incoming",
+      "is-revealed",
+      "is-leaving"
+    );
   }
+
+  current.classList.add("is-active");
   incoming.classList.remove("is-active");
 
   const completeTransition = () => {
     if (revision !== sceneTransitionRevision) return;
-    current.classList.remove("is-active", "is-leaving");
-    incoming.classList.remove("is-incoming", "is-revealed");
+
+    current.classList.remove(
+      "is-active",
+      "is-leaving"
+    );
+
+    incoming.classList.remove(
+      "is-incoming",
+      "is-revealed"
+    );
     incoming.classList.add("is-active");
+
     activeSceneLayer = sceneLayers.indexOf(incoming);
     activeSceneId = next.id;
     activeSceneChangedAt = performance.now();
+
+    sceneTransitionTimer = null;
   };
+
   const showIncoming = () => {
-    if (revision !== sceneTransitionRevision || transitionStarted) return;
+    if (
+      revision !== sceneTransitionRevision
+      || transitionStarted
+    ) return;
+
     transitionStarted = true;
+
     incoming.alt = next.alt;
     incoming.classList.add("is-incoming");
-    current.classList.add("is-leaving");
-    sceneTransitionTimer = window.setTimeout(() => {
+
+    /*
+     * Important:
+     * give Chromium one rendered frame with the incoming layer at opacity 0.
+     * Only on the following frame do we reveal it.
+     *
+     * The outgoing scene never fades to black first. The incoming scene
+     * dissolves directly over the still-visible room.
+     */
+    void incoming.offsetWidth;
+
+    window.requestAnimationFrame(() => {
       if (revision !== sceneTransitionRevision) return;
+
       incoming.classList.add("is-revealed");
-      sceneTransitionTimer = window.setTimeout(completeTransition, transition.enterMs + 30);
-    }, transition.exitMs + 20);
+
+      sceneTransitionTimer = window.setTimeout(
+        completeTransition,
+        transition.enterMs + 40
+      );
+    });
   };
+
   incoming.onload = showIncoming;
+
   incoming.onerror = () => {
     if (revision !== sceneTransitionRevision) return;
+
     incoming.src = "assets/presence/evening/idle.png";
     incoming.alt = "Маша дома, в своей гостиной";
   };
+
   incoming.src = next.source;
-  if (incoming.complete) showIncoming();
+
+  /*
+   * Preloaded/cached images may already be complete.
+   */
+  if (incoming.complete) {
+    showIncoming();
+  }
 }
 
 function nearLatest() {

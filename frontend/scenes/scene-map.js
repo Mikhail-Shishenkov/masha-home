@@ -22,7 +22,7 @@
     thinking: scene("day", "thinking", "assets/presence/day/thinking.png", "Маша задумалась в светлой гостиной"),
     activity: scene("day", "activity", "assets/presence/day/activity.png", "Маша занята делом дома при дневном свете"),
     quietBeside: scene("day", "quiet_beside", "assets/presence/day/listening.png", "Маша тихо рядом в светлой гостиной"),
-    firmDisagreement: scene("day", "firm_disagreement", "assets/presence/context/boundary-calm.png", "Маша спокойно и твёрдо не согласна"),
+    firmDisagreement: scene("day", "firm_disagreement", "assets/presence/day/listening.png", "Маша спокойно и твёрдо не согласна"),
   });
 
   const EVENING_SCENES = Object.freeze({
@@ -31,6 +31,10 @@
     listening: scene("evening", "listening", "assets/presence/evening/listening.png", "Маша внимательно слушает в вечерней гостиной"),
     thinking: scene("evening", "thinking", "assets/presence/evening/thinking.png", "Маша задумалась в вечерней гостиной"),
     activity: scene("evening", "activity", "assets/presence/evening/activity.png", "Маша занята делом в вечернем доме"),
+    speakingOpen: scene("evening", "speaking_open", "assets/presence/context/speaking-open.png", "Маша тепло отвечает и открыто обращается к тебе"),
+    listeningWithMug: scene("evening", "listening_with_mug", "assets/presence/context/listening-with-mug.png", "Маша внимательно слушает с кружкой в руках"),
+    thoughtfulAway: scene("evening", "thoughtful_away", "assets/presence/context/thoughtful-away.png", "Маша ненадолго отвела взгляд, обдумывая ответ"),
+    focusedWork: scene("evening", "focused_work", "assets/presence/context/focused-work.png", "Маша сосредоточенно занята делом"),
     quietBeside: scene("evening", "quiet_beside", "assets/presence/evening/quiet-beside.png", "Маша тихо рядом в вечерней гостиной"),
     firmDisagreement: scene("evening", "firm_disagreement", "assets/presence/evening/boundary.png", "Маша спокойно и твёрдо не согласна"),
     specialEvening: scene("evening", "special", "assets/presence/evening/special-cozy-wide.png", "Особенный тихий вечер дома с Машей"),
@@ -47,34 +51,116 @@
     return hour >= 7 && hour < 18 ? "day" : "evening";
   }
 
-  function resolveScene(presentation) {
-    const scenes = SCENES[resolveHomePeriod(presentation)];
-    if (!presentation || presentation.home_state === "unavailable") return scenes.idle;
-    if (presentation.overlays?.model === "model_unavailable") return scenes.idle;
-    if (
-      presentation.presence?.ambient === "quiet"
-      && presentation.presence?.attention === "toward_user"
-    ) return scenes.quietBeside;
-    if (["skeptical", "serious"].includes(presentation.presence?.expression?.code)) {
-      return scenes.firmDisagreement;
+  function chooseVariant(presentation, primary, alternate) {
+    const revision = Number(presentation?.revision);
+
+    if (!Number.isInteger(revision) || revision < 0) {
+      return primary;
     }
-    switch (presentation.presence?.activity) {
-      case "speaking":
-        return scenes.conversation;
-      case "listening":
-        return scenes.listening;
-      case "waiting":
-        return presentation.presence?.attention === "toward_user" ? scenes.listening : scenes.idle;
-      case "confirmation":
-        return scenes.idle;
-      case "processing":
-        return scenes.thinking;
-      case "working":
-        return scenes.activity;
-      default:
-        return scenes.idle;
-    }
+      return revision % 2 === 0 ? primary : alternate;
   }
+
+  function resolveScene(presentation) {
+  const period = resolveHomePeriod(presentation);
+  const scenes = SCENES[period];
+
+  if (!presentation || presentation.home_state === "unavailable") {
+    return scenes.idle;
+  }
+
+  if (presentation.overlays?.model === "model_unavailable") {
+    return scenes.idle;
+  }
+
+  const presence = presentation.presence || {};
+  const activity = presence.activity;
+  const attention = presence.attention;
+  const expression = presence.expression?.code;
+
+  if (
+    presence.ambient === "quiet"
+    && attention === "toward_user"
+  ) {
+    return scenes.quietBeside;
+  }
+
+  if (["skeptical", "serious"].includes(expression)) {
+    return scenes.firmDisagreement;
+  }
+
+  /*
+   * Contextual alternates currently belong to the coherent evening family.
+   * Daytime keeps its authored day scene set rather than unexpectedly
+   * switching lighting just for visual variety.
+   */
+  const canUseEveningVariants = period === "evening";
+
+  switch (activity) {
+    case "speaking":
+      if (canUseEveningVariants && expression === "warm_smile") {
+        return chooseVariant(
+          presentation,
+          scenes.conversation,
+          scenes.speakingOpen
+        );
+      }
+      return scenes.conversation;
+
+    case "listening":
+      if (canUseEveningVariants) {
+        return chooseVariant(
+          presentation,
+          scenes.listening,
+          scenes.listeningWithMug
+        );
+      }
+      return scenes.listening;
+
+    case "waiting":
+      if (attention === "proactive") {
+        return scenes.calmAttentive || scenes.listening;
+      }
+
+      if (attention === "toward_user") {
+        if (canUseEveningVariants) {
+          return chooseVariant(
+            presentation,
+            scenes.listening,
+            scenes.listeningWithMug
+          );
+        }
+        return scenes.listening;
+      }
+
+      return scenes.idle;
+
+    case "confirmation":
+      return scenes.idle;
+
+    case "processing":
+      if (canUseEveningVariants && expression === "thoughtful") {
+        return chooseVariant(
+          presentation,
+          scenes.thinking,
+          scenes.thoughtfulAway
+        );
+      }
+      return scenes.thinking;
+
+    case "working":
+      if (canUseEveningVariants) {
+        return chooseVariant(
+          presentation,
+          scenes.activity,
+          scenes.focusedWork
+        );
+      }
+      return scenes.activity;
+
+    default:
+      return scenes.idle;
+  }
+}
 
   function resolveTransition({ presentation, reducedMotion = false, initial = false } = {}) {
     if (reducedMotion) return TRANSITION_POLICY.reduced;
