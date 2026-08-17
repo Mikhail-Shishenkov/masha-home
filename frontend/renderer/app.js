@@ -1323,6 +1323,10 @@ function handleBridgeEvent(encoded) {
     });
     return;
   }
+  if (payload.kind === "home_time") {
+  applySnapshot(payload.snapshot);
+  return;
+    }
   if (payload.kind === "home_attention") {
     renderHomeAttention(payload.attention);
     homeAttention.hidden = false;

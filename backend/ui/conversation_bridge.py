@@ -227,6 +227,21 @@ class LocalConversationBridge(QObject):
         )
         future.add_done_callback(self._finish_proactive_refresh)
 
+    @Slot()
+    def refreshHomeTime(self):  # noqa: N802
+        """Refresh Presentation time without changing conversation or domain state."""
+        if self._application is None or self._session is None:
+            return
+
+        snapshot = self._session_snapshot("observe_time")
+
+        self._emit(
+            {
+                "kind": "home_time",
+                "snapshot": snapshot.model_dump(mode="json"),
+            }
+        )
+
     def _finish_proactive_refresh(self, future) -> None:
         try:
             interactions = future.result()

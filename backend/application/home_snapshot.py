@@ -127,7 +127,7 @@ class HomePresentationSession:
         self._active_model = snapshot.active_model
         self._visual_assets = snapshot.visual_assets
         self._composition = composition
-        self._clock = clock or (lambda: self._now())
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._runtime = PresentationRuntime(snapshot.presentation)
 
     def _now(self) -> datetime:
@@ -434,6 +434,27 @@ class HomePresentationSession:
         )
         return self._dispatch(AutonomyResumed(occurred_at=self._now()))
 
+    def observe_time(self) -> HomeSnapshotView:
+        """Refresh Home time without changing the current Presentation state."""
+        observed_at = self._now()
+
+        self._runtime.model = self._runtime.model.model_copy(
+            update={"observed_at": observed_at}
+        )
+
+        presentation = self._runtime.model
+
+        return HomeSnapshotView(
+            observed_at=observed_at,
+            status=self._status,
+            active_model=self._active_model,
+            visual_assets=self._visual_assets,
+            presentation=presentation,
+            composition=self._composition.resolve(
+                presentation,
+                variant=CompositionVariant.PRESENCE_FIRST,
+            ),
+        )
     @property
     def active_model_display_name(self) -> str:
         return self._active_model.display_name

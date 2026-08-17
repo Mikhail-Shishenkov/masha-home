@@ -105,6 +105,15 @@ class MashaHomeWindow(QMainWindow):
             self._bridge.refreshProactiveInteractions
         )
         self._proactive_projection_timer.start()
+        # Home time has a much slower cadence than proactive delivery.
+        # It only keeps the Presentation clock current so day/evening ambience
+        # can change while the Home is open and otherwise idle.
+        self._home_time_timer = QTimer(self)
+        self._home_time_timer.setInterval(30_000)
+        self._home_time_timer.timeout.connect(
+            self._bridge.refreshHomeTime
+        )
+        self._home_time_timer.start()
 
     @staticmethod
     def _build_application():
