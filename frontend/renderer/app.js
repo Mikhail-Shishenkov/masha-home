@@ -119,6 +119,7 @@ let pendingSkillInstall = null;
 let continuityCreateKind = null;
 const attentionMagicState = {
   commitments: 0,
+  overdueCommitments: 0,
   proactive: 0,
   pendingConfirmation: false,
   modelAvailable: true,
@@ -126,8 +127,8 @@ const attentionMagicState = {
 };
 
 function resolveAttentionMagicLevel(state) {
-  if (state.safetyEngaged) {
-    return "quiet";
+  if (state.overdueCommitments > 0) {
+    return "urgent";
   }
 
   if (!state.modelAvailable) {
@@ -150,10 +151,48 @@ function resolveAttentionMagicLevel(state) {
   return "center";
 }
 
+function attentionReasonCount(state) {
+  return (
+    state.commitments
+    + state.proactive
+    + (state.pendingConfirmation ? 1 : 0)
+  );
+}
+
+function triggerAttentionNoveltyIfNeeded(state) {
+  const nextCount = attentionReasonCount(state);
+
+  if (lastAttentionReasonCount === null) {
+    lastAttentionReasonCount = nextCount;
+    return;
+  }
+
+  if (nextCount > lastAttentionReasonCount) {
+    clearTimeout(attentionNoveltyTimer);
+
+    homeAttentionTrigger.classList.remove("is-new-attention");
+
+    void homeAttentionTrigger.offsetWidth;
+
+    homeAttentionTrigger.classList.add("is-new-attention");
+
+    attentionNoveltyTimer = window.setTimeout(() => {
+      homeAttentionTrigger.classList.remove("is-new-attention");
+      attentionNoveltyTimer = null;
+    }, 1100);
+  }
+
+  lastAttentionReasonCount = nextCount;
+}
+
 function updateAttentionMagic() {
   homeAttentionTrigger.dataset.attentionLevel =
     resolveAttentionMagicLevel(attentionMagicState);
+
+  triggerAttentionNoveltyIfNeeded(attentionMagicState);
 }
+let lastAttentionReasonCount = null;
+let attentionNoveltyTimer = null;
 const COMPOSER_MIN_HEIGHT = 44;
 const COMPOSER_MAX_HEIGHT = 112;
 const SURFACE_EXIT_MS = 200;
@@ -812,6 +851,8 @@ function renderCommitments(view, { append = false } = {}) {
   const items = view?.items || [];
   attentionMagicState.commitments =
     Number(view?.actionable_total ?? view?.total ?? items.length) || 0;
+  attentionMagicState.overdueCommitments =
+  items.filter((item) => item.status === "overdue").length;
   updateAttentionMagic();
   commitmentsCount.textContent = String(
     view?.actionable_total ?? view?.total ?? items.length
