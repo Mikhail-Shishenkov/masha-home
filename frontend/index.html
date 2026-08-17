@@ -14,9 +14,26 @@
       <img class="scene" src="assets/presence/evening/idle.png" alt="">
     </div>
     <div class="ambient" aria-hidden="true"></div>
-    <button class="home-attention-trigger" id="home-attention-trigger" type="button" aria-expanded="false" aria-controls="home-attention" disabled>
-      <span aria-hidden="true">⌂</span><span class="sr-only">Что сейчас живо в Доме</span>
-    </button>
+    <button
+  class="home-attention-trigger"
+  id="home-attention-trigger"
+  type="button"
+  aria-expanded="false"
+  aria-controls="home-attention"
+  data-attention-level="quiet"
+  disabled
+>
+  <span class="home-attention-glyph" aria-hidden="true">⌂</span>
+
+  <span class="home-attention-magic" aria-hidden="true">
+    <span class="home-attention-spark spark-one"></span>
+    <span class="home-attention-spark spark-two"></span>
+    <span class="home-attention-spark spark-three"></span>
+    <span class="home-attention-halo"></span>
+  </span>
+
+  <span class="sr-only">Что сейчас живо в Доме</span>
+</button>
     <button class="safety-trigger" id="safety-trigger" type="button" disabled>
       <span class="safety-mark" aria-hidden="true"></span><span>Стоп</span>
     </button>
