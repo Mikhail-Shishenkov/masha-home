@@ -23,6 +23,7 @@
     activity: scene("day", "activity", "assets/presence/day/activity.png", "Маша занята делом дома при дневном свете"),
     speakingOpen: scene("day", "speaking_open", "assets/presence/day/speaking-open.png", "Маша тепло и открыто отвечает в дневной гостиной"),
     quietBeside: scene("day", "quiet_beside", "assets/presence/day/listening.png", "Маша тихо рядом в светлой гостиной"),
+    stop: scene("day", "stop", "assets/presence/day/stop.png", "Маша отдыхает с книгой в тихой дневной гостиной"),
     firmDisagreement: scene("day", "firm_disagreement", "assets/presence/day/boundary.png", "Маша спокойно и твёрдо не согласна"),
   });
 
@@ -38,6 +39,7 @@
     focusedWork: scene("evening", "focused_work", "assets/presence/evening/focused-work.png", "Маша сосредоточенно занята делом"),
     quietBeside: scene("evening", "quiet_beside", "assets/presence/evening/quiet-beside.png", "Маша тихо рядом в вечерней гостиной"),
     firmDisagreement: scene("evening", "firm_disagreement", "assets/presence/evening/boundary.png", "Маша спокойно и твёрдо не согласна"),
+    stop: scene("evening", "stop", "assets/presence/evening/stop.png", "Маша отдыхает с книгой в тёплой вечерней гостиной"),
     specialEvening: scene("evening", "special", "assets/presence/evening/special-cozy-wide.png", "Особенный тихий вечер дома с Машей"),
   });
 
@@ -71,6 +73,9 @@
 
   if (presentation.overlays?.model === "model_unavailable") {
     return scenes.idle;
+  }
+  if (presentation.overlays?.safety === "autonomy_stopped") {
+  return scenes.stop;
   }
 
   const presence = presentation.presence || {};
