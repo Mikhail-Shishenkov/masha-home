@@ -72,6 +72,139 @@ html[data-home-attention="active"] .conversation-surface.is-surface-concealed { 
 .send:disabled { color: rgba(231,197,139,.38); cursor: not-allowed; }
 .home-attention-trigger, .safety-trigger { position: absolute; z-index: 8; bottom: 22px; appearance: none; border: 1px solid rgba(239,215,180,.16); color: rgba(244,226,203,.68); background: rgba(22,17,12,.88); box-shadow: 0 12px 38px rgba(0,0,0,.24); cursor: pointer; transition: color 220ms ease, border-color 220ms ease, background 220ms ease, transform 220ms var(--ease-home); }
 .home-attention-trigger { left: 28px; width: 42px; height: 42px; border-radius: 50%; font-size: 17px; }
+.home-attention-glyph {
+  position: relative;
+  z-index: 3;
+}
+
+.home-attention-magic {
+  position: absolute;
+  inset: -14px;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.home-attention-spark,
+.home-attention-halo {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.home-attention-spark {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 224, 176, 1);
+  box-shadow:
+    0 0 8px rgba(255, 222, 168, .95),
+    0 0 16px rgba(241, 176, 88, .72),
+    0 0 28px rgba(214, 133, 49, .38);
+  transform: scale(.62);
+  transition:
+    opacity 420ms ease,
+    transform 520ms var(--ease-home);
+}
+
+.spark-one {
+  top: 4px;
+  right: 7px;
+}
+
+.spark-two {
+  top: 13px;
+  left: 2px;
+}
+
+.spark-three {
+  right: 1px;
+  bottom: 6px;
+}
+
+.home-attention-halo {
+  inset: 3px;
+  border-radius: 50%;
+  border: 1px solid rgba(231, 177, 104, .34);
+  box-shadow:
+    0 0 18px rgba(221, 153, 68, .14),
+    inset 0 0 12px rgba(255, 223, 174, .05);
+  transform: scale(.82);
+  transition:
+    opacity 520ms ease,
+    transform 620ms var(--ease-home),
+    box-shadow 620ms ease;
+}
+
+/* One quiet reason for attention. */
+.home-attention-trigger[data-attention-level="glance"] .spark-one {
+  opacity: .82;
+  transform: scale(1);
+}
+
+/* Several things are quietly alive in Home. */
+.home-attention-trigger[data-attention-level="whisper"] .spark-one,
+.home-attention-trigger[data-attention-level="whisper"] .spark-two,
+.home-attention-trigger[data-attention-level="whisper"] .spark-three {
+  opacity: .96;
+  transform: scale(1);
+}
+
+.home-attention-trigger[data-attention-level="whisper"] .home-attention-halo {
+  opacity: .42;
+  transform: scale(1);
+}
+
+/* Noticeable, but still calm. */
+.home-attention-trigger[data-attention-level="center"] .spark-one,
+.home-attention-trigger[data-attention-level="center"] .spark-two,
+.home-attention-trigger[data-attention-level="center"] .spark-three {
+  opacity: .96;
+  transform: scale(1.12);
+}
+
+.home-attention-trigger[data-attention-level="center"] .home-attention-halo {
+  opacity: .78;
+  transform: scale(1.08);
+  box-shadow:
+    0 0 24px rgba(221, 153, 68, .22),
+    0 0 42px rgba(191, 120, 45, .10),
+    inset 0 0 14px rgba(255, 223, 174, .08);
+}
+
+/* Consequence, not mere quantity, makes attention urgent. */
+.home-attention-trigger[data-attention-level="urgent"] .spark-one,
+.home-attention-trigger[data-attention-level="urgent"] .spark-two,
+.home-attention-trigger[data-attention-level="urgent"] .spark-three {
+  opacity: 1;
+  transform: scale(1.14);
+}
+
+.home-attention-trigger[data-attention-level="urgent"] .home-attention-halo {
+  opacity: .94;
+  transform: scale(1.12);
+  animation: home-attention-urgent 2200ms ease-in-out infinite;
+}
+
+@keyframes home-attention-urgent {
+  0%,
+  100% {
+    box-shadow:
+      0 0 18px rgba(226, 158, 70, .18),
+      0 0 34px rgba(190, 110, 38, .08);
+  }
+
+  50% {
+    box-shadow:
+      0 0 28px rgba(242, 176, 88, .34),
+      0 0 54px rgba(198, 116, 39, .16);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-attention-trigger[data-attention-level="urgent"] .home-attention-halo {
+    animation: none;
+  }
+}
 .safety-trigger { right: 28px; display: flex; align-items: center; gap: 9px; min-height: 40px; padding: 0 15px; border-radius: 22px; text-transform: uppercase; letter-spacing: .1em; font: 600 10px system-ui, sans-serif; }
 .home-attention-trigger:hover:not(:disabled), .safety-trigger:hover:not(:disabled), .home-attention-trigger:focus-visible, .safety-trigger:focus-visible { color: #fae6c7; border-color: rgba(239,202,147,.46); background: rgba(48,35,24,.7); transform: translateY(-2px); outline: 2px solid rgba(245,209,157,.34); outline-offset: 3px; }
 .home-attention-trigger:disabled, .safety-trigger:disabled { opacity: .35; cursor: not-allowed; }
