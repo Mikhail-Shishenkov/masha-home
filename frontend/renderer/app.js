@@ -185,6 +185,16 @@ function triggerAttentionNoveltyIfNeeded(state) {
   lastAttentionReasonCount = nextCount;
 }
 
+function acknowledgeAttentionNovelty() {
+  clearTimeout(attentionNoveltyTimer);
+  attentionNoveltyTimer = null;
+
+  homeAttentionTrigger.classList.remove("is-new-attention");
+
+  lastAttentionReasonCount =
+    attentionReasonCount(attentionMagicState);
+}
+
 function updateAttentionMagic() {
   homeAttentionTrigger.dataset.attentionLevel =
     resolveAttentionMagicLevel(attentionMagicState);
@@ -1592,9 +1602,15 @@ loadMoreCommitments.addEventListener("click", () => {
 
 homeAttentionTrigger.addEventListener("click", () => {
   if (!ready || inFlight) return;
+
   const opening = homeAttention.hidden;
+
   if (opening) {
-    transitionToSurface(() => bridge.loadHomeAttention());
+    acknowledgeAttentionNovelty();
+
+    transitionToSurface(() => {
+      bridge.loadHomeAttention();
+    });
   } else {
     returnToConversation();
   }
