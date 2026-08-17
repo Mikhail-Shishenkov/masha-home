@@ -117,6 +117,43 @@ let historySearchForgotten = false;
 let historySearchTimer = null;
 let pendingSkillInstall = null;
 let continuityCreateKind = null;
+const attentionMagicState = {
+  commitments: 0,
+  proactive: 0,
+  pendingConfirmation: false,
+  modelAvailable: true,
+  safetyEngaged: false,
+};
+
+function resolveAttentionMagicLevel(state) {
+  if (state.safetyEngaged) {
+    return "quiet";
+  }
+
+  if (!state.modelAvailable) {
+    return "urgent";
+  }
+
+  const reasons =
+    state.commitments
+    + state.proactive
+    + (state.pendingConfirmation ? 1 : 0);
+
+  if (state.pendingConfirmation) {
+    return reasons >= 4 ? "center" : "whisper";
+  }
+
+  if (reasons <= 0) return "quiet";
+  if (reasons === 1) return "glance";
+  if (reasons <= 3) return "whisper";
+
+  return "center";
+}
+
+function updateAttentionMagic() {
+  homeAttentionTrigger.dataset.attentionLevel =
+    resolveAttentionMagicLevel(attentionMagicState);
+}
 const COMPOSER_MIN_HEIGHT = 44;
 const COMPOSER_MAX_HEIGHT = 112;
 const SURFACE_EXIT_MS = 200;
@@ -719,6 +756,8 @@ function renderAgentRuns(view) {
 
 function renderProactiveInteractions(view) {
   proactiveList.replaceChildren();
+  attentionMagicState.proactive = view?.items?.length || 0;
+  updateAttentionMagic();
   for (const interaction of view?.items || []) {
     const item = document.createElement("li");
     item.className = "proactive-item";
@@ -771,6 +810,9 @@ const commitmentStatusLabels = {
 
 function renderCommitments(view, { append = false } = {}) {
   const items = view?.items || [];
+  attentionMagicState.commitments =
+    Number(view?.actionable_total ?? view?.total ?? items.length) || 0;
+  updateAttentionMagic();
   commitmentsCount.textContent = String(
     view?.actionable_total ?? view?.total ?? items.length
   );
@@ -882,6 +924,8 @@ function hideOperationSurface() {
 
 function renderPendingConfirmation(confirmation) {
   pendingConfirmation = confirmation;
+  attentionMagicState.pendingConfirmation = Boolean(confirmation);
+  updateAttentionMagic();
   if (!confirmation) {
     hideOperationSurface();
     setComposerState({ enabled: ready, waiting: inFlight });
@@ -1064,6 +1108,9 @@ function renderRecent(page, activeId = activeConversationId, { append = false } 
 function applySnapshot(snapshot) {
   if (!snapshot) return;
   const { status, active_model: activeModel, presentation } = snapshot;
+  attentionMagicState.modelAvailable = Boolean(status.model_available);
+  attentionMagicState.safetyEngaged = Boolean(status.emergency_stop_engaged);
+  updateAttentionMagic();
   document.documentElement.dataset.homeState = presentation.home_state;
   document.documentElement.dataset.safety = presentation.overlays.safety;
   document.documentElement.dataset.model = presentation.overlays.model;
