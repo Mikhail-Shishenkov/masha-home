@@ -277,9 +277,26 @@ class MashaApplication:
         """Return a bounded, human-facing projection of what deserves attention."""
 
         status = self._status.snapshot()
-        observed_at = datetime.now(timezone.utc)
+
+        # Commitments owns the temporal classification.
+        # Attention consumes that projection instead of recalculating it.
+        commitments = self._commitments.list(limit=None)
+        observed_at = commitments.observed_at
+
+        fresh_overdue = [
+            item
+            for item in commitments.items
+            if item.time_bucket == "fresh_overdue"
+        ]
+
+        upcoming = [
+            item
+            for item in commitments.items
+            if item.time_bucket == "upcoming"
+        ]
 
         active_conversation = None
+
         if conversation_id is not None:
             active_conversation = next(
                 (
@@ -290,55 +307,28 @@ class MashaApplication:
                 None,
             )
 
-        commitments = self._commitments.list(limit=None)
-
-        fresh_overdue = []
-        stale_overdue = []
-        upcoming = []
-        unscheduled = []
-
-        for commitment in commitments.items:
-            if commitment.status == "overdue" and commitment.due_at is not None:
-                due_at = commitment.due_at.astimezone(timezone.utc)
-                overdue_seconds = (observed_at - due_at).total_seconds()
-
-                if overdue_seconds <= 24 * 60 * 60:
-                    fresh_overdue.append(commitment)
-                else:
-                    stale_overdue.append(commitment)
-
-            elif commitment.status == "upcoming":
-                upcoming.append(commitment)
-
-            elif commitment.status == "open" and commitment.due_at is None:
-                unscheduled.append(commitment)
-
-        fresh_overdue.sort(
-            key=lambda item: item.due_at or observed_at,
-            reverse=True,
-        )
-
-        upcoming.sort(
-            key=lambda item: item.due_at or observed_at,
-        )
-
         proactive = self._proactive.list(limit=6)
 
         pending = (
             None
             if conversation_id is None
-            else self._conversation.pending_confirmation(conversation_id)
+            else self._conversation.pending_confirmation(
+                conversation_id
+            )
         )
 
         attention_items: list[HomeAttentionItemView] = []
 
-        # Системное состояние всегда имеет право говорить первым.
+        # System state may speak first.
         if status.emergency_stop_engaged:
             attention_items.append(
                 HomeAttentionItemView(
                     kind="safety_stop",
                     title="Автономные действия остановлены",
-                    detail="Разговор остаётся рядом, но сама я ничего не запущу.",
+                    detail=(
+                        "Разговор остаётся рядом, "
+                        "но сама я ничего не запущу."
+                    ),
                     urgency="notice",
                 )
             )
@@ -353,7 +343,7 @@ class MashaApplication:
                 )
             )
 
-        # Явное решение Миши важнее обычного планирования.
+        # An explicit human decision outranks ordinary planning.
         if pending is not None:
             attention_items.append(
                 HomeAttentionItemView(
@@ -364,7 +354,7 @@ class MashaApplication:
                 )
             )
 
-        # Максимум одна свежая просрочка.
+        # At most one fresh overdue commitment.
         if fresh_overdue and len(attention_items) < 4:
             commitment = fresh_overdue[0]
 
@@ -386,7 +376,7 @@ class MashaApplication:
                 )
             )
 
-        # После прошлого смотрим вперёд.
+        # Then look forward.
         for commitment in upcoming:
             if len(attention_items) >= 4:
                 break
@@ -396,7 +386,8 @@ class MashaApplication:
                     kind="upcoming_commitment",
                     title=commitment.text,
                     detail=(
-                        f"До {commitment.due_at.astimezone().strftime('%d.%m в %H:%M')}"
+                        f"До "
+                        f"{commitment.due_at.astimezone().strftime('%d.%m в %H:%M')}"
                         if commitment.due_at is not None
                         else None
                     ),
@@ -404,8 +395,11 @@ class MashaApplication:
                 )
             )
 
-        # Проактивность занимает только оставшееся место.
-        remaining_slots = max(0, 4 - len(attention_items))
+        # Proactivity uses only the remaining attention space.
+        remaining_slots = max(
+            0,
+            4 - len(attention_items),
+        )
 
         for interaction in proactive.items[:remaining_slots]:
             attention_items.append(
@@ -426,11 +420,18 @@ class MashaApplication:
             safety_label=status.safety_label,
             commitments_count=commitments.actionable_total,
             overdue_commitments_count=(
-                    len(fresh_overdue) + len(stale_overdue)
+                    commitments.fresh_overdue_total
+                    + commitments.stale_overdue_total
             ),
-            stale_overdue_commitments_count=len(stale_overdue),
-            upcoming_commitments_count=len(upcoming),
-            unscheduled_commitments_count=len(unscheduled),
+            stale_overdue_commitments_count=(
+                commitments.stale_overdue_total
+            ),
+            upcoming_commitments_count=(
+                commitments.upcoming_total
+            ),
+            unscheduled_commitments_count=(
+                commitments.unscheduled_total
+            ),
             pending_interactions_count=len(proactive.items),
             attention_items=tuple(attention_items[:4]),
         )
