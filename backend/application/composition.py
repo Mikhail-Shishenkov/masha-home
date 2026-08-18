@@ -37,6 +37,9 @@ from backend.temporal.proactive_daemon import ProactiveDaemon
 from backend.temporal.proactive_interaction import ProactiveInteractionStore
 from backend.temporal.temporal_engine import TemporalEngine
 from backend.temporal.timezone_provider import HomeTimeZoneProvider, HomeTimeZoneStore
+from backend.conversation.response_expression import (
+    ResponseExpressionClassifier,
+)
 
 from .application import MashaApplication
 from .activities import ActivityApplicationService
@@ -77,6 +80,11 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
     application_conversation = ConversationApplicationService(
         conversation=core.conversation,
         models=models,
+        expression_classifier=ResponseExpressionClassifier(
+            router=core.router,
+            identity_kernel=core.identity,
+            model_profiles=core.profiles,
+        ),
     )
     config = core.project_root / "local-data" / "config"
     runtime = core.project_root / "local-data" / "runtime"

@@ -14,6 +14,9 @@ from backend.conversation.conversation_models import (
     ConversationRole,
 )
 from backend.conversation.human_reference import PresentedEntitySet
+from backend.conversation.response_expression import (
+    ResponseExpressionClassifier,
+)
 from backend.conversation.conversation_service import ConversationService, ConversationUnavailableError
 from backend.llm.model_provider import ModelProviderUnavailableError, ModelTimeoutError
 
@@ -29,6 +32,7 @@ from .contracts import (
     ConversationSummaryView,
     ConversationView,
     MessageView,
+    ResponseExpressionCue,
     PendingConfirmationView,
 )
 from .model_settings import ModelSettingsService
@@ -61,9 +65,14 @@ class ConversationApplicationService:
         re.IGNORECASE,
     )
 
-    def __init__(self, *, conversation: ConversationService, models: ModelSettingsService):
+    def __init__(self,*,
+    conversation: ConversationService,
+    models: ModelSettingsService,
+    expression_classifier: ResponseExpressionClassifier | None = None,
+    ):
         self._conversation = conversation
         self._models = models
+        self._expression_classifier = expression_classifier
         # Session-scoped typed context; SharedContinuityService remains the
         # owner of the actual thread and its lifecycle.
         self._active_continuity_by_conversation: dict[str, str] = {}
@@ -304,7 +313,7 @@ class ConversationApplicationService:
             else self._active_continuity_by_conversation.get(conversation_id)
         )
         try:
-            resolved_id, _ = self._conversation.send(
+            resolved_id, response_text = self._conversation.send(
                 content,
                 project_id=project_id,
                 conversation_id=conversation_id,
@@ -360,11 +369,43 @@ class ConversationApplicationService:
             )
         if active_continuity_thread_id is not None and resolved_id is not None:
             self._active_continuity_by_conversation[resolved_id] = active_continuity_thread_id
+            expression_cue: ResponseExpressionCue = "warm"
+
+            if (
+                    resolved_id is not None
+                    and self._expression_classifier is not None
+            ):
+                try:
+                    latest_messages = self._conversation.history.messages(
+                        resolved_id,
+                        limit=1,
+                    )
+                except KeyError:
+                    latest_messages = ()
+
+                latest = (
+                    latest_messages[-1]
+                    if latest_messages
+                    else None
+                )
+
+                if (
+                        latest is not None
+                        and latest.role is ConversationRole.ASSISTANT
+                        and latest.origin is ConversationMessageOrigin.MODEL
+                ):
+                    expression_cue = (
+                        self._expression_classifier.classify(
+                            user_message=content,
+                            assistant_message=response_text,
+                        )
+                    )
         return self._result(
             content=content,
             conversation_id=resolved_id,
             status=ConversationTurnStatus.COMPLETED,
             profile_id=active_profile_id,
+            expression_cue=expression_cue,
         )
 
     def _action_follow_up(
@@ -463,6 +504,7 @@ class ConversationApplicationService:
         conversation_id: str | None,
         status: ConversationTurnStatus,
         profile_id: str,
+        expression_cue: ResponseExpressionCue = "warm",
         error_code: ApplicationErrorCode | None = None,
     ) -> ConversationTurnResult:
         messages = ()
@@ -500,6 +542,7 @@ class ConversationApplicationService:
             assistant_message=None if assistant is None else self._message(assistant),
             status=status,
             active_profile_id=profile_id,
+            expression_cue=expression_cue,
             error_code=error_code,
             error_label=None if error_code is None else error_label(error_code),
             pending_confirmation=(
