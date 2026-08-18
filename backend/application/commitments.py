@@ -36,10 +36,13 @@ class CommitmentApplicationService:
             if commitment.visibility is not Visibility.VISIBLE:
                 continue
             domain_status = engine.commitment_status(commitment)
+            if domain_status in {"completed", "cancelled"}:
+                continue
             status = (
                 "upcoming"
-                if domain_status == "open" and commitment.due_at is not None
-                and commitment.due_at.astimezone(timezone.utc) > observed_at
+                if domain_status == "open"
+                   and commitment.due_at is not None
+                   and commitment.due_at.astimezone(timezone.utc) > observed_at
                 else domain_status
             )
             rows.append(
@@ -52,7 +55,12 @@ class CommitmentApplicationService:
                     can_propose_completion=domain_status == "open",
                 ), commitment)
             )
-        rows.sort(key=self._sort_key)
+        rows.sort(
+            key=lambda row: self._sort_key(
+                row,
+                observed_at,
+            )
+        )
         items = [view for view, _ in rows]
         page = items[offset:] if limit is None else items[offset : offset + limit]
         next_offset = offset + len(page)
@@ -79,17 +87,59 @@ class CommitmentApplicationService:
         )
 
     @staticmethod
-    def _sort_key(row):
+    def _sort_key(row, observed_at):
         view, commitment = row
-        if view.status == "overdue":
-            return (0, view.due_at.timestamp(), commitment.id)
-        if view.status == "upcoming":
-            return (1, view.due_at.timestamp(), commitment.id)
+
+        if view.status == "overdue" and view.due_at is not None:
+            due_at = view.due_at.astimezone(timezone.utc)
+            overdue_seconds = (observed_at - due_at).total_seconds()
+
+            # Свежая просрочка ещё действительно требует внимания.
+            # Чем недавно прошёл срок — тем выше дело.
+            if overdue_seconds <= 24 * 60 * 60:
+                return (
+                    0,
+                    -due_at.timestamp(),
+                    commitment.id,
+                )
+
+            # Старая просрочка больше не должна забивать ближайшие дела.
+            return (
+                3,
+                -due_at.timestamp(),
+                commitment.id,
+            )
+
+        # Будущие дела: чем ближе срок, тем выше.
+        if view.status == "upcoming" and view.due_at is not None:
+            return (
+                1,
+                view.due_at.timestamp(),
+                commitment.id,
+            )
+
+        # Дела без срока остаются рядом, но не изображают срочность.
         if view.status == "open":
-            return (2, -commitment.created_at.timestamp(), commitment.id)
+            return (
+                2,
+                -commitment.created_at.timestamp(),
+                commitment.id,
+            )
+
+        # Завершённые пока оставляем в самом низу.
         if view.status == "completed":
-            return (3, -view.completed_at.timestamp(), commitment.id)
-        return (4, -commitment.updated_at.timestamp(), commitment.id)
+            return (
+                4,
+                -view.completed_at.timestamp(),
+                commitment.id,
+            )
+
+        # Cancelled и остальные неактивные состояния — ещё ниже.
+        return (
+            5,
+            -commitment.updated_at.timestamp(),
+            commitment.id,
+        )
 
     def propose_completion(
         self,
