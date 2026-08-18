@@ -119,6 +119,7 @@ let provisionalUser = null;
 let activeSceneId = "scene.home.idle";
 let activeSceneLayer = 0;
 let activeConversationId = null;
+let homeTimeZone = "UTC";
 let recentPageState = { revision: -1, nextOffset: null, ids: new Set() };
 let sceneTransitionRevision = 0;
 let sceneTransitionTimer = null;
@@ -887,7 +888,9 @@ function renderProactiveInteractions(view) {
 
 function formatDueAt(value) {
   if (!value) return "";
+
   return new Intl.DateTimeFormat("ru-RU", {
+    timeZone: homeTimeZone,
     day: "numeric",
     month: "long",
     hour: "2-digit",
@@ -1401,7 +1404,12 @@ function renderConversation(conversation) {
 
 function formatRecentTime(value) {
   const date = new Date(value);
-  return new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" }).format(date);
+
+  return new Intl.DateTimeFormat("ru-RU", {
+    timeZone: homeTimeZone,
+    day: "numeric",
+    month: "short",
+  }).format(date);
 }
 
 function renderRecent(page, activeId = activeConversationId, { append = false } = {}) {
@@ -1455,6 +1463,8 @@ function renderRecent(page, activeId = activeConversationId, { append = false } 
 
 function applySnapshot(snapshot) {
   if (!snapshot) return;
+  homeTimeZone =
+    snapshot.home_timezone || homeTimeZone;
   const { status, active_model: activeModel, presentation } = snapshot;
   attentionMagicState.modelAvailable = Boolean(status.model_available);
   attentionMagicState.safetyEngaged = Boolean(status.emergency_stop_engaged);

@@ -50,6 +50,7 @@ class HomeSnapshotView(UiContract):
     """Bounded renderer-safe data with no service, provider, or storage handles."""
 
     observed_at: datetime
+    home_timezone: str
     status: MashaStatusView
     active_model: ModelProfileView
     visual_assets: tuple[VisualAssetView, ...]
@@ -92,8 +93,9 @@ class HomeSnapshotService:
             observed_at=observed_at,
         )
         return HomeSnapshotView(
-            observed_at=observed_at,
-            status=status,
+            observed_at=presentation.observed_at,
+            home_timezone=str(presentation.observed_at.tzinfo),
+            status=self._status,
             active_model=active_model,
             visual_assets=visual_assets,
             presentation=presentation,
