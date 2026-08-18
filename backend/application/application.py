@@ -248,6 +248,21 @@ class MashaApplication:
             project_id=project_id,
         )
 
+    def propose_commitment_due_change(
+            self,
+            *,
+            commitment_id: str,
+            conversation_id: str | None,
+            project_id: str,
+            due_at: datetime | None,
+    ) -> CommitmentProposalResult:
+        return self._commitments.propose_due_change(
+            commitment_id=commitment_id,
+            conversation_id=conversation_id,
+            project_id=project_id,
+            due_at=due_at,
+        )
+
     def pending_confirmation(self, conversation_id: str) -> PendingConfirmationView | None:
         return self._conversation.pending_confirmation(conversation_id)
 

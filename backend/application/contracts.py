@@ -285,6 +285,8 @@ class PendingConfirmationView(UiContract):
         "commitment_create",
         "commitment_complete",
         "commitment_cancel",
+        "commitment_reschedule",
+        "commitment_clear_due",
         "shared_moment_create",
         "continuity_update",
     ]

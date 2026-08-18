@@ -1723,6 +1723,94 @@ class MemoryIntentHandler:
             ),
         )
 
+    def propose_due_change_by_id(
+            self,
+            record_id: str,
+            conversation_id: str,
+            due_at: datetime | None,
+    ) -> MemoryIntentResult:
+        """Create a proposal that changes only one Commitment due date."""
+
+        if self.memory_management is None:
+            raise RuntimeError("commitment mutation is unavailable")
+
+        view = self.memory_management.get(record_id)
+
+        if view is None or view.record_type != "commitment":
+            raise KeyError("commitment not found")
+
+        if view.payload.get("status") != "open":
+            raise ValueError("commitment is not open")
+
+        now = self.temporal_engine.clock.now_utc()
+
+        resolved_due = None
+
+        if due_at is not None:
+            if due_at.tzinfo is None:
+                raise ValueError(
+                    "commitment due date must be timezone-aware"
+                )
+
+            resolved_due = due_at.astimezone(timezone.utc)
+
+            if resolved_due <= now:
+                raise ValueError(
+                    "new commitment due date must be in the future"
+                )
+
+        if (
+                resolved_due is None
+                and view.payload.get("due_at") is None
+        ):
+            raise ValueError(
+                "commitment already has no due date"
+            )
+
+        payload = dict(view.payload)
+
+        payload.update(
+            due_at=(
+                None
+                if resolved_due is None
+                else resolved_due.isoformat()
+            ),
+            updated_at=now.isoformat(),
+        )
+
+        self.memory_management.propose(
+            self.proposal_store,
+            operation=MemoryMutationOperation.EDIT,
+            record_id=view.record_id,
+            conversation_id=conversation_id,
+            replacement_payload=payload,
+        )
+
+        if resolved_due is None:
+            response = (
+                "Оставить это дело без срока?\n"
+                f"«{view.payload['text']}»\n"
+                "Само дело останется открытым и перейдёт "
+                "в «Когда будет время».\n"
+                "Подтверди обычным «да» или выбери «не сейчас»."
+            )
+        else:
+            local_due = resolved_due.astimezone(
+                self.temporal_engine.home_timezone.tzinfo
+            )
+
+            response = (
+                "Перенести срок этого дела?\n"
+                f"«{view.payload['text']}»\n"
+                f"Новый срок: {local_due.strftime('%d.%m.%Y в %H:%M')}.\n"
+                "Подтверди обычным «да» или выбери «не сейчас»."
+            )
+
+        return MemoryIntentResult(
+            handled=True,
+            response=response,
+        )
+
     def _propose_conversation_episode(
         self,
         match: re.Match[str],

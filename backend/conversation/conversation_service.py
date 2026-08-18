@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from datetime import datetime
 from backend.identity.identity_kernel import IdentityKernel
 from backend.llm.model_models import MessageRole, ModelMessage
 from backend.memory.text_normalization import meaningful_tokens
@@ -423,6 +424,95 @@ class ConversationService:
 
         if not result.handled or result.response is None:
             raise RuntimeError("cancellation proposal was not created")
+
+        assistant = self.history.append(
+            conversation.id,
+            ConversationRole.ASSISTANT,
+            result.response,
+            origin=ConversationMessageOrigin.APPLICATION,
+        )
+
+        return conversation.id, user, assistant
+
+    def propose_commitment_due_change(
+            self,
+            *,
+            commitment_id: str,
+            conversation_id: str | None,
+            project_id: str,
+            due_at: datetime | None,
+    ):
+        if self.memory_intent_handler is None:
+            raise RuntimeError(
+                "memory intent handler is unavailable"
+            )
+
+        conversation = (
+            self.history.create()
+            if conversation_id is None
+            else self.history.get(conversation_id)
+        )
+
+        pending = tuple(
+            item
+            for item in (
+                self.memory_intent_handler
+                .proposal_store
+                .pending_for_conversation(conversation.id)
+            )
+            if item.record_type == "commitment"
+        )
+
+        if pending:
+            raise ValueError(
+                "a commitment confirmation is already pending"
+            )
+
+        view = self.memory_intent_handler.memory_management.get(
+            commitment_id
+        )
+
+        if view is None or view.record_type != "commitment":
+            raise KeyError("commitment not found")
+
+        if view.payload.get("status") != "open":
+            raise ValueError("commitment is not open")
+
+        if due_at is None:
+            user_text = (
+                f"Маша, оставь дело "
+                f"«{view.payload['text']}» без срока."
+            )
+        else:
+            local_due = due_at.astimezone(
+                self.temporal_engine.home_timezone.tzinfo
+            )
+
+            user_text = (
+                f"Маша, перенеси дело "
+                f"«{view.payload['text']}» "
+                f"на {local_due.strftime('%d.%m.%Y %H:%M')}."
+            )
+
+        user = self.history.append(
+            conversation.id,
+            ConversationRole.USER,
+            user_text,
+        )
+
+        result = (
+            self.memory_intent_handler
+            .propose_due_change_by_id(
+                commitment_id,
+                conversation.id,
+                due_at,
+            )
+        )
+
+        if not result.handled or result.response is None:
+            raise RuntimeError(
+                "due-date proposal was not created"
+            )
 
         assistant = self.history.append(
             conversation.id,

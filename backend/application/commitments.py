@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timezone
+from datetime import datetime, timezone
 
 from backend.conversation.conversation_service import ConversationService
 from backend.memory.memory_models import Visibility
@@ -275,6 +275,70 @@ class CommitmentApplicationService:
                 confirmation_type="commitment_cancel",
                 title="Убрать дело как больше не актуальное?",
                 subject=str(payload.get("text") or "Обязательство"),
+                due_at=payload.get("due_at"),
+                created_at=proposal.created_at,
+            ),
+        )
+
+    def propose_due_change(
+            self,
+            *,
+            commitment_id: str,
+            conversation_id: str | None,
+            project_id: str,
+            due_at: datetime | None,
+    ) -> CommitmentProposalResult:
+        conversation, user, assistant = (
+            self._conversation.propose_commitment_due_change(
+                commitment_id=commitment_id,
+                conversation_id=conversation_id,
+                project_id=project_id,
+                due_at=due_at,
+            )
+        )
+
+        pending = tuple(
+            item
+            for item in (
+                self._conversation
+                .memory_intent_handler
+                .proposal_store
+                .pending_for_conversation(conversation)
+            )
+            if item.record_type == "commitment"
+        )
+
+        if len(pending) != 1:
+            raise RuntimeError(
+                "due-date proposal projection is ambiguous"
+            )
+
+        proposal = pending[0]
+        payload = proposal.record_payload
+
+        clear_due = due_at is None
+
+        return CommitmentProposalResult(
+            conversation_id=conversation,
+            user_message=self._message(user),
+            assistant_message=self._message(assistant),
+            pending_confirmation=PendingConfirmationView(
+                proposal_id=proposal.id,
+                conversation_id=proposal.conversation_id,
+                confirmation_type=(
+                    "commitment_clear_due"
+                    if clear_due
+                    else "commitment_reschedule"
+                ),
+                title=(
+                    "Оставить дело без срока?"
+                    if clear_due
+                    else "Перенести срок дела?"
+                ),
+                subject=str(
+                    payload.get("text")
+                    or "Обязательство"
+                ),
                 due_at=payload.get("due_at"),
                 created_at=proposal.created_at,
             ),
