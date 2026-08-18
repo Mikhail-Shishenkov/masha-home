@@ -17,7 +17,6 @@ from .contracts import (
     ConfirmationResolutionResult,
     ConversationView,
     ConversationSummaryView,
-    HomeAttentionView,
     MashaStatusView,
     ModelProfileView,
     ModelSwitchResult,
@@ -279,9 +278,18 @@ class MashaApplication:
 
         commitments = self._commitments.list(limit=None)
         overdue = tuple(
-            item
-            for item in commitments.items
-            if item.status == "overdue"
+            sorted(
+                (
+                    item
+                    for item in commitments.items
+                    if item.status == "overdue"
+                ),
+                key=lambda item: (
+                    item.due_at is not None,
+                    item.due_at or datetime.min.replace(tzinfo=timezone.utc),
+                ),
+                reverse=True,
+            )
         )
 
         proactive = self._proactive.list(limit=6)
@@ -329,7 +337,15 @@ class MashaApplication:
                 HomeAttentionItemView(
                     kind="overdue_commitment",
                     title=commitment.text,
-                    detail="Просроченное дело",
+                    detail=(
+                        "Срок только что прошёл"
+                        if commitment.due_at is not None
+                           and (
+                                   datetime.now(timezone.utc)
+                                   - commitment.due_at.astimezone(timezone.utc)
+                           ).total_seconds() < 3600
+                        else "Просроченное дело"
+                    ),
                     urgency="important",
                 )
             )
