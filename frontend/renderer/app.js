@@ -1010,6 +1010,14 @@ function renderCommitments(view, { append = false } = {}) {
       cancel.className = "commitment-cancel";
       cancel.textContent = "Убрать";
 
+      let clearDue = null;
+        if (item.time_bucket === "stale_overdue") {
+          clearDue = document.createElement("button");
+          clearDue.type = "button";
+          clearDue.className = "commitment-cancel";
+          clearDue.textContent = "Без срока";
+        }
+
       complete.addEventListener("click", () => {
         if (
           !ready
@@ -1019,6 +1027,7 @@ function renderCommitments(view, { append = false } = {}) {
 
         complete.disabled = true;
         cancel.disabled = true;
+        if (clearDue) clearDue.disabled = true;
 
         bridge.proposeCommitmentCompletion(
           item.commitment_id
@@ -1034,13 +1043,18 @@ function renderCommitments(view, { append = false } = {}) {
 
         complete.disabled = true;
         cancel.disabled = true;
+        if (clearDue) clearDue.disabled = true;
 
         bridge.proposeCommitmentCancellation(
           item.commitment_id
         );
       });
 
-      actions.append(complete, cancel);
+      actions.append(complete);
+      if (clearDue) {
+      actions.append(clearDue);
+      }
+      actions.append(cancel);
       row.append(actions);
     }
 
@@ -1051,6 +1065,23 @@ function renderCommitments(view, { append = false } = {}) {
 
   loadMoreCommitments.dataset.nextOffset =
     String(view?.next_offset ?? "");
+}
+        if (clearDue) {
+  clearDue.addEventListener("click", () => {
+    if (
+      !ready
+      || inFlight
+      || pendingConfirmation
+    ) return;
+
+    complete.disabled = true;
+    cancel.disabled = true;
+    clearDue.disabled = true;
+
+    bridge.proposeCommitmentClearDue(
+      item.commitment_id
+    );
+  });
 }
 
 function hideOperationSurface() {
@@ -1474,6 +1505,7 @@ function handleBridgeEvent(encoded) {
   if (
   payload.kind === "commitment_completion_proposed"
   || payload.kind === "commitment_cancellation_proposed"
+  || payload.kind === "commitment_due_change_proposed"
 ) {
     applySnapshot(payload.snapshot);
     const result = payload.result;
