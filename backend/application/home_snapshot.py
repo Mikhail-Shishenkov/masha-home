@@ -95,7 +95,7 @@ class HomeSnapshotService:
         return HomeSnapshotView(
             observed_at=presentation.observed_at,
             home_timezone=str(presentation.observed_at.tzinfo),
-            status=self._status,
+            status=status,
             active_model=active_model,
             visual_assets=visual_assets,
             presentation=presentation,
@@ -128,6 +128,7 @@ class HomePresentationSession:
         self._status = snapshot.status
         self._active_model = snapshot.active_model
         self._visual_assets = snapshot.visual_assets
+        self._home_timezone = snapshot.home_timezone
         self._composition = composition
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._runtime = PresentationRuntime(snapshot.presentation)
@@ -448,6 +449,7 @@ class HomePresentationSession:
 
         return HomeSnapshotView(
             observed_at=observed_at,
+            home_timezone=self._home_timezone,
             status=self._status,
             active_model=self._active_model,
             visual_assets=self._visual_assets,
@@ -465,6 +467,7 @@ class HomePresentationSession:
         presentation = self._runtime.dispatch(event)
         return HomeSnapshotView(
             observed_at=presentation.observed_at,
+            home_timezone=self._home_timezone,
             status=self._status,
             active_model=self._active_model,
             visual_assets=self._visual_assets,
