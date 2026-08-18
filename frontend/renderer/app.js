@@ -876,8 +876,6 @@ function formatDueAt(value) {
   }).format(new Date(value));
 }
 
-const COMMITMENTS_VISIBLE_INITIAL = 4;
-
 const commitmentStatusLabels = {
   open: "открыто",
   upcoming: "впереди",
@@ -886,32 +884,93 @@ const commitmentStatusLabels = {
   cancelled: "отменено",
 };
 
-function renderCommitments(view, { append = false } = {}) {
-  const items = view?.items || [];
-  attentionMagicState.commitments =
-    Number(view?.actionable_total ?? view?.total ?? items.length) || 0;
-  attentionMagicState.freshOverdueCommitments =
-  Number(view?.fresh_overdue_total || 0);
-  updateAttentionMagic();
-  commitmentsCount.textContent = String(
-    view?.actionable_total ?? view?.total ?? items.length
+const commitmentGroupMeta = {
+  fresh_overdue: {
+    title: "Сейчас",
+    countField: "fresh_overdue_total",
+  },
+  upcoming: {
+    title: "Впереди",
+    countField: "upcoming_total",
+  },
+  unscheduled: {
+    title: "Когда будет время",
+    countField: "unscheduled_total",
+  },
+  stale_overdue: {
+    title: "Нужно разобрать",
+    countField: "stale_overdue_total",
+  },
+};
+
+function ensureCommitmentGroup(bucket, view) {
+  const existing = commitmentsList.querySelector(
+    `.commitment-group-heading[data-group="${bucket}"]`
   );
 
-  if (!append) commitmentsList.replaceChildren();
+  if (existing) return;
+
+  const meta = commitmentGroupMeta[bucket];
+  if (!meta) return;
+
+  const heading = document.createElement("li");
+  heading.className = "commitment-group-heading";
+  heading.dataset.group = bucket;
+
+  const title = document.createElement("span");
+  title.className = "commitment-group-title";
+  title.textContent = meta.title;
+
+  const count = document.createElement("span");
+  count.className = "commitment-group-count";
+  count.textContent = String(
+    Number(view?.[meta.countField] || 0)
+  );
+
+  heading.append(title, count);
+  commitmentsList.append(heading);
+}
+
+function renderCommitments(view, { append = false } = {}) {
+  const items = view?.items || [];
+
+  attentionMagicState.commitments =
+    Number(view?.actionable_total ?? 0);
+
+  attentionMagicState.freshOverdueCommitments =
+    Number(view?.fresh_overdue_total || 0);
+
+  updateAttentionMagic();
+
+  commitmentsCount.textContent = String(
+    view?.actionable_total ?? 0
+  );
+
+  if (!append) {
+    commitmentsList.replaceChildren();
+  }
 
   if (!items.length && !append) {
     const empty = document.createElement("li");
     empty.className = "commitment-empty";
-    empty.textContent = "Сейчас здесь спокойно — открытых дел нет.";
+    empty.textContent =
+      "Сейчас здесь спокойно — открытых дел нет.";
+
     commitmentsList.append(empty);
     loadMoreCommitments.hidden = true;
     return;
   }
 
   for (const item of items) {
+    ensureCommitmentGroup(
+      item.time_bucket,
+      view
+    );
+
     const row = document.createElement("li");
     row.className = "commitment-item";
     row.dataset.status = item.status;
+    row.dataset.timeBucket = item.time_bucket;
 
     const copy = document.createElement("div");
     copy.className = "commitment-copy";
@@ -934,85 +993,62 @@ function renderCommitments(view, { append = false } = {}) {
     row.append(copy);
 
     if (item.can_propose_completion) {
-    const actions = document.createElement("div");
-    actions.className = "commitment-actions";
-    const complete = document.createElement("button");
-    complete.type = "button";
-    complete.className = "commitment-complete";
-    complete.textContent = "Готово";
-    const cancel = document.createElement("button");
-    cancel.type = "button";
-    cancel.className = "commitment-cancel";
-    cancel.textContent = "Убрать";
-    complete.addEventListener("click", () => {
-    if (!ready || inFlight || pendingConfirmation) return;
-    complete.disabled = true;
-    cancel.disabled = true;
-    bridge.proposeCommitmentCompletion(
-    item.commitment_id
-    );
-  });
+      const actions = document.createElement("div");
+      actions.className = "commitment-actions";
 
-  cancel.addEventListener("click", () => {
-    if (!ready || inFlight || pendingConfirmation) return;
+      const complete =
+        document.createElement("button");
 
-    complete.disabled = true;
-    cancel.disabled = true;
+      complete.type = "button";
+      complete.className = "commitment-complete";
+      complete.textContent = "Готово";
 
-    bridge.proposeCommitmentCancellation(
-      item.commitment_id
-    );
-  });
+      const cancel =
+        document.createElement("button");
 
-  actions.append(complete, cancel);
-  row.append(actions);
-}
+      cancel.type = "button";
+      cancel.className = "commitment-cancel";
+      cancel.textContent = "Убрать";
+
+      complete.addEventListener("click", () => {
+        if (
+          !ready
+          || inFlight
+          || pendingConfirmation
+        ) return;
+
+        complete.disabled = true;
+        cancel.disabled = true;
+
+        bridge.proposeCommitmentCompletion(
+          item.commitment_id
+        );
+      });
+
+      cancel.addEventListener("click", () => {
+        if (
+          !ready
+          || inFlight
+          || pendingConfirmation
+        ) return;
+
+        complete.disabled = true;
+        cancel.disabled = true;
+
+        bridge.proposeCommitmentCancellation(
+          item.commitment_id
+        );
+      });
+
+      actions.append(complete, cancel);
+      row.append(actions);
+    }
 
     commitmentsList.append(row);
   }
 
-  const rows = [...commitmentsList.querySelectorAll(".commitment-item")];
-
-  let reveal = commitmentsList.querySelector(".commitments-reveal");
-
-  if (reveal) reveal.remove();
-
-  if (rows.length > COMMITMENTS_VISIBLE_INITIAL) {
-    const hiddenRows = rows.slice(COMMITMENTS_VISIBLE_INITIAL);
-
-    for (const row of hiddenRows) {
-      row.classList.add("is-collapsed");
-    }
-
-    reveal = document.createElement("li");
-    reveal.className = "commitments-reveal";
-
-    const revealButton = document.createElement("button");
-    revealButton.type = "button";
-    revealButton.className = "commitments-reveal-action";
-    revealButton.textContent = `Ещё ${hiddenRows.length} ${
-      hiddenRows.length === 1 ? "дело" :
-      hiddenRows.length >= 2 && hiddenRows.length <= 4 ? "дела" :
-      "дел"
-    }`;
-
-    revealButton.addEventListener("click", () => {
-      const collapsed = [
-        ...commitmentsList.querySelectorAll(".commitment-item.is-collapsed")
-      ];
-
-      for (const row of collapsed) {
-        row.classList.remove("is-collapsed");
-      }
-
-      reveal.remove();
-    });
-
-    reveal.append(revealButton);
-    commitmentsList.append(reveal);
-  }
-
   loadMoreCommitments.hidden = !view?.has_more;
+
   loadMoreCommitments.dataset.nextOffset =
     String(view?.next_offset ?? "");
 }

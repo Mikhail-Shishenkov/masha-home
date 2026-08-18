@@ -79,6 +79,12 @@ class CommitmentView(UiContract):
     commitment_id: str = Field(min_length=1)
     text: str = Field(min_length=1, max_length=500)
     status: Literal["open", "upcoming", "overdue", "completed", "cancelled"]
+    time_bucket: Literal[
+        "fresh_overdue",
+        "upcoming",
+        "unscheduled",
+        "stale_overdue",
+    ]
     due_at: datetime | None
     completed_at: datetime | None
     can_propose_completion: bool

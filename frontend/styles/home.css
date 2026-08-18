@@ -892,4 +892,58 @@ html[data-safety="autonomy_stopped"] .ambient { background: linear-gradient(90de
   color: rgba(246, 229, 205, .82);
   border-bottom-color: rgba(222, 184, 126, .52);
 }
+.commitment-group-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+
+  padding: 22px 4px 8px 14px;
+
+  border-bottom: 1px solid rgba(226, 188, 126, .12);
+
+  list-style: none;
+}
+
+.commitment-group-heading:first-child {
+  padding-top: 4px;
+}
+
+.commitment-group-title {
+  color: rgba(232, 198, 147, .68);
+
+  text-transform: uppercase;
+  letter-spacing: .12em;
+
+  font: 600 10px/1.3 system-ui, sans-serif;
+}
+
+.commitment-group-count {
+  color: rgba(236, 223, 207, .36);
+
+  font: 500 10px/1.3 system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+/* No-deadline things are present, but deliberately calm. */
+.commitment-item[data-time-bucket="unscheduled"] {
+  border-left-color: rgba(211, 169, 111, .22);
+  background:
+    linear-gradient(
+      90deg,
+      rgba(127, 85, 48, .055),
+      transparent 62%
+    );
+}
+
+/* Old overdue things need a decision, not permanent alarm. */
+.commitment-group-heading[data-group="stale_overdue"] {
+  opacity: .7;
+}
+
+.commitment-item[data-time-bucket="stale_overdue"] {
+  opacity: .68;
+  border-left-color: rgba(194, 142, 92, .22);
+  background: rgba(255, 245, 228, .015);
+}
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

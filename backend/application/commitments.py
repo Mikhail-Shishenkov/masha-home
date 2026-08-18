@@ -67,6 +67,11 @@ class CommitmentApplicationService:
                    and commitment.due_at.astimezone(timezone.utc) > observed_at
                 else domain_status
             )
+            time_bucket = self._time_bucket_for(
+                status=status,
+                due_at=commitment.due_at,
+                observed_at=observed_at,
+            )
 
             rows.append(
                 (
@@ -74,6 +79,7 @@ class CommitmentApplicationService:
                         commitment_id=commitment.id,
                         text=commitment.text,
                         status=status,
+                        time_bucket=time_bucket,
                         due_at=commitment.due_at,
                         completed_at=commitment.completed_at,
                         can_propose_completion=domain_status == "open",
@@ -82,12 +88,7 @@ class CommitmentApplicationService:
                 )
             )
 
-        rows.sort(
-            key=lambda row: self._sort_key(
-                row,
-                observed_at,
-            )
-        )
+        rows.sort(key=self._sort_key)
 
         items = [view for view, _ in rows]
 
@@ -99,11 +100,7 @@ class CommitmentApplicationService:
         }
 
         for view in items:
-            bucket = self._time_bucket(
-                view,
-                observed_at,
-            )
-            bucket_counts[bucket] += 1
+            bucket_counts[view.time_bucket] += 1
 
         page = (
             items[offset:]
@@ -146,12 +143,16 @@ class CommitmentApplicationService:
         )
 
     @staticmethod
-    def _time_bucket(view, observed_at):
-        if view.status == "overdue" and view.due_at is not None:
-            due_at = view.due_at.astimezone(timezone.utc)
-
+    def _time_bucket_for(
+            *,
+            status,
+            due_at,
+            observed_at,
+    ):
+        if status == "overdue" and due_at is not None:
             overdue_seconds = (
-                    observed_at - due_at
+                    observed_at
+                    - due_at.astimezone(timezone.utc)
             ).total_seconds()
 
             return (
@@ -160,35 +161,30 @@ class CommitmentApplicationService:
                 else "stale_overdue"
             )
 
-        if view.status == "upcoming":
+        if status == "upcoming":
             return "upcoming"
 
         return "unscheduled"
 
     @staticmethod
-    def _sort_key(row, observed_at):
+    def _sort_key(row):
         view, commitment = row
 
-        bucket = CommitmentApplicationService._time_bucket(
-            view,
-            observed_at,
-        )
-
-        if bucket == "fresh_overdue":
+        if view.time_bucket == "fresh_overdue":
             return (
                 0,
                 -view.due_at.timestamp(),
                 commitment.id,
             )
 
-        if bucket == "upcoming":
+        if view.time_bucket == "upcoming":
             return (
                 1,
                 view.due_at.timestamp(),
                 commitment.id,
             )
 
-        if bucket == "unscheduled":
+        if view.time_bucket == "unscheduled":
             return (
                 2,
                 -commitment.created_at.timestamp(),
