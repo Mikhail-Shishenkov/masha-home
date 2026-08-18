@@ -19,6 +19,14 @@ class ConversationTurnStatus(str, Enum):
     TIMEOUT = "timeout"
     FAILED = "failed"
 
+ResponseExpressionCue = Literal[
+    "warm",
+    "amused",
+    "thoughtful",
+    "supportive",
+    "firm",
+    "playful",
+]
 
 class ApplicationErrorCode(str, Enum):
     MODEL_UNAVAILABLE = "MODEL_UNAVAILABLE"
@@ -354,6 +362,7 @@ class ConversationTurnResult(UiContract):
     assistant_message: MessageView | None
     status: ConversationTurnStatus
     active_profile_id: str
+    expression_cue: ResponseExpressionCue = "warm"
     error_code: ApplicationErrorCode | None = None
     error_label: str | None = None
     pending_confirmation: PendingConfirmationView | None = None

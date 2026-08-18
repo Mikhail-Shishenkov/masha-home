@@ -1150,7 +1150,10 @@ class LocalConversationBridge(QObject):
                         summary=result.pending_confirmation.subject,
                     )
                 else:
-                    snapshot = self._session_snapshot("assistant_responded")
+                    snapshot = self._session_snapshot(
+                        "assistant_responded",
+                        expression_cue=result.expression_cue,
+                    )
             else:
                 snapshot = self._session_snapshot(
                     "model_unavailable",
@@ -1178,7 +1181,10 @@ class LocalConversationBridge(QObject):
         else:
             self._conversation_id = result.conversation_id or self._conversation_id
             result_payload = result.model_dump(mode="json")
-            snapshot = self._session_snapshot("assistant_responded")
+            snapshot = self._session_snapshot(
+                "assistant_responded",
+                expression_cue=result.expression_cue,
+            )
         self._turn_in_flight = False
         self._emit({"kind": "continuity_thread_result", "result": result_payload, "snapshot": snapshot.model_dump(mode="json")})
 
