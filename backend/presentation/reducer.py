@@ -47,6 +47,7 @@ from .models import (
     ExpressionCode,
     ExpressionCue,
     ExpressionHold,
+    ExpressionSource,
     HomePresentationModel,
     InteractionSurface,
     ModelOverlay,
@@ -66,6 +67,14 @@ from .models import (
 
 CONVERSATION_SURFACE_ID = "home.conversation"
 
+_RESPONSE_EXPRESSION_CODES = {
+    "warm": ExpressionCode.WARM_SMILE,
+    "amused": ExpressionCode.AMUSED,
+    "thoughtful": ExpressionCode.THOUGHTFUL,
+    "supportive": ExpressionCode.SYMPATHETIC,
+    "firm": ExpressionCode.SERIOUS,
+    "playful": ExpressionCode.PLAYFUL,
+}
 
 class PresentationReducer:
     """Maps an event and immutable model to a new model without side effects."""
@@ -140,12 +149,20 @@ class PresentationReducer:
             )
 
         if isinstance(event, AssistantResponded):
+            expression_code = _RESPONSE_EXPRESSION_CODES[
+                event.expression_cue
+            ]
+
             return model.model_copy(
                 update={
                     "presence": model.presence.model_copy(
                         update={
                             "pose": BasePose.SPEAKING,
-                            "expression": self._expression(ExpressionCode.WARM_SMILE, 0.34),
+                            "expression": self._expression(
+                                expression_code,
+                                0.34,
+                                source=ExpressionSource.APPLICATION_CUE,
+                            ),
                             "attention": AttentionState.TOWARD_USER,
                             "activity": PresenceActivity.SPEAKING,
                         }
@@ -156,17 +173,21 @@ class PresentationReducer:
         if isinstance(event, AssistantSettled):
             current_expression = model.presence.expression
 
-            settled_expression = self._expression(
-                (
-                    current_expression.code
-                    if current_expression is not None
-                    else ExpressionCode.NEUTRAL
-                ),
-                (
-                    min(current_expression.intensity, 0.18)
-                    if current_expression is not None
-                    else 0.12
-                ),
+            settled_expression = (
+                current_expression.model_copy(
+                    update={
+                        "intensity": min(
+                            current_expression.intensity,
+                            0.18,
+                        ),
+                        "hold": ExpressionHold.WHILE_STATE_ACTIVE,
+                    }
+                )
+                if current_expression is not None
+                else self._expression(
+                    ExpressionCode.NEUTRAL,
+                    0.12,
+                )
             )
 
             return model.model_copy(
@@ -530,10 +551,16 @@ class PresentationReducer:
         raise TypeError(f"unsupported presentation event: {type(event).__name__}")
 
     @staticmethod
-    def _expression(code: ExpressionCode, intensity: float) -> ExpressionCue:
+    def _expression(
+            code: ExpressionCode,
+            intensity: float,
+            *,
+            source: ExpressionSource = ExpressionSource.STATE_RULE,
+    ) -> ExpressionCue:
         return ExpressionCue(
             code=code,
             intensity=intensity,
+            source=source,
             hold=ExpressionHold.WHILE_STATE_ACTIVE,
         )
 

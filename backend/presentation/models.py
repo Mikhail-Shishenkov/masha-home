@@ -44,6 +44,7 @@ class ExpressionCode(str, Enum):
     CURIOUS = "curious"
     WARM_SMILE = "warm_smile"
     AMUSED = "amused"
+    PLAYFUL = "playful"
     LAUGHING = "laughing"
     THOUGHTFUL = "thoughtful"
     SURPRISED = "surprised"

@@ -46,6 +46,16 @@ from .model_settings import ModelSettingsService
 from .status import MashaStatusService
 from .visual_assets import VisualIdentityResolver
 
+_RESPONSE_EXPRESSION_CUES = frozenset(
+    {
+        "warm",
+        "amused",
+        "thoughtful",
+        "supportive",
+        "firm",
+        "playful",
+    }
+)
 
 class HomeSnapshotView(UiContract):
     """Bounded renderer-safe data with no service, provider, or storage handles."""
@@ -149,8 +159,24 @@ class HomePresentationSession:
     def assistant_thinking(self) -> HomeSnapshotView:
         return self._dispatch(AssistantStartedThinking(occurred_at=self._now()))
 
-    def assistant_responded(self) -> HomeSnapshotView:
-        return self._dispatch(AssistantResponded(occurred_at=self._now()))
+    def assistant_responded(
+            self,
+            *,
+            expression_cue: str = "warm",
+    ) -> HomeSnapshotView:
+        safe_cue = (
+            expression_cue
+            if expression_cue
+               in _RESPONSE_EXPRESSION_CUES
+            else "warm"
+        )
+
+        return self._dispatch(
+            AssistantResponded(
+                occurred_at=self._now(),
+                expression_cue=safe_cue,
+            )
+        )
 
     def assistant_settled(
             self,

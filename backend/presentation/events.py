@@ -28,6 +28,14 @@ class AssistantStartedThinking(PresentationEvent):
 
 class AssistantResponded(PresentationEvent):
     kind: Literal["assistant_responded"] = "assistant_responded"
+    expression_cue: Literal[
+        "warm",
+        "amused",
+        "thoughtful",
+        "supportive",
+        "firm",
+        "playful",
+    ] = "warm"
 
 class AssistantSettled(PresentationEvent):
     kind: Literal["assistant_settled"] = "assistant_settled"
