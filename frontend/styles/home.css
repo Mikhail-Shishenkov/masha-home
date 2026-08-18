@@ -946,4 +946,24 @@ html[data-safety="autonomy_stopped"] .ambient { background: linear-gradient(90de
   border-left-color: rgba(194, 142, 92, .22);
   background: rgba(255, 245, 228, .015);
 }
+.quick-action-subject {
+  margin: -6px 0 18px;
+
+  color: rgba(248, 237, 224, .78);
+
+  font: 500 15px/1.45 system-ui, sans-serif;
+}
+
+.quick-action-hint {
+  min-height: 1.4em;
+  margin: 9px 0 18px;
+
+  color: rgba(236, 223, 207, .48);
+
+  font: 400 12px/1.45 system-ui, sans-serif;
+}
+
+.quick-action-hint.is-error {
+  color: #f0b18b;
+}
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

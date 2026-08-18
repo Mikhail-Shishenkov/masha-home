@@ -231,6 +231,53 @@
       <label for="commitment-due">Срок, если нужен</label><input id="commitment-due" maxlength="120" placeholder="завтра в 18:00 или оставить пустым">
       <div class="object-actions"><button id="submit-commitment" type="button">Показать перед сохранением</button><button id="cancel-commitment" type="button">Не сейчас</button></div>
     </aside>
+    <aside
+  class="quick-action-surface"
+  id="commitment-reschedule-surface"
+  aria-live="polite"
+  hidden
+>
+  <p class="eyebrow">пересматриваем срок</p>
+  <h2>Когда теперь?</h2>
+
+  <p
+    class="quick-action-subject"
+    id="commitment-reschedule-subject"
+  ></p>
+
+  <label for="commitment-reschedule-due">
+    Новый срок
+  </label>
+
+  <input
+    id="commitment-reschedule-due"
+    maxlength="120"
+    placeholder="например: завтра в 18:00"
+  >
+
+  <p
+    class="quick-action-hint"
+    id="commitment-reschedule-hint"
+  >
+    Например: «завтра в 18:00» или «через 2 часа».
+  </p>
+
+  <div class="object-actions">
+    <button
+      id="submit-commitment-reschedule"
+      type="button"
+    >
+      Показать перед изменением
+    </button>
+
+    <button
+      id="cancel-commitment-reschedule"
+      type="button"
+    >
+      Не сейчас
+    </button>
+  </div>
+</aside>
     <aside class="quick-action-surface" id="skill-install-surface" aria-live="polite" hidden>
       <p class="eyebrow">проверенный локальный пакет</p><h2 id="skill-install-title">Добавить навык?</h2>
       <p id="skill-install-copy"></p><div class="object-actions"><button id="confirm-skill-install" type="button">Установить</button><button id="reject-skill-install" type="button">Не сейчас</button></div>

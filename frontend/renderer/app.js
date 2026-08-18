@@ -68,6 +68,18 @@ const workbenchPermissions = document.getElementById("workbench-permissions");
 const closeWorkbench = document.getElementById("close-workbench");
 const addCommitment = document.getElementById("add-commitment");
 const commitmentCreateSurface = document.getElementById("commitment-create-surface");
+const commitmentRescheduleSurface =
+  document.getElementById("commitment-reschedule-surface");
+const commitmentRescheduleSubject =
+  document.getElementById("commitment-reschedule-subject");
+const commitmentRescheduleDue =
+  document.getElementById("commitment-reschedule-due");
+const commitmentRescheduleHint =
+  document.getElementById("commitment-reschedule-hint");
+const submitCommitmentReschedule =
+  document.getElementById("submit-commitment-reschedule");
+const cancelCommitmentReschedule =
+  document.getElementById("cancel-commitment-reschedule");
 const commitmentTitle = document.getElementById("commitment-title");
 const commitmentDue = document.getElementById("commitment-due");
 const submitCommitment = document.getElementById("submit-commitment");
@@ -119,6 +131,7 @@ let historySearchForgotten = false;
 let historySearchTimer = null;
 let pendingSkillInstall = null;
 let continuityCreateKind = null;
+let pendingCommitmentReschedule = null;
 const attentionMagicState = {
   commitments: 0,
   freshOverdueCommitments: 0,
@@ -430,6 +443,7 @@ function closeTemporarySurfaces() {
   reflectionsSurface.hidden = true;
   workbenchSurface.hidden = true;
   commitmentCreateSurface.hidden = true;
+  commitmentRescheduleSurface.hidden = true;
   skillInstallSurface.hidden = true;
   continuityCreateSurface.hidden = true;
   memoryCandidateSurface.hidden = true;
@@ -459,7 +473,12 @@ function transitionToSurface(open, { preserveCandidate = false } = {}) {
     continuitySurface,
     reflectionsSurface,
     workbenchSurface,
-    operationSurface, memoryCandidateSurface, commitmentCreateSurface, skillInstallSurface, continuityCreateSurface,
+    operationSurface,
+    memoryCandidateSurface,
+    commitmentCreateSurface,
+    commitmentRescheduleSurface,
+    skillInstallSurface,
+    continuityCreateSurface,
   ].filter((element) => !element.hidden);
   for (const element of visible) element.classList.add("is-surface-leaving");
   surfaceTransitionTimer = window.setTimeout(() => {
@@ -476,7 +495,7 @@ function transitionToSurface(open, { preserveCandidate = false } = {}) {
 function returnToConversation() {
   candidatePresentation.defer();
   clearTimeout(surfaceTransitionTimer);
-  const visible = [commitmentsSurface, activitySurface, proactiveSurface, continuitySurface, reflectionsSurface, workbenchSurface, operationSurface]
+  const visible = [commitmentsSurface, activitySurface, proactiveSurface, continuitySurface, commitmentRescheduleSurface, reflectionsSurface, workbenchSurface, operationSurface]
     .filter((element) => !element.hidden);
   for (const element of visible) element.classList.add("is-surface-leaving");
   surfaceTransitionTimer = window.setTimeout(() => {
@@ -1006,14 +1025,19 @@ function renderCommitments(view, { append = false } = {}) {
       cancel.className = "commitment-cancel";
       cancel.textContent = "Убрать";
 
+      let reschedule = null;
       let clearDue = null;
 
-      if (item.time_bucket === "stale_overdue") {
-        clearDue = document.createElement("button");
-        clearDue.type = "button";
-        clearDue.className = "commitment-cancel";
-        clearDue.textContent = "Без срока";
-      }
+    if (item.time_bucket === "stale_overdue") {
+      reschedule = document.createElement("button");
+      reschedule.type = "button";
+      reschedule.className = "commitment-cancel";
+      reschedule.textContent = "Перенести";
+      clearDue = document.createElement("button");
+      clearDue.type = "button";
+      clearDue.className = "commitment-cancel";
+      clearDue.textContent = "Без срока";
+    }
 
       complete.addEventListener("click", () => {
         if (
@@ -1024,6 +1048,10 @@ function renderCommitments(view, { append = false } = {}) {
 
         complete.disabled = true;
         cancel.disabled = true;
+
+        if (reschedule) {
+          reschedule.disabled = true;
+        }
 
         if (clearDue) {
           clearDue.disabled = true;
@@ -1044,6 +1072,10 @@ function renderCommitments(view, { append = false } = {}) {
         complete.disabled = true;
         cancel.disabled = true;
 
+        if (reschedule) {
+          reschedule.disabled = true;
+        }
+
         if (clearDue) {
           clearDue.disabled = true;
         }
@@ -1052,6 +1084,38 @@ function renderCommitments(view, { append = false } = {}) {
           item.commitment_id
         );
       });
+
+      if (reschedule) {
+        reschedule.addEventListener("click", () => {
+        if (
+          !ready
+          || inFlight
+          || pendingConfirmation
+        ) return;
+
+        pendingCommitmentReschedule = {
+          id: item.commitment_id,
+          text: item.text,
+        };
+
+        commitmentsSurface.hidden = true;
+
+        commitmentRescheduleSubject.textContent =
+          item.text;
+
+        commitmentRescheduleDue.value = "";
+
+        commitmentRescheduleHint.textContent =
+          "Например: «завтра в 18:00» или «через 2 часа».";
+
+        commitmentRescheduleHint.classList.remove(
+          "is-error"
+        );
+
+        commitmentRescheduleSurface.hidden = false;
+        commitmentRescheduleDue.focus();
+      });
+    }
 
       if (clearDue) {
         clearDue.addEventListener("click", () => {
@@ -1073,11 +1137,15 @@ function renderCommitments(view, { append = false } = {}) {
 
       actions.append(complete);
 
+      if (reschedule) {
+        actions.append(reschedule);
+      }
+
       if (clearDue) {
         actions.append(clearDue);
       }
 
-      actions.append(cancel);
+        actions.append(cancel);
 
       row.append(actions);
     }
@@ -1510,10 +1578,33 @@ function handleBridgeEvent(encoded) {
     return;
   }
   if (
+    payload.kind === "commitment_reschedule_rejected"
+    ) {
+    submitCommitmentReschedule.disabled = false;
+    cancelCommitmentReschedule.disabled = false;
+    commitmentRescheduleHint.textContent =
+      payload.message
+      || "Не смогла понять этот срок.";
+
+    commitmentRescheduleHint.classList.add(
+      "is-error"
+    );
+    commitmentRescheduleDue.focus();
+    return;
+  }
+  if (
   payload.kind === "commitment_completion_proposed"
   || payload.kind === "commitment_cancellation_proposed"
   || payload.kind === "commitment_due_change_proposed"
 ) {
+  if (
+  payload.kind === "commitment_due_change_proposed"
+    ) {
+      pendingCommitmentReschedule = null;
+
+      submitCommitmentReschedule.disabled = false;
+      cancelCommitmentReschedule.disabled = false;
+    }
     applySnapshot(payload.snapshot);
     const result = payload.result;
     activeConversationId = result.conversation_id;
@@ -1894,6 +1985,56 @@ submitCommitment.addEventListener("click", () => {
   setComposerState({ enabled: true, waiting: true });
   bridge.submitMessage(`Добавь дело: ${due ? `${due} ` : ""}${subject}`);
 });
+
+cancelCommitmentReschedule.addEventListener(
+  "click",
+  () => {
+    pendingCommitmentReschedule = null;
+
+    commitmentRescheduleSurface.hidden = true;
+    commitmentsSurface.hidden = false;
+
+    commitmentRescheduleDue.value = "";
+    commitmentRescheduleHint.classList.remove(
+      "is-error"
+    );
+  }
+);
+
+submitCommitmentReschedule.addEventListener(
+  "click",
+  () => {
+    if (
+      !ready
+      || inFlight
+      || pendingConfirmation
+      || !pendingCommitmentReschedule
+    ) return;
+
+    const dueText =
+      commitmentRescheduleDue.value.trim();
+
+    if (!dueText) {
+      commitmentRescheduleHint.textContent =
+        "Скажи, когда теперь это сделать.";
+
+      commitmentRescheduleHint.classList.add(
+        "is-error"
+      );
+
+      commitmentRescheduleDue.focus();
+      return;
+    }
+
+    submitCommitmentReschedule.disabled = true;
+    cancelCommitmentReschedule.disabled = true;
+
+    bridge.proposeCommitmentReschedule(
+      pendingCommitmentReschedule.id,
+      dueText
+    );
+  }
+);
 
 activityTrigger.addEventListener("click", () => {
   if (!ready || inFlight || pendingConfirmation) return;
