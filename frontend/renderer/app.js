@@ -996,27 +996,24 @@ function renderCommitments(view, { append = false } = {}) {
       const actions = document.createElement("div");
       actions.className = "commitment-actions";
 
-      const complete =
-        document.createElement("button");
-
+      const complete = document.createElement("button");
       complete.type = "button";
       complete.className = "commitment-complete";
       complete.textContent = "Готово";
 
-      const cancel =
-        document.createElement("button");
-
+      const cancel = document.createElement("button");
       cancel.type = "button";
       cancel.className = "commitment-cancel";
       cancel.textContent = "Убрать";
 
       let clearDue = null;
-        if (item.time_bucket === "stale_overdue") {
-          clearDue = document.createElement("button");
-          clearDue.type = "button";
-          clearDue.className = "commitment-cancel";
-          clearDue.textContent = "Без срока";
-        }
+
+      if (item.time_bucket === "stale_overdue") {
+        clearDue = document.createElement("button");
+        clearDue.type = "button";
+        clearDue.className = "commitment-cancel";
+        clearDue.textContent = "Без срока";
+      }
 
       complete.addEventListener("click", () => {
         if (
@@ -1027,7 +1024,10 @@ function renderCommitments(view, { append = false } = {}) {
 
         complete.disabled = true;
         cancel.disabled = true;
-        if (clearDue) clearDue.disabled = true;
+
+        if (clearDue) {
+          clearDue.disabled = true;
+        }
 
         bridge.proposeCommitmentCompletion(
           item.commitment_id
@@ -1043,18 +1043,42 @@ function renderCommitments(view, { append = false } = {}) {
 
         complete.disabled = true;
         cancel.disabled = true;
-        if (clearDue) clearDue.disabled = true;
+
+        if (clearDue) {
+          clearDue.disabled = true;
+        }
 
         bridge.proposeCommitmentCancellation(
           item.commitment_id
         );
       });
 
-      actions.append(complete);
       if (clearDue) {
-      actions.append(clearDue);
+        clearDue.addEventListener("click", () => {
+          if (
+            !ready
+            || inFlight
+            || pendingConfirmation
+          ) return;
+
+          complete.disabled = true;
+          cancel.disabled = true;
+          clearDue.disabled = true;
+
+          bridge.proposeCommitmentClearDue(
+            item.commitment_id
+          );
+        });
       }
+
+      actions.append(complete);
+
+      if (clearDue) {
+        actions.append(clearDue);
+      }
+
       actions.append(cancel);
+
       row.append(actions);
     }
 
@@ -1065,23 +1089,6 @@ function renderCommitments(view, { append = false } = {}) {
 
   loadMoreCommitments.dataset.nextOffset =
     String(view?.next_offset ?? "");
-}
-        if (clearDue) {
-  clearDue.addEventListener("click", () => {
-    if (
-      !ready
-      || inFlight
-      || pendingConfirmation
-    ) return;
-
-    complete.disabled = true;
-    cancel.disabled = true;
-    clearDue.disabled = true;
-
-    bridge.proposeCommitmentClearDue(
-      item.commitment_id
-    );
-  });
 }
 
 function hideOperationSurface() {

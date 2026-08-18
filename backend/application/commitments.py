@@ -82,7 +82,7 @@ class CommitmentApplicationService:
                         time_bucket=time_bucket,
                         due_at=commitment.due_at,
                         completed_at=commitment.completed_at,
-                        can_propose_completion=domain_status == "open",
+                        can_propose_completion=domain_status in {"open", "overdue"},
                     ),
                     commitment,
                 )
