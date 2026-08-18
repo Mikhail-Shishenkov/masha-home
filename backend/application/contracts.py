@@ -91,6 +91,12 @@ class CommitmentListView(UiContract):
     page_size: int = Field(default=10, ge=1)
     total: int = Field(default=0, ge=0)
     actionable_total: int = Field(default=0, ge=0)
+
+    fresh_overdue_total: int = Field(default=0, ge=0)
+    upcoming_total: int = Field(default=0, ge=0)
+    unscheduled_total: int = Field(default=0, ge=0)
+    stale_overdue_total: int = Field(default=0, ge=0)
+
     has_more: bool = False
     next_offset: int | None = Field(default=None, ge=0)
 

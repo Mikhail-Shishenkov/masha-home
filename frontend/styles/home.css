@@ -240,6 +240,45 @@ html[data-home-attention="active"] .conversation-surface.is-surface-concealed { 
     animation: none;
   }
 }
+/* Masha's own initiative has a distinct living spark.
+   Commitments change the amount of attention;
+   initiative changes its rhythm. */
+.home-attention-trigger[data-attention-source="initiative"] .spark-three,
+.home-attention-trigger[data-attention-source="mixed"] .spark-three {
+  opacity: 1;
+  animation: home-attention-initiative 2600ms ease-in-out infinite;
+}
+
+@keyframes home-attention-initiative {
+  0%,
+  100% {
+    transform: translateY(0) scale(.9);
+    box-shadow:
+      0 0 8px rgba(255, 222, 168, .8),
+      0 0 14px rgba(241, 176, 88, .52);
+  }
+
+  38% {
+    transform: translateY(-4px) scale(1.24);
+    box-shadow:
+      0 0 12px rgba(255, 226, 180, 1),
+      0 0 24px rgba(243, 177, 88, .76),
+      0 0 34px rgba(214, 133, 49, .3);
+  }
+
+  62% {
+    transform: translateY(-1px) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-attention-trigger[data-attention-source="initiative"] .spark-three,
+  .home-attention-trigger[data-attention-source="mixed"] .spark-three {
+    animation: none;
+    opacity: 1;
+    transform: scale(1.16);
+  }
+}
 .safety-trigger { right: 28px; display: flex; align-items: center; gap: 9px; min-height: 40px; padding: 0 15px; border-radius: 22px; text-transform: uppercase; letter-spacing: .1em; font: 600 10px system-ui, sans-serif; }
 .home-attention-trigger:hover:not(:disabled), .safety-trigger:hover:not(:disabled), .home-attention-trigger:focus-visible, .safety-trigger:focus-visible { color: #fae6c7; border-color: rgba(239,202,147,.46); background: rgba(48,35,24,.7); transform: translateY(-2px); outline: 2px solid rgba(245,209,157,.34); outline-offset: 3px; }
 .home-attention-trigger:disabled, .safety-trigger:disabled { opacity: .35; cursor: not-allowed; }

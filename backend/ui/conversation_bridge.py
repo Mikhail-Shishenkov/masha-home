@@ -93,10 +93,14 @@ class LocalConversationBridge(QObject):
                 ),
                 "recent": self._recent_payload(),
                 "commitments_count": commitments.actionable_total,
-                "overdue_commitments_count": sum(
-                    item.status == "overdue"
-                    for item in commitments.items
+                "fresh_overdue_commitments_count": commitments.fresh_overdue_total,
+                "overdue_commitments_count": (
+                        commitments.fresh_overdue_total
+                        + commitments.stale_overdue_total
                 ),
+                "upcoming_commitments_count": commitments.upcoming_total,
+                "unscheduled_commitments_count": commitments.unscheduled_total,
+                "stale_overdue_commitments_count": commitments.stale_overdue_total,
                 "agent_runs_count": len(
                     self._application.agent_runs(limit=8).items
                 ),

@@ -380,7 +380,7 @@ class MashaApplication:
                     detail=(
                         "Срок только что прошёл"
                         if overdue_seconds < 60 * 60
-                        else "Просрочено сегодня"
+                        else "Срок уже прошёл"
                     ),
                     urgency="important",
                 )

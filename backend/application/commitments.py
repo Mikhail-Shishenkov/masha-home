@@ -23,21 +23,43 @@ class CommitmentApplicationService:
     def __init__(self, *, conversation: ConversationService):
         self._conversation = conversation
 
-    def list(self, *, limit: int | None = 10, offset: int = 0) -> CommitmentListView:
+    def list(
+            self,
+            *,
+            limit: int | None = 10,
+            offset: int = 0,
+    ) -> CommitmentListView:
         if offset < 0 or (limit is not None and limit < 1):
             raise ValueError("invalid commitment page")
-        document = self._conversation.memory_retriever.memory_store.read_document()
+
+        document = (
+            self._conversation
+            .memory_retriever
+            .memory_store
+            .read_document()
+        )
+
         if document is None:
-            return CommitmentListView(observed_at=self._now(), items=(), offset=offset)
+            return CommitmentListView(
+                observed_at=self._now(),
+                items=(),
+                offset=offset,
+            )
+
         engine = self._conversation.temporal_engine
         observed_at = engine.clock.now_utc()
+
         rows = []
+
         for commitment in document.commitments:
             if commitment.visibility is not Visibility.VISIBLE:
                 continue
+
             domain_status = engine.commitment_status(commitment)
+
             if domain_status in {"completed", "cancelled"}:
                 continue
+
             status = (
                 "upcoming"
                 if domain_status == "open"
@@ -45,33 +67,70 @@ class CommitmentApplicationService:
                    and commitment.due_at.astimezone(timezone.utc) > observed_at
                 else domain_status
             )
+
             rows.append(
-                (CommitmentView(
-                    commitment_id=commitment.id,
-                    text=commitment.text,
-                    status=status,
-                    due_at=commitment.due_at,
-                    completed_at=commitment.completed_at,
-                    can_propose_completion=domain_status == "open",
-                ), commitment)
+                (
+                    CommitmentView(
+                        commitment_id=commitment.id,
+                        text=commitment.text,
+                        status=status,
+                        due_at=commitment.due_at,
+                        completed_at=commitment.completed_at,
+                        can_propose_completion=domain_status == "open",
+                    ),
+                    commitment,
+                )
             )
+
         rows.sort(
             key=lambda row: self._sort_key(
                 row,
                 observed_at,
             )
         )
+
         items = [view for view, _ in rows]
-        page = items[offset:] if limit is None else items[offset : offset + limit]
+
+        bucket_counts = {
+            "fresh_overdue": 0,
+            "upcoming": 0,
+            "unscheduled": 0,
+            "stale_overdue": 0,
+        }
+
+        for view in items:
+            bucket = self._time_bucket(
+                view,
+                observed_at,
+            )
+            bucket_counts[bucket] += 1
+
+        page = (
+            items[offset:]
+            if limit is None
+            else items[offset: offset + limit]
+        )
+
         next_offset = offset + len(page)
         has_more = next_offset < len(items)
+
+        actionable_total = sum(bucket_counts.values())
+
         return CommitmentListView(
             observed_at=observed_at,
             items=tuple(page),
             offset=offset,
-            page_size=max(1, len(page)) if limit is None else limit,
-            total=len(items),
-            actionable_total=sum(item.can_propose_completion for item in items),
+            page_size=(
+                max(1, len(page))
+                if limit is None
+                else limit
+            ),
+            total=actionable_total,
+            actionable_total=actionable_total,
+            fresh_overdue_total=bucket_counts["fresh_overdue"],
+            upcoming_total=bucket_counts["upcoming"],
+            unscheduled_total=bucket_counts["unscheduled"],
+            stale_overdue_total=bucket_counts["stale_overdue"],
             has_more=has_more,
             next_offset=next_offset if has_more else None,
         )
@@ -87,57 +146,58 @@ class CommitmentApplicationService:
         )
 
     @staticmethod
+    def _time_bucket(view, observed_at):
+        if view.status == "overdue" and view.due_at is not None:
+            due_at = view.due_at.astimezone(timezone.utc)
+
+            overdue_seconds = (
+                    observed_at - due_at
+            ).total_seconds()
+
+            return (
+                "fresh_overdue"
+                if overdue_seconds <= 24 * 60 * 60
+                else "stale_overdue"
+            )
+
+        if view.status == "upcoming":
+            return "upcoming"
+
+        return "unscheduled"
+
+    @staticmethod
     def _sort_key(row, observed_at):
         view, commitment = row
 
-        if view.status == "overdue" and view.due_at is not None:
-            due_at = view.due_at.astimezone(timezone.utc)
-            overdue_seconds = (observed_at - due_at).total_seconds()
+        bucket = CommitmentApplicationService._time_bucket(
+            view,
+            observed_at,
+        )
 
-            # Свежая просрочка ещё действительно требует внимания.
-            # Чем недавно прошёл срок — тем выше дело.
-            if overdue_seconds <= 24 * 60 * 60:
-                return (
-                    0,
-                    -due_at.timestamp(),
-                    commitment.id,
-                )
-
-            # Старая просрочка больше не должна забивать ближайшие дела.
+        if bucket == "fresh_overdue":
             return (
-                3,
-                -due_at.timestamp(),
+                0,
+                -view.due_at.timestamp(),
                 commitment.id,
             )
 
-        # Будущие дела: чем ближе срок, тем выше.
-        if view.status == "upcoming" and view.due_at is not None:
+        if bucket == "upcoming":
             return (
                 1,
                 view.due_at.timestamp(),
                 commitment.id,
             )
 
-        # Дела без срока остаются рядом, но не изображают срочность.
-        if view.status == "open":
+        if bucket == "unscheduled":
             return (
                 2,
                 -commitment.created_at.timestamp(),
                 commitment.id,
             )
 
-        # Завершённые пока оставляем в самом низу.
-        if view.status == "completed":
-            return (
-                4,
-                -view.completed_at.timestamp(),
-                commitment.id,
-            )
-
-        # Cancelled и остальные неактивные состояния — ещё ниже.
         return (
-            5,
-            -commitment.updated_at.timestamp(),
+            3,
+            -view.due_at.timestamp(),
             commitment.id,
         )
 

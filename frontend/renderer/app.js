@@ -20,6 +20,8 @@ const surfaceStatus = document.getElementById("surface-status");
 const runtimeTruth = document.getElementById("runtime-truth");
 const homeAttentionTrigger = document.getElementById("home-attention-trigger");
 const homeAttention = document.getElementById("home-attention");
+const homeAttentionTitle =
+  document.getElementById("home-attention-title");
 const attentionLines = document.getElementById("attention-lines");
 const safetyTrigger = document.getElementById("safety-trigger");
 const safetyOverlay = document.getElementById("safety-overlay");
@@ -119,7 +121,7 @@ let pendingSkillInstall = null;
 let continuityCreateKind = null;
 const attentionMagicState = {
   commitments: 0,
-  overdueCommitments: 0,
+  freshOverdueCommitments: 0,
   proactive: 0,
   pendingConfirmation: false,
   modelAvailable: true,
@@ -131,7 +133,7 @@ function resolveAttentionMagicLevel(state) {
     return "quiet";
   }
 
-  if (state.overdueCommitments > 0) {
+  if (state.freshOverdueCommitments > 0) {
     return "urgent";
   }
 
@@ -153,6 +155,26 @@ function resolveAttentionMagicLevel(state) {
   if (reasons <= 3) return "whisper";
 
   return "center";
+}
+
+function resolveAttentionMagicSource(state) {
+  if (state.proactive > 0 && state.commitments > 0) {
+    return "mixed";
+  }
+
+  if (state.proactive > 0) {
+    return "initiative";
+  }
+
+  if (state.pendingConfirmation) {
+    return "decision";
+  }
+
+  if (state.commitments > 0) {
+    return "commitments";
+  }
+
+  return "quiet";
 }
 
 function attentionReasonCount(state) {
@@ -202,6 +224,9 @@ function acknowledgeAttentionNovelty() {
 function updateAttentionMagic() {
   homeAttentionTrigger.dataset.attentionLevel =
     resolveAttentionMagicLevel(attentionMagicState);
+
+  homeAttentionTrigger.dataset.attentionSource =
+    resolveAttentionMagicSource(attentionMagicState);
 
   triggerAttentionNoveltyIfNeeded(attentionMagicState);
 }
@@ -865,8 +890,8 @@ function renderCommitments(view, { append = false } = {}) {
   const items = view?.items || [];
   attentionMagicState.commitments =
     Number(view?.actionable_total ?? view?.total ?? items.length) || 0;
-  attentionMagicState.overdueCommitments =
-  items.filter((item) => item.status === "overdue").length;
+  attentionMagicState.freshOverdueCommitments =
+  Number(view?.fresh_overdue_total || 0);
   updateAttentionMagic();
   commitmentsCount.textContent = String(
     view?.actionable_total ?? view?.total ?? items.length
@@ -1058,6 +1083,29 @@ function renderHomeAttention(attention) {
   attentionLines.replaceChildren();
 
   const items = attention?.attention_items || [];
+  const hasImportant = items.some(
+  (item) => item.urgency === "important"
+);
+
+const hasPendingDecision = items.some(
+  (item) =>
+    item.kind === "pending_confirmation"
+    || item.kind === "model_unavailable"
+);
+
+const hasSomething =
+  items.length > 0
+  || attention.stale_overdue_commitments_count > 0
+  || attention.unscheduled_commitments_count > 0;
+
+homeAttentionTitle.textContent =
+  hasPendingDecision
+    ? "Тут нужно твоё внимание."
+    : hasImportant
+      ? "Есть кое-что важное."
+      : hasSomething
+        ? "Вот что сейчас рядом."
+        : "Здесь всё спокойно.";
 
   if (!items.length) {
     const quiet = document.createElement("p");
@@ -1097,40 +1145,68 @@ function renderHomeAttention(attention) {
 
   const summaryBits = [];
 
-  if (attention.overdue_commitments_count > 0) {
-    summaryBits.push(
-      `${attention.overdue_commitments_count} просрочен${
-        attention.overdue_commitments_count === 1 ? "ное дело" : "ных дел"
-      }`
-    );
-  }
+const totalOverdue =
+  Number(attention.overdue_commitments_count || 0);
 
-  if (attention.pending_interactions_count > 0) {
-    summaryBits.push(
-      `${attention.pending_interactions_count} ${
-        attention.pending_interactions_count === 1
-          ? "инициатива"
-          : "инициативы"
-      }`
-    );
-  }
+const staleOverdue =
+  Number(attention.stale_overdue_commitments_count || 0);
 
-  const hiddenCount = Math.max(
-    0,
-    Number(attention.commitments_count || 0)
-      - Number(attention.overdue_commitments_count || 0)
+const freshOverdue =
+  Math.max(0, totalOverdue - staleOverdue);
+
+const upcoming =
+  Number(attention.upcoming_commitments_count || 0);
+
+const unscheduled =
+  Number(attention.unscheduled_commitments_count || 0);
+
+const proactive =
+  Number(attention.pending_interactions_count || 0);
+
+if (freshOverdue > 0) {
+  summaryBits.push(
+    freshOverdue === 1
+      ? "1 свежая просрочка"
+      : `${freshOverdue} свежих просрочки`
   );
+}
 
-  if (hiddenCount > 0) {
-    summaryBits.push(`ещё ${hiddenCount} дел рядом`);
-  }
+if (upcoming > 0) {
+  summaryBits.push(
+    upcoming === 1
+      ? "1 дело впереди"
+      : `${upcoming} дел впереди`
+  );
+}
 
-  if (summaryBits.length) {
-    const summary = document.createElement("p");
-    summary.className = "attention-summary";
-    summary.textContent = summaryBits.join(" · ");
-    attentionLines.append(summary);
-  }
+if (staleOverdue > 0) {
+  summaryBits.push(
+    `${staleOverdue} нужно разобрать`
+  );
+}
+
+if (unscheduled > 0) {
+  summaryBits.push(
+    unscheduled === 1
+      ? "1 дело без срока"
+      : `${unscheduled} дел без срока`
+  );
+}
+
+if (proactive > 0) {
+  summaryBits.push(
+    proactive === 1
+      ? "1 моя инициатива"
+      : `${proactive} моих инициативы`
+  );
+}
+
+if (summaryBits.length) {
+  const summary = document.createElement("p");
+  summary.className = "attention-summary";
+  summary.textContent = summaryBits.join(" · ");
+  attentionLines.append(summary);
+}
 }
 
 function applySafety(engaged) {
@@ -1278,8 +1354,8 @@ function handleBridgeEvent(encoded) {
     applySnapshot(payload.snapshot);
     attentionMagicState.commitments =
         Number(payload.commitments_count || 0);
-    attentionMagicState.overdueCommitments =
-        Number(payload.overdue_commitments_count || 0);
+    attentionMagicState.freshOverdueCommitments =
+        Number(payload.fresh_overdue_commitments_count || 0);
     attentionMagicState.proactive =
         Number(payload.proactive_interactions_count || 0);
     updateAttentionMagic();
