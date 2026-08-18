@@ -177,6 +177,53 @@ class CommitmentApplicationService:
             ),
         )
 
+    def propose_cancellation(
+            self,
+            *,
+            commitment_id: str,
+            conversation_id: str | None,
+            project_id: str,
+    ) -> CommitmentProposalResult:
+        conversation, user, assistant = (
+            self._conversation.propose_commitment_cancellation(
+                commitment_id=commitment_id,
+                conversation_id=conversation_id,
+                project_id=project_id,
+            )
+        )
+
+        pending = tuple(
+            item
+            for item in (
+                self._conversation
+                .memory_intent_handler
+                .proposal_store
+                .pending_for_conversation(conversation)
+            )
+            if item.record_type == "commitment"
+        )
+
+        if len(pending) != 1:
+            raise RuntimeError("cancellation proposal projection is ambiguous")
+
+        proposal = pending[0]
+        payload = proposal.record_payload
+
+        return CommitmentProposalResult(
+            conversation_id=conversation,
+            user_message=self._message(user),
+            assistant_message=self._message(assistant),
+            pending_confirmation=PendingConfirmationView(
+                proposal_id=proposal.id,
+                conversation_id=proposal.conversation_id,
+                confirmation_type="commitment_cancel",
+                title="Убрать дело как больше не актуальное?",
+                subject=str(payload.get("text") or "Обязательство"),
+                due_at=payload.get("due_at"),
+                created_at=proposal.created_at,
+            ),
+        )
+
     @staticmethod
     def _message(message) -> MessageView:
         return MessageView(

@@ -834,4 +834,23 @@ html[data-safety="autonomy_stopped"] .ambient { background: linear-gradient(90de
   color: rgba(248, 237, 224, .48);
   font: 400 12px/1.5 system-ui, sans-serif;
 }
+.commitment-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.commitment-cancel {
+  border: 0;
+  border-bottom: 1px solid rgba(222, 184, 126, .28);
+  background: transparent;
+  color: rgba(236, 220, 198, .56);
+  cursor: pointer;
+  font: inherit;
+}
+
+.commitment-cancel:hover {
+  color: rgba(246, 229, 205, .82);
+  border-bottom-color: rgba(222, 184, 126, .52);
+}
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

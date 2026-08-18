@@ -1669,6 +1669,60 @@ class MemoryIntentHandler:
         proposal = self.memory_management.propose(self.proposal_store, operation=MemoryMutationOperation.EDIT, record_id=view.record_id, conversation_id=conversation_id, replacement_payload=payload)
         return MemoryIntentResult(handled=True, response=f"Отметить обязательство выполненным?\n«{view.payload['text']}»\nСтатус: открыто → выполнено.\nПодтверди обычным «да» или выбери «не сейчас».")
 
+    def propose_cancellation_by_id(
+            self,
+            record_id: str,
+            conversation_id: str,
+    ) -> MemoryIntentResult:
+        """Create a cancellation proposal for one explicitly selected Commitment."""
+
+        if self.memory_management is None:
+            return MemoryIntentResult(
+                handled=True,
+                response="Изменение обязательств сейчас недоступно.",
+            )
+
+        view = self.memory_management.get(record_id)
+
+        if view is None or view.record_type != "commitment":
+            return MemoryIntentResult(
+                handled=True,
+                response="Не нашла такое обязательство.",
+            )
+
+        if view.payload.get("status") != "open":
+            return MemoryIntentResult(
+                handled=True,
+                response="Это обязательство уже не открыто.",
+            )
+
+        payload = dict(view.payload)
+        now = self.temporal_engine.clock.now_utc()
+
+        payload.update(
+            status="cancelled",
+            completed_at=None,
+            updated_at=now.isoformat(),
+        )
+
+        self.memory_management.propose(
+            self.proposal_store,
+            operation=MemoryMutationOperation.EDIT,
+            record_id=view.record_id,
+            conversation_id=conversation_id,
+            replacement_payload=payload,
+        )
+
+        return MemoryIntentResult(
+            handled=True,
+            response=(
+                "Убрать это дело из активных?\n"
+                f"«{view.payload['text']}»\n"
+                "Оно останется в истории как больше не актуальное.\n"
+                "Подтверди обычным «да» или выбери «не сейчас»."
+            ),
+        )
+
     def _propose_conversation_episode(
         self,
         match: re.Match[str],

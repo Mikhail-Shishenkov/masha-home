@@ -272,6 +272,7 @@ class PendingConfirmationView(UiContract):
         "memory_restore",
         "commitment_create",
         "commitment_complete",
+        "commitment_cancel",
         "shared_moment_create",
         "continuity_update",
     ]

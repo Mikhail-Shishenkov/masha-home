@@ -909,19 +909,39 @@ function renderCommitments(view, { append = false } = {}) {
     row.append(copy);
 
     if (item.can_propose_completion) {
-      const complete = document.createElement("button");
-      complete.type = "button";
-      complete.className = "commitment-complete";
-      complete.textContent = "Готово";
+    const actions = document.createElement("div");
+    actions.className = "commitment-actions";
+    const complete = document.createElement("button");
+    complete.type = "button";
+    complete.className = "commitment-complete";
+    complete.textContent = "Готово";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "commitment-cancel";
+    cancel.textContent = "Убрать";
+    complete.addEventListener("click", () => {
+    if (!ready || inFlight || pendingConfirmation) return;
+    complete.disabled = true;
+    cancel.disabled = true;
+    bridge.proposeCommitmentCompletion(
+    item.commitment_id
+    );
+  });
 
-      complete.addEventListener("click", () => {
-        if (!ready || inFlight || pendingConfirmation) return;
-        complete.disabled = true;
-        bridge.proposeCommitmentCompletion(item.commitment_id);
-      });
+  cancel.addEventListener("click", () => {
+    if (!ready || inFlight || pendingConfirmation) return;
 
-      row.append(complete);
-    }
+    complete.disabled = true;
+    cancel.disabled = true;
+
+    bridge.proposeCommitmentCancellation(
+      item.commitment_id
+    );
+  });
+
+  actions.append(complete, cancel);
+  row.append(actions);
+}
 
     commitmentsList.append(row);
   }
@@ -1339,7 +1359,10 @@ function handleBridgeEvent(encoded) {
     commitmentsTrigger.setAttribute("aria-expanded", "true");
     return;
   }
-  if (payload.kind === "commitment_completion_proposed") {
+  if (
+  payload.kind === "commitment_completion_proposed"
+  || payload.kind === "commitment_cancellation_proposed"
+) {
     applySnapshot(payload.snapshot);
     const result = payload.result;
     activeConversationId = result.conversation_id;

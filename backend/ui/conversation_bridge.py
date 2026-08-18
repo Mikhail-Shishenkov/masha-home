@@ -838,6 +838,57 @@ class LocalConversationBridge(QObject):
             }
         )
 
+    @Slot(str)
+    def proposeCommitmentCancellation(self, commitment_id: str):  # noqa: N802
+        if self._application is None or self._session is None:
+            self._emit({"kind": "home_unavailable"})
+            return
+
+        if self._turn_in_flight:
+            self._emit({
+                "kind": "commitment_operation_rejected",
+                "reason": "turn_in_flight",
+            })
+            return
+
+        selected = self._application.commitment(commitment_id)
+
+        if selected is None or not selected.can_propose_completion:
+            self._emit({
+                "kind": "commitment_operation_rejected",
+                "reason": "stale_or_invalid",
+            })
+            return
+
+        try:
+            result = self._application.propose_commitment_cancellation(
+                commitment_id=commitment_id,
+                conversation_id=self._conversation_id,
+                project_id=HOME_PROJECT_ID,
+            )
+        except Exception:
+            self._emit({
+                "kind": "commitment_operation_rejected",
+                "reason": "proposal_failed",
+            })
+            return
+
+        self._conversation_id = result.conversation_id
+
+        snapshot = self._session_snapshot(
+            "confirmation_requested",
+            title=result.pending_confirmation.title,
+            summary=result.pending_confirmation.subject,
+        )
+
+        self._emit(
+            {
+                "kind": "commitment_cancellation_proposed",
+                "result": result.model_dump(mode="json"),
+                "snapshot": snapshot.model_dump(mode="json"),
+            }
+        )
+
     @Slot(str, str)
     def resolveConfirmation(self, proposal_id: str, decision: str):  # noqa: N802
         if self._application is None or self._session is None or self._conversation_id is None:
@@ -864,7 +915,11 @@ class LocalConversationBridge(QObject):
                 "Оставляю без изменений"
                 if decision == "reject"
                 else "Сохраняю подтверждённое изменение"
-                if pending.confirmation_type not in {"commitment_create", "commitment_complete"}
+                if pending.confirmation_type not in {
+                    "commitment_create",
+                    "commitment_complete",
+                    "commitment_cancel",
+                }
                 else "Сохраняю обязательство"
                 if pending.confirmation_type == "commitment_create"
                 else "Завершаю обязательство"
