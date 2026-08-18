@@ -368,38 +368,44 @@ class ConversationApplicationService:
                 error_code=ApplicationErrorCode.CONVERSATION_FAILED,
             )
         if active_continuity_thread_id is not None and resolved_id is not None:
-            self._active_continuity_by_conversation[resolved_id] = active_continuity_thread_id
-            expression_cue: ResponseExpressionCue = "warm"
+            self._active_continuity_by_conversation[resolved_id] = (
+                active_continuity_thread_id
+            )
+
+        expression_cue: ResponseExpressionCue = "warm"
+
+        if (
+                resolved_id is not None
+                and self._expression_classifier is not None
+        ):
+            try:
+                latest_messages = self._conversation.history.messages(
+                    resolved_id,
+                    limit=1,
+                )
+            except KeyError:
+                latest_messages = ()
+
+            latest = (
+                latest_messages[-1]
+                if latest_messages
+                else None
+            )
 
             if (
-                    resolved_id is not None
-                    and self._expression_classifier is not None
+                    latest is not None
+                    and latest.role is ConversationRole.ASSISTANT
+                    and latest.origin is ConversationMessageOrigin.MODEL
             ):
                 try:
-                    latest_messages = self._conversation.history.messages(
-                        resolved_id,
-                        limit=1,
+                    expression_cue = self._expression_classifier.classify(
+                        user_message=content,
+                        assistant_message=response_text,
                     )
-                except KeyError:
-                    latest_messages = ()
+                except Exception:
+                    # Эмоциональный слой не имеет права ломать разговор.
+                    expression_cue = "warm"
 
-                latest = (
-                    latest_messages[-1]
-                    if latest_messages
-                    else None
-                )
-
-                if (
-                        latest is not None
-                        and latest.role is ConversationRole.ASSISTANT
-                        and latest.origin is ConversationMessageOrigin.MODEL
-                ):
-                    expression_cue = (
-                        self._expression_classifier.classify(
-                            user_message=content,
-                            assistant_message=response_text,
-                        )
-                    )
         return self._result(
             content=content,
             conversation_id=resolved_id,

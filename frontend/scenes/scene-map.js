@@ -30,6 +30,8 @@
   const EVENING_SCENES = Object.freeze({
     idle: scene("evening", "idle", "assets/presence/evening/idle.png", "Маша дома в тёплой вечерней гостиной"),
     conversation: scene("evening", "conversation", "assets/presence/evening/conversation.png", "Маша разговаривает в вечерней гостиной"),
+    supportive: scene("evening", "supportive", "assets/presence/evening/quiet-with-mug.png", "Маша мягко и заботливо рядом"),
+    amused: scene("evening", "amused", "assets/presence/evening/cozy-with-mug.png", "Маша тепло улыбается и слегка веселится"),
     listening: scene("evening", "listening", "assets/presence/evening/listening.png", "Маша внимательно слушает в вечерней гостиной"),
     thinking: scene("evening", "thinking", "assets/presence/evening/thinking.png", "Маша задумалась в вечерней гостиной"),
     activity: scene("evening", "activity", "assets/presence/evening/activity.png", "Маша занята делом в вечернем доме"),
@@ -110,23 +112,41 @@
 
   switch (activity) {
     case "speaking":
-      if (period === "day" && expression === "warm_smile") {
-        return chooseVariant(
-          presentation,
-          scenes.conversation,
-          scenes.speakingOpen
-        );
-      }
+  // Serious / boundary is handled above before the switch.
 
-  if (canUseEveningVariants && expression === "warm_smile") {
-        return chooseVariant(
-          presentation,
-          scenes.conversation,
-          scenes.speakingOpen
-        );
-      }
+  if (expression === "thoughtful") {
+    if (canUseEveningVariants && scenes.thoughtfulAway) {
+      return scenes.thoughtfulAway;
+    }
 
-      return scenes.conversation;
+    return scenes.thinking;
+  }
+
+  if (expression === "sympathetic") {
+    if (canUseEveningVariants && scenes.supportive) {
+      return scenes.supportive;
+    }
+
+    return scenes.listening;
+  }
+
+  if (expression === "playful") {
+    return scenes.speakingOpen;
+  }
+
+  if (expression === "amused") {
+    if (canUseEveningVariants && scenes.amused) {
+      return scenes.amused;
+    }
+
+    return scenes.speakingOpen;
+  }
+
+  if (expression === "warm_smile") {
+    return scenes.conversation;
+  }
+
+  return scenes.conversation;
 
     case "listening":
       if (canUseEveningVariants) {
