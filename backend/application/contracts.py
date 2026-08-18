@@ -303,9 +303,19 @@ class ConfirmationResolutionResult(UiContract):
     assistant_message: MessageView
     pending_confirmation: PendingConfirmationView | None = None
 
-
+class HomeAttentionItemView(UiContract):
+    kind: Literal[
+        "overdue_commitment",
+        "proactive_interaction",
+        "pending_confirmation",
+        "model_unavailable",
+        "safety_stop",
+    ]
+    title: str = Field(min_length=1, max_length=200)
+    detail: str | None = Field(default=None, max_length=500)
+    urgency: Literal["quiet", "notice", "important"]
 class HomeAttentionView(UiContract):
-    """Bounded truth for the temporary 'what is alive now' Home surface."""
+    """Bounded truth for what currently deserves attention in Home."""
 
     observed_at: datetime
     active_conversation: ConversationSummaryView | None
@@ -314,6 +324,9 @@ class HomeAttentionView(UiContract):
     emergency_stop_engaged: bool
     safety_label: str
     commitments_count: int = Field(ge=0)
+    overdue_commitments_count: int = Field(default=0, ge=0)
+    pending_interactions_count: int = Field(default=0, ge=0)
+    attention_items: tuple[HomeAttentionItemView, ...] = ()
 
 
 class ConversationTurnResult(UiContract):

@@ -46,43 +46,73 @@ class LocalConversationBridge(QObject):
         if self._application is None:
             self._emit({"kind": "home_unavailable"})
             return
+
         self._session = self._application.open_home_session()
         snapshot = self._session_snapshot("opened")
+
         conversation = self._application.latest_conversation()
-        self._conversation_id = None if conversation is None else conversation.conversation_id
+        self._conversation_id = (
+            None
+            if conversation is None
+            else conversation.conversation_id
+        )
+
         self._clear_human_search_context()
+
         pending = (
             None
             if conversation is None
-            else self._application.pending_confirmation(conversation.conversation_id)
+            else self._application.pending_confirmation(
+                conversation.conversation_id
+            )
         )
+
         if pending is not None:
             snapshot = self._session_snapshot(
                 "confirmation_requested",
                 title=pending.title,
                 summary=pending.subject,
             )
+
+        commitments = self._application.commitments(limit=None)
+
         proactive = self._application.proactive_interactions(limit=6)
-        self._visible_proactive_ids = {item.interaction_id for item in proactive.items}
+        self._visible_proactive_ids = {
+            item.interaction_id
+            for item in proactive.items
+        }
+
         self._emit(
             {
                 "kind": "home_initial",
                 "snapshot": snapshot.model_dump(mode="json"),
-                "conversation": None if conversation is None else conversation.model_dump(mode="json"),
-                "recent": self._recent_payload(),
-                "commitments_count": sum(
-                    item.can_propose_completion
-                    for item in self._application.commitments(limit=None).items
+                "conversation": (
+                    None
+                    if conversation is None
+                    else conversation.model_dump(mode="json")
                 ),
-                "agent_runs_count": len(self._application.agent_runs(limit=8).items),
+                "recent": self._recent_payload(),
+                "commitments_count": commitments.actionable_total,
+                "overdue_commitments_count": sum(
+                    item.status == "overdue"
+                    for item in commitments.items
+                ),
+                "agent_runs_count": len(
+                    self._application.agent_runs(limit=8).items
+                ),
                 "proactive_interactions_count": len(proactive.items),
                 "continuity_count": self._continuity_count(),
                 "reflection_items_count": self._reflection_count(),
-                "pending_confirmation": None if pending is None else pending.model_dump(mode="json"),
-                "memory_candidate": self._memory_candidate_payload(pending=pending),
+                "pending_confirmation": (
+                    None
+                    if pending is None
+                    else pending.model_dump(mode="json")
+                ),
+                "memory_candidate": self._memory_candidate_payload(
+                    pending=pending
+                ),
             }
         )
-
     @Slot()
     def loadRecentConversations(self):  # noqa: N802 - Qt slot name is part of the JS contract
         if self._application is None:
@@ -232,7 +262,7 @@ class LocalConversationBridge(QObject):
         """Refresh Presentation time without changing conversation or domain state."""
         if self._application is None or self._session is None:
             return
-
+        self._emit
         snapshot = self._session_snapshot("observe_time")
 
         self._emit(

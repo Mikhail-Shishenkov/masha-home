@@ -127,6 +127,10 @@ const attentionMagicState = {
 };
 
 function resolveAttentionMagicLevel(state) {
+    if (state.safetyEngaged) {
+    return "quiet";
+  }
+
   if (state.overdueCommitments > 0) {
     return "urgent";
   }
@@ -1197,6 +1201,13 @@ function handleBridgeEvent(encoded) {
   if (payload.kind === "home_initial") {
     resetHumanSearchUi();
     applySnapshot(payload.snapshot);
+    attentionMagicState.commitments =
+        Number(payload.commitments_count || 0);
+    attentionMagicState.overdueCommitments =
+        Number(payload.overdue_commitments_count || 0);
+    attentionMagicState.proactive =
+        Number(payload.proactive_interactions_count || 0);
+    updateAttentionMagic();
     renderConversation(payload.conversation);
     activeConversationId = payload.conversation?.conversation_id || null;
     renderRecent(payload.recent, activeConversationId);
