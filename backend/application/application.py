@@ -263,6 +263,21 @@ class MashaApplication:
             due_at=due_at,
         )
 
+    def propose_commitment_reschedule(
+            self,
+            *,
+            commitment_id: str,
+            conversation_id: str | None,
+            project_id: str,
+            due_text: str,
+    ) -> CommitmentProposalResult:
+        return self._commitments.propose_reschedule_text(
+            commitment_id=commitment_id,
+            conversation_id=conversation_id,
+            project_id=project_id,
+            due_text=due_text,
+        )
+
     def pending_confirmation(self, conversation_id: str) -> PendingConfirmationView | None:
         return self._conversation.pending_confirmation(conversation_id)
 

@@ -950,6 +950,88 @@ class LocalConversationBridge(QObject):
         )
 
     @Slot(str, str)
+    def proposeCommitmentReschedule(
+            self,
+            commitment_id: str,
+            due_text: str,
+    ):  # noqa: N802
+        if self._application is None or self._session is None:
+            self._emit({"kind": "home_unavailable"})
+            return
+
+        if self._turn_in_flight:
+            self._emit({
+                "kind": "commitment_operation_rejected",
+                "reason": "turn_in_flight",
+            })
+            return
+
+        selected = self._application.commitment(
+            commitment_id
+        )
+
+        if (
+                selected is None
+                or not selected.can_propose_completion
+                or selected.time_bucket != "stale_overdue"
+        ):
+            self._emit({
+                "kind": "commitment_operation_rejected",
+                "reason": "stale_or_invalid",
+            })
+            return
+
+        normalized_due = due_text.strip()
+
+        if not normalized_due:
+            self._emit({
+                "kind": "commitment_reschedule_rejected",
+                "message": "Скажи, когда теперь это сделать.",
+            })
+            return
+
+        try:
+            result = (
+                self._application
+                .propose_commitment_reschedule(
+                    commitment_id=commitment_id,
+                    conversation_id=self._conversation_id,
+                    project_id=HOME_PROJECT_ID,
+                    due_text=normalized_due,
+                )
+            )
+        except ValueError:
+            self._emit({
+                "kind": "commitment_reschedule_rejected",
+                "message": (
+                    "Не смогла однозначно понять этот срок. "
+                    "Например: «завтра в 18:00», "
+                    "«через 2 часа» или «20.08.2026»."
+                ),
+            })
+            return
+        except Exception:
+            self._emit({
+                "kind": "commitment_operation_rejected",
+                "reason": "proposal_failed",
+            })
+            return
+
+        self._conversation_id = result.conversation_id
+
+        snapshot = self._session_snapshot(
+            "confirmation_requested",
+            title=result.pending_confirmation.title,
+            summary=result.pending_confirmation.subject,
+        )
+
+        self._emit({
+            "kind": "commitment_due_change_proposed",
+            "result": result.model_dump(mode="json"),
+            "snapshot": snapshot.model_dump(mode="json"),
+        })
+
+    @Slot(str, str)
     def resolveConfirmation(self, proposal_id: str, decision: str):  # noqa: N802
         if self._application is None or self._session is None or self._conversation_id is None:
             self._emit({"kind": "home_unavailable"})

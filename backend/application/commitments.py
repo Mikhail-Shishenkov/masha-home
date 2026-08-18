@@ -344,6 +344,37 @@ class CommitmentApplicationService:
             ),
         )
 
+    def propose_reschedule_text(
+            self,
+            *,
+            commitment_id: str,
+            conversation_id: str | None,
+            project_id: str,
+            due_text: str,
+    ) -> CommitmentProposalResult:
+        """Resolve a human due expression through Home time, then propose it."""
+
+        normalized_due = due_text.strip()
+
+        if not normalized_due:
+            raise ValueError("new commitment due date is empty")
+
+        parsed = self._conversation.temporal_engine.parse_due(
+            normalized_due
+        )
+
+        if parsed.resolved_utc is None:
+            raise ValueError(
+                "new commitment due date is unsupported or ambiguous"
+            )
+
+        return self.propose_due_change(
+            commitment_id=commitment_id,
+            conversation_id=conversation_id,
+            project_id=project_id,
+            due_at=parsed.resolved_utc,
+        )
+
     @staticmethod
     def _message(message) -> MessageView:
         return MessageView(
