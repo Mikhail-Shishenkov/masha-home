@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from backend.presentation import (
     AssistantResponded,
+    AssistantSettled,
     AssistantStartedThinking,
     ActivityCompleted,
     ActivityCancelled,
@@ -150,6 +151,22 @@ class HomePresentationSession:
 
     def assistant_responded(self) -> HomeSnapshotView:
         return self._dispatch(AssistantResponded(occurred_at=self._now()))
+
+    def assistant_settled(
+            self,
+            *,
+            expected_revision: int,
+    ) -> HomeSnapshotView | None:
+        """Settle only if nothing newer has changed Presentation."""
+
+        if self._runtime.model.revision != expected_revision:
+            return None
+
+        return self._dispatch(
+            AssistantSettled(
+                occurred_at=self._now()
+            )
+        )
 
     def confirmation_requested(self, *, title: str, summary: str) -> HomeSnapshotView:
         now = self._now()

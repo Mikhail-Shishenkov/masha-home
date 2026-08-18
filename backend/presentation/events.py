@@ -29,6 +29,9 @@ class AssistantStartedThinking(PresentationEvent):
 class AssistantResponded(PresentationEvent):
     kind: Literal["assistant_responded"] = "assistant_responded"
 
+class AssistantSettled(PresentationEvent):
+    kind: Literal["assistant_settled"] = "assistant_settled"
+
 
 class SurfaceCreated(PresentationEvent):
     kind: Literal["surface_created"] = "surface_created"

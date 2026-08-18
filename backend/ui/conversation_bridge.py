@@ -261,6 +261,31 @@ class LocalConversationBridge(QObject):
         )
         future.add_done_callback(self._finish_proactive_refresh)
 
+    @Slot(int)
+    def settleAssistantPresence(
+            self,
+            expected_revision: int,
+    ):  # noqa: N802
+        if self._application is None or self._session is None:
+            return
+
+        snapshot = self._session_snapshot(
+            "assistant_settled",
+            expected_revision=expected_revision,
+        )
+
+        if snapshot is None:
+            return
+
+        self._emit(
+            {
+                "kind": "presence_settled",
+                "snapshot": snapshot.model_dump(
+                    mode="json"
+                ),
+            }
+        )
+
     @Slot()
     def refreshHomeTime(self):  # noqa: N802
         """Refresh Presentation time without changing conversation or domain state."""

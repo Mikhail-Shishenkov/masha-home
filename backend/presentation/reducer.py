@@ -14,6 +14,7 @@ from .events import (
     ActivityWaiting,
     AssistantResponded,
     AssistantStartedThinking,
+    AssistantSettled,
     AutonomyResumed,
     EmergencyStopEngaged,
     ModelChanged,
@@ -147,6 +148,23 @@ class PresentationReducer:
                             "expression": self._expression(ExpressionCode.WARM_SMILE, 0.34),
                             "attention": AttentionState.TOWARD_USER,
                             "activity": PresenceActivity.SPEAKING,
+                        }
+                    )
+                }
+            )
+
+        if isinstance(event, AssistantSettled):
+            return model.model_copy(
+                update={
+                    "presence": model.presence.model_copy(
+                        update={
+                            "pose": BasePose.ATTENTIVE,
+                            "expression": self._expression(
+                                ExpressionCode.WARM_SMILE,
+                                0.18,
+                            ),
+                            "attention": AttentionState.TOWARD_USER,
+                            "activity": PresenceActivity.IDLE,
                         }
                     )
                 }
