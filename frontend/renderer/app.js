@@ -1036,25 +1036,80 @@ function renderConfirmationResult(result) {
 
 function renderHomeAttention(attention) {
   attentionLines.replaceChildren();
-  const lines = [];
-  if (attention.emergency_stop_engaged) {
-    lines.push("Автономные действия стоят на паузе.");
-  } else {
-    lines.push("Аварийная остановка сейчас не включена.");
+
+  const items = attention?.attention_items || [];
+
+  if (!items.length) {
+    const quiet = document.createElement("p");
+    quiet.className = "attention-empty";
+    quiet.textContent = "Сейчас всё спокойно. Ничего отдельно не просит твоего внимания.";
+    attentionLines.append(quiet);
+    return;
   }
-  if (!attention.model_available) lines.push(attention.model_label);
-  if (attention.active_conversation) {
-    lines.push(`Продолжается разговор: ${attention.active_conversation.preview}`);
-  } else {
-    lines.push("Наша первая беседа ещё впереди.");
+
+  for (const item of items) {
+    const row = document.createElement("article");
+    row.className = "attention-item";
+    row.dataset.urgency = item.urgency;
+    row.dataset.kind = item.kind;
+
+    const marker = document.createElement("span");
+    marker.className = "attention-marker";
+    marker.setAttribute("aria-hidden", "true");
+
+    const copy = document.createElement("div");
+    copy.className = "attention-copy";
+
+    const title = document.createElement("h3");
+    title.textContent = item.title;
+
+    copy.append(title);
+
+    if (item.detail) {
+      const detail = document.createElement("p");
+      detail.textContent = item.detail;
+      copy.append(detail);
+    }
+
+    row.append(marker, copy);
+    attentionLines.append(row);
   }
-  if (attention.commitments_count) {
-    lines.push(`Рядом ${attention.commitments_count} ${attention.commitments_count === 1 ? "дело" : "дел"}.`);
+
+  const summaryBits = [];
+
+  if (attention.overdue_commitments_count > 0) {
+    summaryBits.push(
+      `${attention.overdue_commitments_count} просрочен${
+        attention.overdue_commitments_count === 1 ? "ное дело" : "ных дел"
+      }`
+    );
   }
-  for (const content of lines) {
-    const paragraph = document.createElement("p");
-    paragraph.textContent = content;
-    attentionLines.append(paragraph);
+
+  if (attention.pending_interactions_count > 0) {
+    summaryBits.push(
+      `${attention.pending_interactions_count} ${
+        attention.pending_interactions_count === 1
+          ? "инициатива"
+          : "инициативы"
+      }`
+    );
+  }
+
+  const hiddenCount = Math.max(
+    0,
+    Number(attention.commitments_count || 0)
+      - Number(attention.overdue_commitments_count || 0)
+  );
+
+  if (hiddenCount > 0) {
+    summaryBits.push(`ещё ${hiddenCount} дел рядом`);
+  }
+
+  if (summaryBits.length) {
+    const summary = document.createElement("p");
+    summary.className = "attention-summary";
+    summary.textContent = summaryBits.join(" · ");
+    attentionLines.append(summary);
   }
 }
 

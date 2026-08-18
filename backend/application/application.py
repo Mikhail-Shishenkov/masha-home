@@ -34,6 +34,8 @@ from .contracts import (
     SharedContinuityView,
     VisualAssetView,
     WorkbenchView,
+    HomeAttentionItemView,
+    HomeAttentionView,
 )
 from .conversation import ConversationApplicationService
 from .home_snapshot import HomeSnapshotService, HomeSnapshotView
@@ -255,9 +257,15 @@ class MashaApplication:
     def status(self) -> MashaStatusView:
         return self._status.snapshot()
 
-    def home_attention(self, *, conversation_id: str | None = None) -> HomeAttentionView:
-        """Return only facts that are safe and meaningful in the current Home slice."""
+    def home_attention(
+            self,
+            *,
+            conversation_id: str | None = None,
+    ) -> HomeAttentionView:
+        """Return a bounded, human-facing projection of what deserves attention."""
+
         status = self._status.snapshot()
+
         active_conversation = None
         if conversation_id is not None:
             active_conversation = next(
@@ -268,6 +276,76 @@ class MashaApplication:
                 ),
                 None,
             )
+
+        commitments = self._commitments.list(limit=None)
+        overdue = tuple(
+            item
+            for item in commitments.items
+            if item.status == "overdue"
+        )
+
+        proactive = self._proactive.list(limit=6)
+
+        pending = (
+            None
+            if conversation_id is None
+            else self._conversation.pending_confirmation(conversation_id)
+        )
+
+        attention_items: list[HomeAttentionItemView] = []
+
+        if status.emergency_stop_engaged:
+            attention_items.append(
+                HomeAttentionItemView(
+                    kind="safety_stop",
+                    title="Автономные действия остановлены",
+                    detail="Разговор остаётся рядом, но сама я ничего не запущу.",
+                    urgency="notice",
+                )
+            )
+
+        if not status.model_available:
+            attention_items.append(
+                HomeAttentionItemView(
+                    kind="model_unavailable",
+                    title="Локальная модель сейчас недоступна",
+                    detail=status.model_label,
+                    urgency="important",
+                )
+            )
+
+        if pending is not None:
+            attention_items.append(
+                HomeAttentionItemView(
+                    kind="pending_confirmation",
+                    title=pending.title,
+                    detail=pending.subject,
+                    urgency="important",
+                )
+            )
+
+        for commitment in overdue[:3]:
+            attention_items.append(
+                HomeAttentionItemView(
+                    kind="overdue_commitment",
+                    title=commitment.text,
+                    detail="Просроченное дело",
+                    urgency="important",
+                )
+            )
+
+        remaining_slots = max(0, 4 - len(attention_items))
+
+        for interaction in proactive.items[:remaining_slots]:
+            attention_items.append(
+                HomeAttentionItemView(
+                    kind="proactive_interaction",
+                    title=interaction.title,
+                    detail=interaction.message,
+                    urgency="notice",
+                )
+            )
+
         return HomeAttentionView(
             observed_at=datetime.now(timezone.utc),
             active_conversation=active_conversation,
@@ -275,9 +353,10 @@ class MashaApplication:
             model_label=status.model_label,
             emergency_stop_engaged=status.emergency_stop_engaged,
             safety_label=status.safety_label,
-            commitments_count=sum(
-                item.can_propose_completion for item in self._commitments.list(limit=None).items
-            ),
+            commitments_count=commitments.actionable_total,
+            overdue_commitments_count=len(overdue),
+            pending_interactions_count=len(proactive.items),
+            attention_items=tuple(attention_items[:4]),
         )
 
     def emergency_stop(self, reason: str = "manual_emergency_stop") -> SafetyView:

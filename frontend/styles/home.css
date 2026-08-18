@@ -792,4 +792,46 @@ html[data-safety="autonomy_stopped"] .ambient { background: linear-gradient(90de
 .proactive-trigger {
   display: none !important;
 }
+.attention-item {
+  display: grid;
+  grid-template-columns: 9px minmax(0, 1fr);
+  gap: 13px;
+  padding: 13px 0;
+  border-bottom: 1px solid rgba(226, 188, 126, .12);
+}
+
+.attention-marker {
+  width: 6px;
+  height: 6px;
+  margin-top: 7px;
+  border-radius: 50%;
+  background: rgba(231, 187, 121, .58);
+  box-shadow: 0 0 10px rgba(224, 157, 74, .14);
+}
+
+.attention-item[data-urgency="important"] .attention-marker {
+  background: rgba(255, 200, 126, .98);
+  box-shadow:
+    0 0 9px rgba(255, 203, 133, .7),
+    0 0 18px rgba(215, 137, 50, .28);
+}
+
+.attention-copy h3 {
+  margin: 0;
+  color: rgba(250, 238, 222, .94);
+  font: 500 15px/1.35 system-ui, sans-serif;
+}
+
+.attention-copy p {
+  margin: 5px 0 0;
+  color: rgba(248, 237, 224, .58);
+  font: 400 12px/1.45 system-ui, sans-serif;
+}
+
+.attention-summary,
+.attention-empty {
+  margin: 18px 0 0;
+  color: rgba(248, 237, 224, .48);
+  font: 400 12px/1.5 system-ui, sans-serif;
+}
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
