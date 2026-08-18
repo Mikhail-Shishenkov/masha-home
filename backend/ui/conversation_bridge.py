@@ -914,15 +914,13 @@ class LocalConversationBridge(QObject):
             title=(
                 "Оставляю без изменений"
                 if decision == "reject"
-                else "Сохраняю подтверждённое изменение"
-                if pending.confirmation_type not in {
-                    "commitment_create",
-                    "commitment_complete",
-                    "commitment_cancel",
-                }
                 else "Сохраняю обязательство"
                 if pending.confirmation_type == "commitment_create"
                 else "Завершаю обязательство"
+                if pending.confirmation_type == "commitment_complete"
+                else "Убираю неактуальное дело"
+                if pending.confirmation_type == "commitment_cancel"
+                else "Сохраняю подтверждённое изменение"
             ),
         )
         self._emit(

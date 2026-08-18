@@ -307,6 +307,7 @@ class ConfirmationResolutionResult(UiContract):
 class HomeAttentionItemView(UiContract):
     kind: Literal[
         "overdue_commitment",
+        "upcoming_commitment",
         "proactive_interaction",
         "pending_confirmation",
         "model_unavailable",
@@ -326,6 +327,9 @@ class HomeAttentionView(UiContract):
     safety_label: str
     commitments_count: int = Field(ge=0)
     overdue_commitments_count: int = Field(default=0, ge=0)
+    stale_overdue_commitments_count: int = Field(default=0, ge=0)
+    upcoming_commitments_count: int = Field(default=0, ge=0)
+    unscheduled_commitments_count: int = Field(default=0, ge=0)
     pending_interactions_count: int = Field(default=0, ge=0)
     attention_items: tuple[HomeAttentionItemView, ...] = ()
 
