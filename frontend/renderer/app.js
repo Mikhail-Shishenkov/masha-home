@@ -124,6 +124,8 @@ let recentPageState = { revision: -1, nextOffset: null, ids: new Set() };
 let sceneTransitionRevision = 0;
 let sceneTransitionTimer = null;
 let sceneSettleTimer = null;
+let presenceSettleTimer = null;
+let pendingPresenceSettleRevision = null;
 let activeSceneChangedAt = performance.now();
 let pendingConfirmation = null;
 let pendingMemoryCandidate = null;
@@ -266,6 +268,74 @@ const historyViewTransition = window.MashaExclusiveViewTransition.create({
   clearTimer: window.clearTimeout.bind(window),
   requestFrame: window.requestAnimationFrame.bind(window),
 });
+
+function cancelAssistantSettle() {
+  if (presenceSettleTimer !== null) {
+    clearTimeout(presenceSettleTimer);
+  }
+
+  presenceSettleTimer = null;
+  pendingPresenceSettleRevision = null;
+}
+
+function assistantSettleDelay(result) {
+  const textLength =
+    result?.assistant_message?.content?.length || 0;
+
+  /*
+   * Short replies stay addressed to Misha for about 10 seconds.
+   * Longer replies get a little more afterglow, capped at 20 seconds.
+   */
+  const textBlocks = Math.ceil(
+    Math.max(textLength, 1) / 400
+  );
+
+  return Math.min(
+    20_000,
+    8_000 + textBlocks * 2_000
+  );
+}
+
+function scheduleAssistantSettle(snapshot, result) {
+  cancelAssistantSettle();
+
+  const presentation = snapshot?.presentation;
+
+  if (
+    presentation?.presence?.activity !== "speaking"
+  ) {
+    return;
+  }
+
+  const revision = Number(
+    presentation.revision
+  );
+
+  if (!Number.isInteger(revision)) {
+    return;
+  }
+
+  pendingPresenceSettleRevision = revision;
+
+  presenceSettleTimer = window.setTimeout(() => {
+    const expectedRevision =
+      pendingPresenceSettleRevision;
+
+    presenceSettleTimer = null;
+    pendingPresenceSettleRevision = null;
+
+    if (
+      !bridge
+      || !Number.isInteger(expectedRevision)
+    ) {
+      return;
+    }
+
+    bridge.settleAssistantPresence(
+      expectedRevision
+    );
+  }, assistantSettleDelay(result));
+}
 
 function fitComposer() {
   input.style.height = `${COMPOSER_MIN_HEIGHT}px`;
@@ -1466,6 +1536,22 @@ function applySnapshot(snapshot) {
   homeTimeZone =
     snapshot.home_timezone || homeTimeZone;
   const { status, active_model: activeModel, presentation } = snapshot;
+  const presentationRevision =
+  Number(presentation?.revision);
+
+if (
+  presenceSettleTimer !== null
+  && Number.isInteger(
+    pendingPresenceSettleRevision
+  )
+  && Number.isInteger(
+    presentationRevision
+  )
+  && presentationRevision
+    !== pendingPresenceSettleRevision
+) {
+  cancelAssistantSettle();
+}
   attentionMagicState.modelAvailable = Boolean(status.model_available);
   attentionMagicState.safetyEngaged = Boolean(status.emergency_stop_engaged);
   updateAttentionMagic();
@@ -1766,6 +1852,16 @@ function handleBridgeEvent(encoded) {
   applySnapshot(payload.snapshot);
   return;
     }
+  if (payload.kind === "presence_settled") {
+  cancelAssistantSettle();
+
+  applySnapshot(payload.snapshot);
+
+  title.textContent = "Я рядом.";
+  surfaceStatus.textContent = "";
+
+  return;
+  }
   if (payload.kind === "home_attention") {
     renderHomeAttention(payload.attention);
     homeAttention.hidden = false;
@@ -1822,6 +1918,10 @@ function handleBridgeEvent(encoded) {
       renderMessage(result.assistant_message);
       title.textContent = "Я рядом.";
       surfaceStatus.textContent = "";
+        scheduleAssistantSettle(
+        payload.snapshot,
+        result
+      );
     } else {
       title.textContent = "Я рядом.";
       showLocalFailure(result?.error_label || "Локальный разговор сейчас недоступен.");

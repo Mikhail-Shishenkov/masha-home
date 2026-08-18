@@ -154,15 +154,27 @@ class PresentationReducer:
             )
 
         if isinstance(event, AssistantSettled):
+            current_expression = model.presence.expression
+
+            settled_expression = self._expression(
+                (
+                    current_expression.code
+                    if current_expression is not None
+                    else ExpressionCode.NEUTRAL
+                ),
+                (
+                    min(current_expression.intensity, 0.18)
+                    if current_expression is not None
+                    else 0.12
+                ),
+            )
+
             return model.model_copy(
                 update={
                     "presence": model.presence.model_copy(
                         update={
                             "pose": BasePose.ATTENTIVE,
-                            "expression": self._expression(
-                                ExpressionCode.WARM_SMILE,
-                                0.18,
-                            ),
+                            "expression": settled_expression,
                             "attention": AttentionState.TOWARD_USER,
                             "activity": PresenceActivity.IDLE,
                         }

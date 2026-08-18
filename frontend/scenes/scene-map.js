@@ -84,6 +84,13 @@
   const expression = presence.expression?.code;
 
   if (
+  activity === "idle"
+  && attention === "toward_user"
+) {
+  return scenes.quietBeside;
+}
+
+  if (
     presence.ambient === "quiet"
     && attention === "toward_user"
   ) {
