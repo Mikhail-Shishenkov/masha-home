@@ -50,7 +50,7 @@ html[data-home-attention="active"] .conversation-surface.is-surface-concealed { 
     border-color 220ms ease,
     background 220ms ease,
     box-shadow 280ms ease,
-    transform 220ms var(--ease-home);
+    transform 220ms var(--ease-home) ;
 }
 
 .special-evening-toggle:hover:not(:disabled) {
