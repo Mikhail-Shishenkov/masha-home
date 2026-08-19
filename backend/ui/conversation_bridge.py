@@ -1253,6 +1253,11 @@ class LocalConversationBridge(QObject):
                 "kind": "confirmation_result",
                 "result": result_payload,
                 "snapshot": snapshot.model_dump(mode="json"),
+                "continuity_count": (
+                    0
+                    if self._application is None
+                    else self._continuity_count()
+                ),
                 "commitments_count": (
                     0
                     if self._application is None

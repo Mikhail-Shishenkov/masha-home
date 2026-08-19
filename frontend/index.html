@@ -61,9 +61,20 @@
     aria-expanded="false"
     aria-controls="continuity-surface"
     disabled
-    hidden
   >
-    История
+    <span>История</span>
+    <span
+      class="history-count"
+      id="history-count"
+      aria-label="Сохранённые моменты и открытые нити"
+      hidden
+    >0</span>
+    <span
+      class="history-pending-dot"
+      id="history-pending-dot"
+      aria-label="На полке ждёт предложение памяти"
+      hidden
+    ></span>
   </button>
 
   <button
@@ -182,21 +193,91 @@
     </aside>
     <aside class="continuity-surface" id="continuity-surface" aria-label="Наша общая история" hidden>
       <header class="object-header">
-        <div><p class="eyebrow">что между нами продолжается</p><h2>Наша история</h2></div>
-        <div class="object-header-actions"><button class="surface-action" id="add-shared-moment" type="button">Сохранить момент</button><button class="surface-action" id="add-continuity-thread" type="button">Оставить нить</button><button class="surface-close" id="close-continuity" type="button">Закрыть</button></div>
+        <div>
+          <p class="eyebrow">тихая полка Дома</p>
+          <h2>Наша история</h2>
+        </div>
+        <div class="object-header-actions">
+          <button class="surface-action" id="add-shared-moment" type="button">Сохранить момент</button>
+          <button class="surface-action" id="add-continuity-thread" type="button">Оставить нить</button>
+          <button class="surface-close" id="close-continuity" type="button">Закрыть</button>
+        </div>
       </header>
-      <p class="object-intro">Не досье — только то, что действительно осталось с нами и к чему хочется вернуться.</p>
-      <div class="history-search">
-        <label class="sr-only" for="history-search-input">Найти в нашей истории и делах</label>
-        <input id="history-search-input" type="search" maxlength="240" autocomplete="off" placeholder="Найти в нашем доме">
-        <div class="history-search-controls"><div class="history-search-scopes" role="group" aria-label="Где искать"><button class="is-active" type="button" data-search-scope="all">Всё</button><button type="button" data-search-scope="history">История</button><button type="button" data-search-scope="tasks">Дела</button></div><button class="forgotten-search-toggle" id="forgotten-search-toggle" type="button" aria-pressed="false">Забытое</button></div>
-        <p class="history-search-hint" id="history-search-hint">Здесь находятся и нынешние дела, и то, что уже осталось в прошлом.</p>
-        <ol class="history-search-results" id="history-search-results" aria-live="polite" hidden></ol>
+
+      <p class="object-intro">
+        Здесь ничего не перебивает разговор. Мы сами приходим сюда за тем,
+        что решили сохранить или не потерять.
+      </p>
+
+      <div class="history-glance" id="history-glance" aria-label="Кратко о нашей истории">
+        <span><strong id="history-thread-count">0</strong> открытых нитей</span>
+        <span><strong id="history-moment-count">0</strong> общих моментов</span>
+        <span class="history-glance-memory" id="history-glance-memory" hidden>
+          есть предложение памяти
+        </span>
       </div>
+
+      <section class="history-inbox" id="history-inbox" aria-live="polite" hidden>
+        <span class="continuity-context">на полке ждёт</span>
+        <strong id="history-inbox-title">Маша заметила кое-что важное</strong>
+        <p id="history-inbox-summary"></p>
+        <p class="history-inbox-note" id="history-inbox-note">
+          Это ещё не память. Решение остаётся за тобой.
+        </p>
+        <div class="history-inbox-actions">
+          <button id="history-inbox-approve" type="button">Оставить</button>
+          <button id="history-inbox-reject" type="button">Не сохранять</button>
+        </div>
+      </section>
+
       <div class="continuity-columns" id="continuity-columns">
-        <section><h3>Наши моменты</h3><ol class="continuity-list" id="relationship-moments"></ol></section>
-        <section><h3>К чему стоит вернуться</h3><ol class="continuity-list" id="continuity-threads"></ol></section>
+        <section class="history-column is-threads">
+          <h3>К чему вернуться</h3>
+          <p class="history-column-hint">Живые незавершённые темы. Только те, что мы оставили явно.</p>
+          <ol class="continuity-list" id="continuity-threads"></ol>
+        </section>
+        <section class="history-column is-moments">
+          <h3>Наши моменты</h3>
+          <p class="history-column-hint">Подтверждённые общие эпизоды, к которым приятно вернуться.</p>
+          <ol class="continuity-list" id="relationship-moments"></ol>
+        </section>
       </div>
+
+      <details class="history-search-drawer" id="history-search-drawer">
+        <summary>Найти в памяти, истории и делах</summary>
+        <div class="history-search">
+          <label class="sr-only" for="history-search-input">Найти в нашей истории и делах</label>
+          <input
+            id="history-search-input"
+            type="search"
+            maxlength="240"
+            autocomplete="off"
+            placeholder="Что ищем?"
+          >
+          <div class="history-search-controls">
+            <div class="history-search-scopes" role="group" aria-label="Где искать">
+              <button class="is-active" type="button" data-search-scope="all">Всё</button>
+              <button type="button" data-search-scope="history">История</button>
+              <button type="button" data-search-scope="tasks">Дела</button>
+            </div>
+            <button
+              class="forgotten-search-toggle"
+              id="forgotten-search-toggle"
+              type="button"
+              aria-pressed="false"
+            >Забытое</button>
+          </div>
+          <p class="history-search-hint" id="history-search-hint">
+            Поиск открывается только здесь и ничего сам не вытаскивает в разговор.
+          </p>
+          <ol
+            class="history-search-results"
+            id="history-search-results"
+            aria-live="polite"
+            hidden
+          ></ol>
+        </div>
+      </details>
     </aside>
     <aside class="reflections-surface" id="reflections-surface" aria-label="Мысли Маши и честная помощь" hidden>
       <header class="object-header">

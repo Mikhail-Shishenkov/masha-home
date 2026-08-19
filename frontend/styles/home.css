@@ -1012,3 +1012,185 @@ html[data-safety="autonomy_stopped"] .ambient { background: linear-gradient(90de
   color: #f0b18b;
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* Package B — quiet shelves */
+
+.home-nav .history-count {
+  display: grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border: 1px solid rgba(226, 188, 126, .2);
+  border-radius: 999px;
+  color: rgba(244, 218, 180, .72);
+  background: rgba(82, 53, 28, .2);
+  font: 600 10px/1 system-ui, sans-serif;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.home-nav .history-count[hidden],
+.home-nav .history-pending-dot[hidden] {
+  display: none;
+}
+
+.history-pending-dot {
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  border-radius: 50%;
+  background: rgba(242, 185, 104, .88);
+  box-shadow: 0 0 10px rgba(224, 145, 64, .38);
+}
+
+.continuity-trigger.has-pending-memory {
+  color: rgba(247, 218, 176, .94);
+}
+
+html[data-home-moment="special_evening"] .history-pending-dot {
+  opacity: .48;
+  box-shadow: 0 0 7px rgba(224, 145, 64, .2);
+}
+
+.history-glance {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin: -8px 0 24px;
+  color: rgba(239, 218, 191, .5);
+  font: 500 11px/1.35 system-ui, sans-serif;
+}
+
+.history-glance strong {
+  color: rgba(249, 230, 204, .86);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-glance-memory {
+  color: rgba(238, 190, 126, .76);
+}
+
+.history-glance-memory[hidden],
+.history-inbox[hidden] {
+  display: none;
+}
+
+.history-inbox {
+  margin: 0 0 26px;
+  padding: 17px 18px 16px;
+  border: 1px solid rgba(226, 188, 126, .13);
+  border-left-color: rgba(226, 188, 126, .42);
+  background:
+    linear-gradient(145deg, rgba(119, 75, 34, .13), rgba(255, 245, 228, .025));
+}
+
+.history-inbox > strong {
+  display: block;
+  margin: 0 0 7px;
+  color: rgba(252, 240, 223, .94);
+  font: 500 16px/1.35 system-ui, sans-serif;
+}
+
+.history-inbox > p {
+  margin: 0;
+  color: rgba(244, 229, 209, .68);
+  font: 400 13px/1.5 system-ui, sans-serif;
+}
+
+.history-inbox .history-inbox-note {
+  margin-top: 8px;
+  color: rgba(236, 223, 207, .44);
+  font-size: 11px;
+}
+
+.history-inbox-actions {
+  display: flex;
+  gap: 15px;
+  margin-top: 13px;
+}
+
+.history-inbox-actions button {
+  padding: 5px 0;
+  border: 0;
+  border-bottom: 1px solid rgba(226, 188, 126, .28);
+  color: rgba(239, 202, 147, .84);
+  background: transparent;
+  font: 600 11px/1.2 system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.history-inbox-actions button:hover:not(:disabled) {
+  color: #ffe5bd;
+  border-bottom-color: rgba(239, 202, 147, .64);
+}
+
+.history-inbox-actions button:disabled {
+  opacity: .38;
+  cursor: not-allowed;
+}
+
+.history-column {
+  min-width: 0;
+}
+
+.history-column-hint {
+  min-height: 34px;
+  margin: -5px 0 12px;
+  color: rgba(236, 223, 207, .4);
+  font: 400 11px/1.45 system-ui, sans-serif;
+}
+
+.continuity-item.is-thread {
+  border-left-color: rgba(226, 188, 126, .38);
+  background:
+    linear-gradient(145deg, rgba(111, 71, 34, .11), rgba(255, 245, 228, .025));
+}
+
+.continuity-item.is-moment {
+  border-left-color: rgba(226, 188, 126, .16);
+  background: rgba(255, 245, 228, .022);
+}
+
+.history-search-drawer {
+  margin-top: 28px;
+  padding-top: 15px;
+  border-top: 1px solid rgba(226, 188, 126, .13);
+}
+
+.history-search-drawer > summary {
+  width: fit-content;
+  color: rgba(239, 202, 147, .66);
+  font: 600 11px/1.3 system-ui, sans-serif;
+  cursor: pointer;
+  list-style: none;
+}
+
+.history-search-drawer > summary::-webkit-details-marker {
+  display: none;
+}
+
+.history-search-drawer > summary::after {
+  content: "  +";
+  color: rgba(239, 202, 147, .42);
+}
+
+.history-search-drawer[open] > summary::after {
+  content: "  —";
+}
+
+.history-search-drawer .history-search {
+  margin-top: 17px;
+}
+
+html[data-home-moment="special_evening"] .continuity-surface {
+  background:
+    linear-gradient(145deg, rgba(32, 22, 16, .96), rgba(16, 13, 11, .92));
+}
+
+@media (max-width: 1280px) {
+  .history-column-hint {
+    min-height: 0;
+  }
+}

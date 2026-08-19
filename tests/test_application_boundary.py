@@ -1662,8 +1662,14 @@ def test_special_evening_personal_sentence_reaches_model_instead_of_shelf_router
     assert result.status is ConversationTurnStatus.COMPLETED
     assert result.assistant_message is not None
     assert result.assistant_message.content == provider.response_text
-    assert provider.last_request is not None
-    assert provider.last_request.private_context["home_moment"] == "special_evening"
+    conversation_requests = [
+        request
+        for request in provider.requests
+        if request.private_context.get("home_moment") == "special_evening"
+    ]
+
+    assert conversation_requests
+    conversation_request = conversation_requests[-1]
     assert "РЕЖИМ «ВДВОЁМ»" in (
-        provider.last_request.private_context["home_moment_contract"]
+        conversation_request.private_context["home_moment_contract"]
     )

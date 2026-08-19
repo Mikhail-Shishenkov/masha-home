@@ -21,6 +21,7 @@ class FakeProvider(ModelProvider):
     simulate_timeout: bool = False
     response_text: str = "Тестовый ответ Маши."
     last_request: ModelRequest | None = field(default=None, init=False)
+    requests: list[ModelRequest] = field(default_factory=list, init=False)
 
     def is_available(self) -> bool:
         return self.available
@@ -31,6 +32,7 @@ class FakeProvider(ModelProvider):
         if self.simulate_timeout:
             raise ModelTimeoutError(f"provider {self.provider_id} timed out")
         self.last_request = request
+        self.requests.append(request)
         return ModelResponse(
             provider_id=self.provider_id,
             model_id=self.model_id,

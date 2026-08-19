@@ -54,6 +54,17 @@ const proactiveList = document.getElementById("proactive-list");
 const closeProactive = document.getElementById("close-proactive");
 const continuityTrigger = document.getElementById("continuity-trigger");
 const continuitySurface = document.getElementById("continuity-surface");
+const historyCount = document.getElementById("history-count");
+const historyPendingDot = document.getElementById("history-pending-dot");
+const historyThreadCount = document.getElementById("history-thread-count");
+const historyMomentCount = document.getElementById("history-moment-count");
+const historyGlanceMemory = document.getElementById("history-glance-memory");
+const historyInbox = document.getElementById("history-inbox");
+const historyInboxTitle = document.getElementById("history-inbox-title");
+const historyInboxSummary = document.getElementById("history-inbox-summary");
+const historyInboxNote = document.getElementById("history-inbox-note");
+const historyInboxApprove = document.getElementById("history-inbox-approve");
+const historyInboxReject = document.getElementById("history-inbox-reject");
 const relationshipMoments = document.getElementById("relationship-moments");
 const continuityThreads = document.getElementById("continuity-threads");
 const closeContinuity = document.getElementById("close-continuity");
@@ -130,6 +141,7 @@ let pendingPresenceSettleRevision = null;
 let activeSceneChangedAt = performance.now();
 let pendingConfirmation = null;
 let pendingMemoryCandidate = null;
+let continuityItemCount = 0;
 let historySearchScope = "all";
 let historySearchForgotten = false;
 let historySearchTimer = null;
@@ -681,41 +693,74 @@ function renderWorkbench(view) {
 }
 
 function renderContinuity(view) {
+  const moments = view?.moments || [];
+  const threads = view?.open_threads || [];
+
+  continuityItemCount = moments.length + threads.length;
+  historyThreadCount.textContent = String(threads.length);
+  historyMomentCount.textContent = String(moments.length);
+  updateHistoryShelfState();
+  renderHistoryInbox();
+
   relationshipMoments.replaceChildren();
   continuityThreads.replaceChildren();
-  for (const moment of view?.moments || []) {
-    const item = document.createElement("li");
-    item.className = "continuity-item";
-    const title = document.createElement("strong");
-    title.textContent = moment.title;
-    const text = document.createElement("p");
-    text.textContent = moment.text;
-    item.append(title, text);
-    relationshipMoments.append(item);
-  }
-  for (const thread of view?.open_threads || []) {
+
+  for (const thread of threads) {
     const item = document.createElement("li");
     item.className = "continuity-item is-thread";
-    const title = document.createElement("strong");
-    title.textContent = thread.summary;
-    const reason = document.createElement("p");
-    reason.textContent = thread.reason_to_return;
+
     const context = document.createElement("span");
     context.className = "continuity-context";
     context.textContent = "открытая нить";
+
+    const title = document.createElement("strong");
+    title.textContent = thread.summary;
+
+    const reason = document.createElement("p");
+    reason.textContent = thread.reason_to_return;
+
     const action = document.createElement("button");
     action.type = "button";
-    action.textContent = "Продолжить в разговоре";
+    action.textContent = "Вернуться к этой теме";
     action.addEventListener("click", () => {
       if (!ready || inFlight) return;
       setComposerState({ enabled: true, waiting: true });
       bridge.continueContinuityThread(thread.thread_id);
     });
+
     item.append(context, title, reason, action);
     continuityThreads.append(item);
   }
-  if (!relationshipMoments.children.length) relationshipMoments.append(objectEmpty("Наших сохранённых моментов пока нет."));
-  if (!continuityThreads.children.length) continuityThreads.append(objectEmpty("Открытых нитей сейчас нет."));
+
+  for (const moment of moments) {
+    const item = document.createElement("li");
+    item.className = "continuity-item is-moment";
+
+    const context = document.createElement("span");
+    context.className = "continuity-context";
+    context.textContent = "наш момент";
+
+    const title = document.createElement("strong");
+    title.textContent = moment.title;
+
+    const text = document.createElement("p");
+    text.textContent = moment.text;
+
+    item.append(context, title, text);
+    relationshipMoments.append(item);
+  }
+
+  if (!continuityThreads.children.length) {
+    continuityThreads.append(
+      objectEmpty("Открытых нитей сейчас нет. Дом ничего не держит насильно.")
+    );
+  }
+
+  if (!relationshipMoments.children.length) {
+    relationshipMoments.append(
+      objectEmpty("Сохранённых общих моментов пока нет.")
+    );
+  }
 }
 
 function renderHumanSearch(items, query) {
@@ -801,14 +846,58 @@ function isCandidatePresentationQuiet() {
   );
 }
 
-function renderMemoryCandidate(candidate) {
-  pendingMemoryCandidate = candidate || null;
+function updateHistoryShelfState() {
+  const total = Math.max(0, Number(continuityItemCount) || 0);
+  const waiting = Boolean(pendingMemoryCandidate);
+
+  historyCount.textContent = String(total);
+  historyCount.hidden = total <= 0;
+
+  historyPendingDot.hidden = !waiting;
+  historyGlanceMemory.hidden = !waiting;
+  continuityTrigger.classList.toggle("has-pending-memory", waiting);
+}
+
+function renderHistoryInbox() {
+  const candidate = pendingMemoryCandidate;
+
   if (!candidate) {
-    candidatePresentation.clear();
-    memoryCandidateSurface.hidden = true;
+    historyInbox.hidden = true;
+    historyInboxSummary.textContent = "";
+    historyInboxApprove.disabled = false;
+    historyInboxReject.disabled = false;
     return;
   }
-  candidatePresentation.offer(candidate);
+
+  const isUpdate = candidate.relation === "possible_update";
+  historyInbox.hidden = false;
+  historyInboxTitle.textContent = isUpdate
+    ? "Похоже, что-то изменилось"
+    : "Маша заметила кое-что важное";
+  historyInboxSummary.textContent = candidate.summary;
+  historyInboxNote.textContent = candidate.requires_explicit_supersession
+    ? "Есть похожая подтверждённая запись. Новое не заменит её без отдельного решения."
+    : "Это ещё не память. Решение остаётся за тобой.";
+
+  historyInboxApprove.disabled = inFlight || Boolean(pendingConfirmation);
+  historyInboxReject.disabled = inFlight || Boolean(pendingConfirmation);
+}
+
+function renderMemoryCandidate(candidate) {
+  /*
+   * Passive memory is shelf-owned. It may light a quiet dot on History,
+   * but it never takes over the conversation surface on its own.
+   */
+  pendingMemoryCandidate = candidate || null;
+  candidatePresentation.clear();
+  memoryCandidateSurface.hidden = true;
+
+  if (document.documentElement.dataset.operation === "candidate") {
+    document.documentElement.dataset.operation = "none";
+  }
+
+  updateHistoryShelfState();
+  renderHistoryInbox();
 }
 
 function revealMemoryCandidate(candidate) {
@@ -1633,6 +1722,8 @@ function handleBridgeEvent(encoded) {
     // Empty history is still a real state: this is where the first explicitly
     // confirmed shared moment or open thread is created.
     continuityTrigger.hidden = false;
+    continuityItemCount = Number(payload.continuity_count || 0);
+    updateHistoryShelfState();
     reflectionsTrigger.hidden = !(payload.reflection_items_count > 0);
     ready = true;
     clearLocalFailure();
@@ -1799,12 +1890,18 @@ function handleBridgeEvent(encoded) {
     pendingMemoryCandidate = null;
     memoryCandidateSurface.hidden = true;
     document.documentElement.dataset.operation = "none";
-    surface.hidden = false;
-    surface.classList.remove("is-surface-concealed");
     surfaceStatus.textContent = payload.message;
     renderMemoryCandidate(payload.memory_candidate);
+
+    if (!continuitySurface.hidden) {
+      renderHistoryInbox();
+    } else {
+      surface.hidden = false;
+      surface.classList.remove("is-surface-concealed");
+    }
     return;
   }
+
   if (payload.kind === "reflection_workspace_loaded") {
     applySnapshot(payload.snapshot);
     renderReflections(payload.workspace);
@@ -1988,6 +2085,10 @@ function handleBridgeEvent(encoded) {
     if (result?.assistant_message) renderMessage(result.assistant_message);
     renderConfirmationResult(result);
     commitmentsCount.textContent = String(payload.commitments_count || 0);
+    if (payload.continuity_count !== undefined) {
+      continuityItemCount = Number(payload.continuity_count || 0);
+      updateHistoryShelfState();
+    }
     bridge.loadRecentConversations();
     setComposerState({ enabled: ready });
     scrollToLatestIfAppropriate(true);
@@ -2296,6 +2397,26 @@ rejectMemoryCandidate.addEventListener("click", () => {
   approveMemoryCandidate.disabled = true;
   rejectMemoryCandidate.disabled = true;
   bridge.resolveMemoryCandidate(pendingMemoryCandidate.candidate_id, "reject");
+});
+
+historyInboxApprove.addEventListener("click", () => {
+  if (!ready || inFlight || pendingConfirmation || !pendingMemoryCandidate) return;
+  historyInboxApprove.disabled = true;
+  historyInboxReject.disabled = true;
+  bridge.resolveMemoryCandidate(
+    pendingMemoryCandidate.candidate_id,
+    "approve"
+  );
+});
+
+historyInboxReject.addEventListener("click", () => {
+  if (!ready || inFlight || pendingConfirmation || !pendingMemoryCandidate) return;
+  historyInboxApprove.disabled = true;
+  historyInboxReject.disabled = true;
+  bridge.resolveMemoryCandidate(
+    pendingMemoryCandidate.candidate_id,
+    "reject"
+  );
 });
 
 closeReflections.addEventListener("click", () => {
