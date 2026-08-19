@@ -35,6 +35,7 @@ from .events import (
     UserOpenedApplication,
     UserSentMessage,
     WindowFocusChanged,
+    HomeMomentChanged,
 )
 from .models import (
     ActivityPresentation,
@@ -115,6 +116,13 @@ class PresentationReducer:
                     "opened": True,
                     "surfaces": self._upsert_surface(model.surfaces, conversation),
                     "active_surface_id": conversation.surface_id,
+                }
+            )
+
+        if isinstance(event, HomeMomentChanged):
+            return model.model_copy(
+                update={
+                    "home_moment": event.moment,
                 }
             )
 

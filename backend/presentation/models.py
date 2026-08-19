@@ -21,6 +21,9 @@ class HomeState(str, Enum):
     DEGRADED = "degraded"
     UNAVAILABLE = "unavailable"
 
+class HomeMoment(str, Enum):
+    ORDINARY = "ordinary"
+    SPECIAL_EVENING = "special_evening"
 
 class PresentationTier(str, Enum):
     TIER_0 = "tier_0_static"
@@ -396,6 +399,7 @@ class HomePresentationModel(PresentationModel):
     observed_at: AwareDatetime
     opened: bool = False
     home_state: HomeState = HomeState.READY
+    home_moment: HomeMoment = HomeMoment.ORDINARY
     window_state: WindowState = WindowState.FOCUSED
     privacy_masked: bool = False
     presence: MashaPresence
@@ -403,6 +407,7 @@ class HomePresentationModel(PresentationModel):
     surfaces: tuple[InteractionSurface, ...] = ()
     activities: tuple[ActivityPresentation, ...] = ()
     active_surface_id: str | None = Field(default=None, pattern=OPAQUE_ID_PATTERN)
+
 
     @model_validator(mode="after")
     def coherent_scene(self):

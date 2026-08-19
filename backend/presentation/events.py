@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
-from .models import InteractionSurface, RuntimeMode
+from .models import HomeMoment, InteractionSurface, RuntimeMode
 
 
 class PresentationEvent(BaseModel):
@@ -17,6 +17,9 @@ class PresentationEvent(BaseModel):
 class UserOpenedApplication(PresentationEvent):
     kind: Literal["user_opened_application"] = "user_opened_application"
 
+class HomeMomentChanged(PresentationEvent):
+    kind: Literal["home_moment_changed"] = "home_moment_changed"
+    moment: HomeMoment
 
 class UserSentMessage(PresentationEvent):
     kind: Literal["user_sent_message"] = "user_sent_message"

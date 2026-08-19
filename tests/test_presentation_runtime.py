@@ -38,6 +38,8 @@ from backend.presentation.events import (
     UserOpenedApplication,
     UserSentMessage,
     WindowFocusChanged,
+    HomeMomentChanged,
+    HomeMoment,
 )
 from backend.presentation.models import (
     ActivityState,
@@ -158,6 +160,36 @@ def test_surface_lifecycle_keeps_one_primary_and_has_no_frontend_payload():
     model = reducer.reduce(model, _event(SurfaceClosed, 6, surface_id=media.surface_id))
     assert _surface(model, media.surface_id).lifecycle is SurfaceLifecycle.CLOSED
 
+
+def test_home_moment_changes_without_touching_presence_or_overlays():
+    reducer = PresentationReducer()
+    model = _open_model()
+
+    original_presence = model.presence
+    original_overlays = model.overlays
+
+    model = reducer.reduce(
+        model,
+        _event(
+            HomeMomentChanged,
+            moment=HomeMoment.SPECIAL_EVENING,
+        ),
+    )
+
+    assert model.home_moment is HomeMoment.SPECIAL_EVENING
+    assert model.presence == original_presence
+    assert model.overlays == original_overlays
+
+    model = reducer.reduce(
+        model,
+        _event(
+            HomeMomentChanged,
+            2,
+            moment=HomeMoment.ORDINARY,
+        ),
+    )
+
+    assert model.home_moment is HomeMoment.ORDINARY
 
 def test_activity_lifecycle_is_observable_and_progress_is_evidence_based():
     reducer = PresentationReducer()

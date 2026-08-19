@@ -47,6 +47,7 @@ from .events import (
     UserOpenedApplication,
     UserSentMessage,
     WindowFocusChanged,
+    HomeMomentChanged,
 )
 from .models import (
     ActivityPresentation,
@@ -86,6 +87,7 @@ from .models import (
     VisualIdentity,
     WindowState,
     default_home_model,
+    HomeMoment,
 )
 from .reducer import PresentationReducer, PresentationRuntime
 from .tier0 import TierZeroPrototypeController, TierZeroRenderer, TierZeroScene
@@ -176,5 +178,7 @@ __all__ = (
     "WindowFocusChanged",
     "WindowState",
     "default_home_model",
+    "HomeMoment",
+    "HomeMomentChanged",
     "presentation_model_from_application_state",
 )
