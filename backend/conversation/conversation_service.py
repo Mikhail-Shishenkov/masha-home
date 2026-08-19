@@ -147,6 +147,7 @@ class ConversationService:
         conversation_id: str | None = None,
         allow_capability_routing: bool = True,
         active_continuity_thread_id: str | None = None,
+        home_moment: str = "ordinary",
     ) -> tuple[str, str]:
         conversation = self.history.create() if conversation_id is None else self.history.get(conversation_id)
         last_interaction_at = self.history.last_interaction_at(conversation.id)
@@ -199,6 +200,7 @@ class ConversationService:
                     conversation.id,
                     limit=self.history_limit,
                 ),
+                conversation_first=home_moment == "special_evening",
             )
             if intent.handled:
                 assert intent.response is not None
@@ -260,6 +262,7 @@ class ConversationService:
             execution_think=False if active_profile is None else active_profile.think,
             execution_timeout_seconds=30.0 if active_profile is None else active_profile.timeout_seconds,
             context_lens=context_lens.value,
+            home_moment=home_moment,
         )
         try:
             response = self.router.generate(request)

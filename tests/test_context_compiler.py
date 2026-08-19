@@ -50,3 +50,25 @@ def test_behavioral_contract_requires_feminine_concise_non_technical_voice():
     assert "1–4 компактных абзаца" in contract["behavioral_contract"]
     assert "не означает незнание предмета" in contract["behavioral_contract"]
     assert "реальное физическое касание" in contract["behavioral_contract"]
+
+def test_special_evening_changes_conversation_rhythm_without_becoming_memory():
+    compiler = ConversationContextCompiler(
+        lambda: datetime(2026, 8, 20, 1, 12, tzinfo=timezone.utc)
+    )
+    identity = IdentityKernel(
+        IdentityStore(PROJECT_ROOT / "identity" / "masha.identity.json")
+    ).build_context()
+
+    request = compiler.compile(
+        messages=(ModelMessage(role="user", content="Маша, какая красивая ночь."),),
+        identity_context=identity,
+        working_memory=[],
+        home_moment="special_evening",
+    )
+
+    private = request.private_context
+    assert private["home_moment"] == "special_evening"
+    assert "РЕЖИМ «ВДВОЁМ»" in private["home_moment_contract"]
+    assert "Не устраивай интервью" in private["home_moment_contract"]
+    assert "человеческий смысл" in private["home_moment_contract"]
+    assert private["memory_context"] == []

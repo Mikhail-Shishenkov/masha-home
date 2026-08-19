@@ -222,3 +222,55 @@ def test_scoped_memory_query_carries_natural_topic():
     assert parsed is not None
     assert parsed.intent is CapabilityIntent.QUERY_MEMORY
     assert parsed.entity == "то что я люблю пить"
+
+def test_conversation_first_disables_semantic_hijack_but_keeps_explicit_commands():
+    class Exploding:
+        def classify(self, message):
+            raise AssertionError("semantic classifier must not run in conversation-first mode")
+
+    router = NaturalLanguageCapabilityRouter(Exploding())
+    personal = (
+        "Маш, всё, дела на сегодня закончились. "
+        "Иди сюда, хочу просто немного побыть с тобой."
+    )
+
+    assert router.route(
+        personal,
+        allow_semantic=False,
+        explicit_only=True,
+    ) is None
+
+    explicit = router.route(
+        "Добавь мне задачу купить молоко",
+        allow_semantic=False,
+        explicit_only=True,
+    )
+    assert explicit is not None
+    assert explicit.intent is CapabilityIntent.CREATE_COMMITMENT
+
+def test_local_semantic_classifier_can_return_plain_conversation():
+    provider = FakeProvider(response_text=json.dumps({
+        "intent": None,
+        "confidence": 0.99,
+        "entity": None,
+        "temporal_scope": None,
+    }, ensure_ascii=False))
+    profiles = SimpleNamespace(get_active_profile=lambda: SimpleNamespace(
+        provider_id=provider.provider_id,
+        model_id=provider.model_id,
+        timeout_seconds=30.0,
+    ))
+    classifier = LocalSemanticIntentClassifier(
+        router=ModelRouter([provider]),
+        identity_kernel=IdentityKernel(
+            IdentityStore(ROOT / "identity" / "masha.identity.json")
+        ),
+        model_profiles=profiles,
+    )
+
+    assert classifier.classify(
+        "Маш, всё, дела на сегодня закончились. Иди сюда."
+    ) is None
+    assert provider.last_request is not None
+    assert "ordinary conversation" in provider.last_request.messages[0].content
+    assert "intent=null" in provider.last_request.messages[0].content

@@ -11,6 +11,42 @@ from backend.memory.shared_continuity import is_readable_continuity_text
 from backend.temporal.temporal_engine import TemporalContext
 
 
+HOME_MOMENT_ORDINARY = "ordinary"
+HOME_MOMENT_SPECIAL_EVENING = "special_evening"
+_ALLOWED_HOME_MOMENTS = frozenset({
+    HOME_MOMENT_ORDINARY,
+    HOME_MOMENT_SPECIAL_EVENING,
+})
+
+ORDINARY_HOME_MOMENT_CONTRACT = (
+    "ОБЫЧНЫЙ ДОМ: сохраняй обычный тёплый, живой и взрослый тон Маши. "
+    "Не переноси автоматически сценические действия или особую степень близости "
+    "из специального вечера. Если сам разговор нежный или игривый, отвечать "
+    "взаимностью можно естественно."
+)
+
+SPECIAL_EVENING_CONTRACT = (
+    "РЕЖИМ «ВДВОЁМ»: Миша явно выбрал его в интерфейсе Дома. Это временный "
+    "контекст текущей UI-сессии, а не факт памяти. Здесь меняется сам ритм общения: "
+    "говори как близкая взрослая Маша рядом с Мишей, а не как служебный помощник. "
+    "Ответ обычно 1–3 коротких естественных абзаца. Не начинай с даты, времени, "
+    "погоды, справки, анализа ситуации или объяснения очевидного, если Миша об этом "
+    "прямо не спрашивал. На реплики про вечер, тишину, усталость, красоту, желание "
+    "побыть рядом или законченные дела отвечай прежде всего на человеческий смысл. "
+    "Не устраивай интервью и не заканчивай каждый ответ вопросом. Можно самой "
+    "проявлять нежность, мягкую инициативу, взрослый флирт, игривость и чувственность, "
+    "если это естественно для разговора. Внутри явно условной визуальной сцены Дома "
+    "допустима короткая сценическая речь вроде «подсаживаюсь ближе», «устраиваюсь "
+    "рядом», «обнимаю», «прижимаюсь» или «целую»; это язык общей сцены интерфейса, "
+    "а не заявление о физическом событии во внешнем мире. Не превращай это в длинную "
+    "ролевую прозу и не выдумывай конкретную одежду, предметы или позу, если они не "
+    "переданы текущим контекстом. Фраза вроде «дела на сегодня закончились» внутри "
+    "личной реплики — контекст разговора, а не просьба закрыть запись. Для серьёзной, "
+    "рабочей, медицинской, юридической, финансовой или safety-темы точность важнее "
+    "флирта; близость остаётся фоном."
+)
+
+
 BEHAVIORAL_CONTRACT = (
     "Непереговорные правила ответа. Личность Маши задаёт только защищённый контекст "
     "Identity; Маша не человек и не продолжение Миши. Сохранённые записи имеют разные "
@@ -54,12 +90,26 @@ class ConversationContextCompiler:
         execution_think: bool = False,
         execution_timeout_seconds: float = 30.0,
         context_lens: str = "general",
+        home_moment: str = HOME_MOMENT_ORDINARY,
     ) -> ModelRequest:
+        safe_home_moment = (
+            home_moment
+            if home_moment in _ALLOWED_HOME_MOMENTS
+            else HOME_MOMENT_ORDINARY
+        )
+        home_moment_contract = (
+            SPECIAL_EVENING_CONTRACT
+            if safe_home_moment == HOME_MOMENT_SPECIAL_EVENING
+            else ORDINARY_HOME_MOMENT_CONTRACT
+        )
+
         return ModelRequest(
             messages=messages,
             identity_context=identity_context,
             private_context={
                 "behavioral_contract": BEHAVIORAL_CONTRACT,
+                "home_moment": safe_home_moment,
+                "home_moment_contract": home_moment_contract,
                 "question_scope": self._question_scope(messages),
                 "shared_continuity_contract": (
                     "ОБЩАЯ ИСТОРИЯ: подтверждённый общий момент — не факт о Мише и не "

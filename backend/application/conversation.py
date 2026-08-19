@@ -297,6 +297,7 @@ class ConversationApplicationService:
         conversation_id: str | None = None,
         allow_capability_routing: bool = True,
         active_continuity_thread_id: str | None = None,
+        home_moment: str = "ordinary",
     ) -> ConversationTurnResult:
         active_profile_id = self._models.current().profile_id
         resolved_id = conversation_id
@@ -319,6 +320,7 @@ class ConversationApplicationService:
                 conversation_id=conversation_id,
                 allow_capability_routing=allow_capability_routing,
                 active_continuity_thread_id=active_thread_id,
+                home_moment=home_moment,
             )
         except ConversationUnavailableError as error:
             resolved_id = self._resolved_conversation_id(resolved_id)

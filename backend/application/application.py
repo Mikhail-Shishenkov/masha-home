@@ -83,8 +83,20 @@ class MashaApplication:
         self._memory_candidates = memory_candidates
         self._human_information = human_information
 
-    def send_message(self, content: str, *, project_id: str, conversation_id: str | None = None) -> ConversationTurnResult:
-        return self._conversation.send_message(content, project_id=project_id, conversation_id=conversation_id)
+    def send_message(
+        self,
+        content: str,
+        *,
+        project_id: str,
+        conversation_id: str | None = None,
+        home_moment: str = "ordinary",
+    ) -> ConversationTurnResult:
+        return self._conversation.send_message(
+            content,
+            project_id=project_id,
+            conversation_id=conversation_id,
+            home_moment=home_moment,
+        )
 
     def conversation(self, conversation_id: str, *, limit: int | None = None) -> ConversationView:
         return self._conversation.conversation(conversation_id, limit=limit)
@@ -127,6 +139,7 @@ class MashaApplication:
         *,
         conversation_id: str | None,
         project_id: str,
+        home_moment: str = "ordinary",
     ) -> ConversationTurnResult:
         prompt = self._continuity.thread_prompt(thread_id)
         return self._conversation.send_message(
@@ -135,6 +148,7 @@ class MashaApplication:
             conversation_id=conversation_id,
             allow_capability_routing=False,
             active_continuity_thread_id=thread_id,
+            home_moment=home_moment,
         )
 
     def reflection_workspace(self) -> ReflectionWorkspaceView:

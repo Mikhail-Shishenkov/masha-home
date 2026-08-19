@@ -395,6 +395,7 @@ class MemoryIntentHandler:
         project_id: str,
         active_continuity_thread_id: str | None = None,
         conversation_messages: tuple[ConversationMessage, ...] = (),
+        conversation_first: bool = False,
     ) -> MemoryIntentResult:
         # A plain human confirmation always resolves the single user-facing
         # slot. IDs remain an internal bridge compatibility detail.
@@ -440,10 +441,20 @@ class MemoryIntentHandler:
             return self._cancel(reject.group("id"), conversation_id)
         pending = self.proposal_store.current_for_conversation(conversation_id) is not None
 
+        # Conversation-first sessions discard stale shelf clarifications.
+        # An explicit new command below can still open a fresh shelf interaction.
+        if conversation_first:
+            self._continuity_clarifications.pop(conversation_id, None)
+            self._human_entity_clarifications.pop(conversation_id, None)
+
         human_clarification = self._human_entity_clarifications.get(conversation_id)
         if human_clarification is not None:
             remove_query = self._human_remove_query(message)
-            parsed_clarification = self.capability_router.route(message)
+            parsed_clarification = self.capability_router.route(
+                message,
+                allow_semantic=not conversation_first,
+                explicit_only=conversation_first,
+            )
             if remove_query is not None or parsed_clarification is None:
                 if pending:
                     return self._pending_conflict()
@@ -455,7 +466,11 @@ class MemoryIntentHandler:
 
         clarification = self._continuity_clarifications.get(conversation_id)
         if clarification is not None:
-            parsed_clarification = self.capability_router.route(message)
+            parsed_clarification = self.capability_router.route(
+                message,
+                allow_semantic=not conversation_first,
+                explicit_only=conversation_first,
+            )
             if parsed_clarification is None:
                 return self._refine_continuity_resolution(message, clarification)
             # A new explicit action replaces the abandoned clarification.  A
@@ -567,7 +582,7 @@ class MemoryIntentHandler:
             if pending:
                 return self._pending_conflict()
             return self._propose_completion(complete.group("body"), conversation_id)
-        if _COMPLETE_IMPLICIT.match(message):
+        if not conversation_first and _COMPLETE_IMPLICIT.match(message):
             return MemoryIntentResult(
                 handled=True,
                 response="Какое именно дело отметить выполненным? Назови его, чтобы я ничего не закрыла по догадке.",
@@ -591,7 +606,7 @@ class MemoryIntentHandler:
                 handled=True,
                 response="Что именно сохранить и как: факт, решение, обязательство или эпизод?",
             )
-        if _AMBIGUOUS_COMMITMENT_FOLLOW_UP.match(message):
+        if not conversation_first and _AMBIGUOUS_COMMITMENT_FOLLOW_UP.match(message):
             return MemoryIntentResult(
                 handled=True,
                 response=(
@@ -599,11 +614,15 @@ class MemoryIntentHandler:
                     "Если хочешь добавить дело, скажи прямо — пока ничего не добавляю."
                 ),
             )
-        if reference := _COMMITMENT_REFERENCE_QUERY.match(message):
+        if not conversation_first and (reference := _COMMITMENT_REFERENCE_QUERY.match(message)):
             records = self._matching_open_commitments(reference.group("body"), project_id)
             if records:
                 return self._render_commitments(records)
-        if parsed := self.capability_router.route(message):
+        if parsed := self.capability_router.route(
+                message,
+                allow_semantic=not conversation_first,
+                explicit_only=conversation_first,
+            ):
             if pending and parsed.intent in {
                 CapabilityIntent.FORGET_MEMORY,
                 CapabilityIntent.CREATE_COMMITMENT,

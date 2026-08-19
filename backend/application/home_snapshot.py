@@ -540,6 +540,11 @@ class HomePresentationSession:
             ),
         )
     @property
+    def home_moment(self) -> HomeMoment:
+        # UI-only authored moment; never persisted as domain memory.
+        return self._runtime.model.home_moment
+
+    @property
     def active_model_display_name(self) -> str:
         return self._active_model.display_name
 

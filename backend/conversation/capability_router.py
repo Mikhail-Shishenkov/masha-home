@@ -103,13 +103,21 @@ class NaturalLanguageCapabilityRouter:
     def __init__(self, classifier: SemanticClassifier | None = None):
         self.classifier = classifier
 
-    def route(self, message: str) -> ParsedCapabilityIntent | None:
+    def route(
+        self,
+        message: str,
+        *,
+        allow_semantic: bool = True,
+        explicit_only: bool = False,
+    ) -> ParsedCapabilityIntent | None:
         text = normalize_utterance(message)
         if not text:
             return None
-        deterministic = self._deterministic(text)
+        deterministic = self._deterministic(text, explicit_only=explicit_only)
         if deterministic is not None:
             return deterministic
+        if explicit_only or not allow_semantic:
+            return None
         if self.classifier is None or not self._has_capability_signal(text):
             return None
         try:
@@ -123,7 +131,11 @@ class NaturalLanguageCapabilityRouter:
         return classified
 
     @staticmethod
-    def _deterministic(text: str) -> ParsedCapabilityIntent | None:
+    def _deterministic(
+        text: str,
+        *,
+        explicit_only: bool = False,
+    ) -> ParsedCapabilityIntent | None:
         # Explicit shared-continuity language wins over task-like nouns.  It
         # still creates only a proposal in MemoryIntentHandler.
         resolve = re.match(
@@ -193,19 +205,49 @@ class NaturalLanguageCapabilityRouter:
                 intent=CapabilityIntent.QUERY_CONTINUITY,
                 confidence=0.99,
             )
-        if re.search(r"\b(?:к чему|что|какие)\b.*\b(?:вернут|продолжа|не закончил|нить|тем|наш(?:а|ей) истор)\w*\b", text):
-            return ParsedCapabilityIntent(intent=CapabilityIntent.QUERY_CONTINUITY, confidence=0.97)
-        if re.search(r"\b(?:какие|что|покажи)\b.*\b(?:дел|задач|план|запланир|обязательств)\w*\b", text):
+        if re.match(
+            r"^(?:к чему (?:мы )?(?:хотели )?вернут\w*|"
+            r"что (?:у нас )?(?:остал\w*|продолжа\w*|не закончен\w*|не закрыт\w*).*(?:тем|нит)\w*|"
+            r"какие (?:у нас )?(?:тем|нит)\w*.*(?:открыт|остал|продолжа)\w*)$",
+            text,
+        ):
+            return ParsedCapabilityIntent(
+                intent=CapabilityIntent.QUERY_CONTINUITY,
+                confidence=0.97,
+            )
+
+        if re.match(
+            r"^(?:"
+            r"какие (?:у (?:меня|нас) )?(?:сейчас )?(?:дела|задачи|обязательства)|"
+            r"что (?:у (?:меня|нас) )?(?:сейчас )?(?:по )?(?:делам|задачам|обязательствам)|"
+            r"что (?:у (?:меня|нас) )?сегодня|"
+            r"что (?:было )?запланировано(?: на сегодня)?|"
+            r"покажи (?:мои |наши )?(?:дела|задачи|обязательства|планы)"
+            r")$",
+            text,
+        ):
             scope = "today" if "сегодня" in text else None
-            return ParsedCapabilityIntent(intent=CapabilityIntent.QUERY_COMMITMENTS, confidence=0.96, temporal_scope=scope)
-        if re.search(r"\bчто\b.*\b(?:сегодня|запланир)\w*\b", text):
-            return ParsedCapabilityIntent(intent=CapabilityIntent.QUERY_COMMITMENTS, confidence=0.91, temporal_scope="today" if "сегодня" in text else None)
-        if re.search(r"\b(?:что|покажи)\b.*\b(?:помн|памят|зна)\w*\b", text):
+            return ParsedCapabilityIntent(
+                intent=CapabilityIntent.QUERY_COMMITMENTS,
+                confidence=0.96,
+                temporal_scope=scope,
+            )
+
+        if re.match(
+            r"^(?:(?:кстати а |а )?что ты (?:обо мне )?"
+            r"(?:помнишь|знаешь)(?: про .+)?|"
+            r"покажи (?:мою )?память)$",
+            text,
+        ):
             return ParsedCapabilityIntent(
                 intent=CapabilityIntent.QUERY_MEMORY,
                 confidence=0.96,
                 entity=memory_query_entity(text),
             )
+
+        # In conversation-first mode implicit completion aliases do not own the turn.
+        if explicit_only:
+            return None
 
         # Writes: these only lead to proposals in MemoryIntentHandler.
         complete = re.match(r"^(?:с\s+)?(?P<body>.+?)\s+(?:закончили|закончил|готово|сделано)$", text)
@@ -242,18 +284,28 @@ class LocalSemanticIntentClassifier:
             messages=(ModelMessage(
                 role=MessageRole.SYSTEM,
                 content=(
-                    "Classify one Russian utterance into this fixed allowlist: " + allowed + ". "
+                    "Classify one Russian utterance into this fixed allowlist: " + allowed + ", or null. "
+                    "A capability exists only when the primary speech act is a clear request to read or "
+                    "change application-owned memory, commitments, reminders, or continuity. "
                     "Definitions: create_commitment means create a new task, plan, obligation or reminder; "
-                    "complete_commitment means mark an existing task done; query_commitments means ask about "
-                    "existing tasks or plans; query_memory means ask for confirmed remembered facts; "
+                    "complete_commitment means mark an existing stored task done; query_commitments means ask "
+                    "about existing tasks or plans; query_memory means ask for confirmed remembered facts; "
                     "forget_memory means remove a confirmed fact; open_continuity means explicitly preserve "
                     "a discussion topic for later; query_continuity means ask which preserved topics remain "
                     "or what is stored in our shared history. "
-                    "Return JSON only: {\"intent\": string, \"confidence\": 0..1, "
+                    "Ordinary conversation, narration, ambience, feelings, relationship talk, or a mixed "
+                    "personal sentence that merely contains words such as дела, задача, план, закончили, "
+                    "помнишь, история or тема must return null unless the utterance is actually asking for "
+                    "one allowlisted application action. "
+                    "Example: «Маш, всё, дела на сегодня закончились. Иди сюда, хочу просто немного побыть "
+                    "с тобой.» is ordinary conversation and must return null. "
+                    "Example: «С отчётом закончили» may be complete_commitment because the whole utterance "
+                    "is a completion statement about one resolvable task. "
+                    "Return JSON only: {\"intent\": string|null, \"confidence\": 0..1, "
                     "\"entity\": string|null, \"temporal_scope\": string|null}. "
-                    "For create/complete/forget/open intents, entity is the concise object or action "
-                    "from the utterance with request words removed; it must be null only when the "
-                    "utterance contains no resolvable object. Preserve dates and relative time in entity. "
+                    "For create/complete/forget/open intents, entity is the concise object or action from "
+                    "the utterance with request words removed. Preserve dates and relative time in entity. "
+                    "For ordinary conversation return intent=null, entity=null, temporal_scope=null. "
                     "Do not answer the user and do not invent stored records."
                 ),
             ), ModelMessage(role=MessageRole.USER, content=message)),
@@ -269,7 +321,21 @@ class LocalSemanticIntentClassifier:
         if response.finish_reason not in {FinishReason.COMPLETED, FinishReason.LENGTH}:
             return None
         try:
-            payload = json.loads(response.text.strip().removeprefix("```json").removesuffix("```").strip())
+            payload = json.loads(
+                response.text.strip()
+                .removeprefix("```json")
+                .removesuffix("```")
+                .strip()
+            )
+            if payload.get("intent") in {
+                None,
+                "",
+                "none",
+                "null",
+                "conversation",
+                "ordinary_conversation",
+            }:
+                return None
             payload["source"] = "local_semantic"
             return ParsedCapabilityIntent.model_validate(payload)
         except (ValueError, TypeError, KeyError):

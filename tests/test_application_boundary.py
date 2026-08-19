@@ -1645,3 +1645,25 @@ def test_human_catalogs_do_not_replace_machine_codes():
     assert proactive_reason_label("quiet_hours") == "Сейчас тихие часы"
     assert proactive_reason_label("new_future_reason") == "Причина пока не переведена"
     assert ApplicationErrorCode.MODEL_UNAVAILABLE.value == "MODEL_UNAVAILABLE"
+
+def test_special_evening_personal_sentence_reaches_model_instead_of_shelf_router(tmp_path):
+    _, provider, application = _application(tmp_path)
+    phrase = (
+        "Маш, всё, дела на сегодня закончились. "
+        "Иди сюда, хочу просто немного побыть с тобой."
+    )
+
+    result = application.send_message(
+        phrase,
+        project_id=PROJECT_ID,
+        home_moment="special_evening",
+    )
+
+    assert result.status is ConversationTurnStatus.COMPLETED
+    assert result.assistant_message is not None
+    assert result.assistant_message.content == provider.response_text
+    assert provider.last_request is not None
+    assert provider.last_request.private_context["home_moment"] == "special_evening"
+    assert "РЕЖИМ «ВДВОЁМ»" in (
+        provider.last_request.private_context["home_moment_contract"]
+    )

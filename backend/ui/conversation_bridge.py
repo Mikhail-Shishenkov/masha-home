@@ -562,12 +562,14 @@ class LocalConversationBridge(QObject):
         if self._application is None or self._turn_in_flight:
             self._emit({"kind": "continuity_unavailable"})
             return
+        home_moment = self._current_home_moment()
         self._turn_in_flight = True
         future = self._executor.submit(
             self._application.continue_continuity_thread,
             thread_id,
             conversation_id=self._conversation_id,
             project_id=HOME_PROJECT_ID,
+            home_moment=home_moment,
         )
         future.add_done_callback(self._finish_continuity_thread)
 
@@ -1156,6 +1158,7 @@ class LocalConversationBridge(QObject):
             content,
             project_id=HOME_PROJECT_ID,
             conversation_id=self._conversation_id,
+            home_moment=self._current_home_moment(),
         )
 
     def _finish_turn(self, future) -> None:
@@ -1333,6 +1336,13 @@ class LocalConversationBridge(QObject):
         if self._session is None:
             return "Локальная модель"
         return self._session.active_model_display_name
+
+    def _current_home_moment(self) -> str:
+        # Read under the same lock used by Presentation mutations.
+        with self._session_lock:
+            if self._session is None:
+                return "ordinary"
+            return self._session.home_moment.value
 
     def _recent_payload(self) -> dict:
         return self._reset_conversation_page_payload()
