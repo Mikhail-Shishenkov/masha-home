@@ -116,10 +116,30 @@
     <section class="conversation-surface" id="conversation-surface" aria-label="Разговор с Машей">
       <header class="surface-header">
         <p class="eyebrow">между нами</p>
-        <div class="surface-actions">
-          <button class="recent-conversations-toggle" id="recent-conversations-toggle" type="button" disabled>Разговоры</button>
-          <button class="new-conversation" id="new-conversation" type="button" disabled>Новый разговор</button>
-        </div>
+       <div class="surface-actions">
+  <button
+    class="special-evening-toggle"
+    id="special-evening-toggle"
+    type="button"
+    aria-pressed="false"
+    hidden
+    disabled
+  >Вдвоём</button>
+
+  <button
+    class="recent-conversations-toggle"
+    id="recent-conversations-toggle"
+    type="button"
+    disabled
+  >Разговоры</button>
+
+  <button
+    class="new-conversation"
+    id="new-conversation"
+    type="button"
+    disabled
+  >Новый разговор</button>
+</div>
       </header>
       <h1 id="conversation-title">Я здесь.</h1>
       <p class="surface-status" id="surface-status">Подключаю локальный разговор…</p>

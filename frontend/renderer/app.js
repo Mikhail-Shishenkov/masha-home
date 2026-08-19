@@ -11,6 +11,7 @@ const composer = document.getElementById("composer");
 const input = document.getElementById("message-input");
 const sendButton = document.getElementById("send-button");
 const newConversationButton = document.getElementById("new-conversation");
+const specialEveningToggle = document.getElementById("special-evening-toggle");
 const recentToggle = document.getElementById("recent-conversations-toggle");
 const recentPanel = document.getElementById("recent-conversations");
 const recentList = document.getElementById("recent-list");
@@ -494,6 +495,7 @@ function setComposerState({ enabled, waiting = false }) {
   sendButton.disabled = !enabled || waiting || !input.value.trim();
   newConversationButton.disabled = !enabled || waiting;
   recentToggle.disabled = !enabled || waiting;
+  specialEveningToggle.disabled = !enabled || waiting;
   homeAttentionTrigger.disabled = !enabled || waiting;
   commitmentsTrigger.disabled = !enabled || waiting || Boolean(pendingConfirmation);
   activityTrigger.disabled = !enabled || waiting || Boolean(pendingConfirmation);
@@ -1556,6 +1558,31 @@ if (
   attentionMagicState.safetyEngaged = Boolean(status.emergency_stop_engaged);
   updateAttentionMagic();
   document.documentElement.dataset.homeState = presentation.home_state;
+  const homeMoment =
+  presentation.home_moment || "ordinary";
+
+const specialEveningActive =
+  homeMoment === "special_evening";
+
+const specialEveningAvailable =
+  window.MashaSceneMap.resolveHomePeriod(presentation)
+  === "evening";
+
+document.documentElement.dataset.homeMoment =
+  homeMoment;
+
+specialEveningToggle.hidden =
+  !specialEveningAvailable;
+
+specialEveningToggle.setAttribute(
+  "aria-pressed",
+  String(specialEveningActive)
+);
+
+specialEveningToggle.textContent =
+  specialEveningActive
+    ? "Вернуться"
+    : "Вдвоём";
   document.documentElement.dataset.safety = presentation.overlays.safety;
   document.documentElement.dataset.model = presentation.overlays.model;
   document.documentElement.dataset.presence = presentation.presence.activity;
@@ -1984,6 +2011,22 @@ function handleBridgeEvent(encoded) {
     showLocalFailure("Я ещё отвечаю на предыдущее сообщение.");
     return;
   }
+  if (payload.kind === "special_evening_changed") {
+    clearLocalFailure();
+    applySnapshot(payload.snapshot);
+    return;
+  }
+
+  if (payload.kind === "special_evening_unavailable") {
+    showLocalFailure(
+      "Этот уголок Дома оставим для вечера."
+    );
+    return;
+  }
+
+  if (payload.kind === "special_evening_rejected") {
+    return;
+  }
   if (payload.kind === "home_unavailable") {
     candidatePresentation.defer();
     ready = false;
@@ -2007,6 +2050,18 @@ newConversationButton.addEventListener("click", () => {
   if (!ready || inFlight) return;
   candidatePresentation.defer();
   bridge.startNewConversation();
+});
+
+specialEveningToggle.addEventListener("click", () => {
+  if (!ready || inFlight || pendingConfirmation) {
+    return;
+  }
+
+  const active =
+    document.documentElement.dataset.homeMoment
+    === "special_evening";
+
+  bridge.setSpecialEvening(!active);
 });
 
 recentToggle.addEventListener("click", () => {

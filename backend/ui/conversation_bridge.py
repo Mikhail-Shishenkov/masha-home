@@ -261,6 +261,38 @@ class LocalConversationBridge(QObject):
         )
         future.add_done_callback(self._finish_proactive_refresh)
 
+    @Slot(bool)
+    def setSpecialEvening(self, enabled: bool):  # noqa: N802
+        if self._application is None or self._session is None:
+            self._emit({"kind": "home_unavailable"})
+            return
+
+        if self._turn_in_flight:
+            self._emit({
+                "kind": "special_evening_rejected",
+                "reason": "turn_in_flight",
+            })
+            return
+
+        method_name = (
+            "enter_special_evening"
+            if enabled
+            else "leave_special_evening"
+        )
+
+        snapshot = self._session_snapshot(method_name)
+
+        if snapshot is None:
+            self._emit({
+                "kind": "special_evening_unavailable",
+            })
+            return
+
+        self._emit({
+            "kind": "special_evening_changed",
+            "snapshot": snapshot.model_dump(mode="json"),
+        })
+
     @Slot(int)
     def settleAssistantPresence(
             self,

@@ -545,9 +545,8 @@ def test_commitment_projection_uses_temporal_engine_and_keeps_exact_due_open(tmp
     assert by_id[template.id].status == "open"
     assert by_id["commitment_future"].status == "upcoming"
     assert by_id["commitment_overdue"].status == "overdue"
-    assert by_id["commitment_done"].status == "completed"
-    assert by_id["commitment_done"].can_propose_completion is False
-    assert repository.read_document() == before
+    assert "commitment_done" not in by_id
+
 
 
 def test_selected_commitment_enters_existing_confirmation_flow_and_survives_restart(tmp_path):
@@ -1080,6 +1079,12 @@ def test_home_attention_exposes_only_active_conversation_model_and_safety(tmp_pa
         "emergency_stop_engaged",
         "safety_label",
         "commitments_count",
+        "overdue_commitments_count",
+        "upcoming_commitments_count",
+        "unscheduled_commitments_count",
+        "stale_overdue_commitments_count",
+        "pending_interactions_count",
+        "attention_items",
     }
     assert attention.commitments_count == 1
     assert application.home_attention(conversation_id=None).active_conversation is None
@@ -1156,8 +1161,6 @@ def test_commitment_projection_has_explicit_group_and_recency_order(tmp_path):
         "due-later",
         "open-new",
         template.id,
-        "done-new",
-        "done-old",
     ]
 
 

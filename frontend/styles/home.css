@@ -20,16 +20,61 @@ html[data-home-attention="active"] .conversation-surface.is-surface-concealed { 
 .conversation-surface { position: absolute; z-index: 4; right: clamp(40px, 7vw, 150px); bottom: clamp(58px, 8vh, 112px); display: flex; flex-direction: column; width: min(32vw, 560px); min-width: 350px; height: min(72vh, 740px); min-height: 0; max-height: calc(100vh - clamp(82px, 12vh, 150px)); padding: 25px 30px 23px; contain: layout paint; background: linear-gradient(145deg, rgba(24,18,13,.93), rgba(14,14,12,.83) 72%, rgba(13,11,9,.74)); border: 0; border-top: 1px solid rgba(226,188,126,.25); box-shadow: 0 24px 76px rgba(0,0,0,.25); transition: opacity 300ms ease, background 460ms ease, transform 360ms var(--ease-home); }
 .surface-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px 18px; flex-wrap: wrap; }
 .surface-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 13px; margin-left: auto; transition: opacity 280ms ease; }
-.conversation-surface:not(.has-conversations) .surface-actions { visibility: hidden; opacity: 0; pointer-events: none; }
+.conversation-surface:not(.has-conversations) .recent-conversations-toggle,
+.conversation-surface:not(.has-conversations) .new-conversation {
+  display: none;
+}
 .eyebrow { margin: 0 0 13px; color: #d6ad70; text-transform: uppercase; letter-spacing: .17em; font: 600 11px/1.2 system-ui, sans-serif; }
 .surface-header .eyebrow { margin-bottom: 11px; }
-.new-conversation, .recent-conversations-toggle { appearance: none; padding: 4px 0; color: rgba(233,197,142,.9); border: 0; border-bottom: 1px solid rgba(226,188,126,.25); background: transparent; font: 600 11px/1.25 system-ui, sans-serif; cursor: pointer; }
-.new-conversation:hover:not(:disabled), .recent-conversations-toggle:hover:not(:disabled) { color: #f8dfb7; border-bottom-color: rgba(248,223,183,.7); }
-.new-conversation:disabled, .recent-conversations-toggle:disabled { color: rgba(231,197,139,.35); border-bottom-color: transparent; cursor: not-allowed; }
+.new-conversation, .recent-conversations-toggle, .special-evening-toggle { appearance: none; padding: 4px 0; color: rgba(233,197,142,.9); border: 0; border-bottom: 1px solid rgba(226,188,126,.25); background: transparent; font: 600 11px/1.25 system-ui, sans-serif; cursor: pointer; }
+.new-conversation,
+.recent-conversations-toggle,
+.special-evening-toggle { color: #f8dfb7; border-bottom-color: rgba(248,223,183,.7); }
+.new-conversation,
+.recent-conversations-toggle,
+.special-evening-toggle { color: rgba(231,197,139,.35); border-bottom-color: transparent; cursor: not-allowed; }
 .conversation-surface h1 { margin: 0 0 20px; font-weight: 400; font-size: clamp(30px, 2.35vw, 44px); line-height: 1.08; text-wrap: balance; }
 .surface-status { min-height: 1.45em; margin: -7px 0 16px; color: rgba(248,237,224,.72); font: 400 15px/1.45 system-ui, sans-serif; }
 .surface-status:empty { display: none; }
 .surface-status.is-error { color: #f0b18b; }
+.special-evening-toggle {
+  padding: 5px 11px;
+  border: 1px solid rgba(232, 184, 116, .34);
+  border-radius: 999px;
+  background: rgba(117, 69, 29, .18);
+  color: rgba(255, 222, 174, .92);
+  letter-spacing: .04em;
+  opacity: 1;
+  transition:
+    color 220ms ease,
+    border-color 220ms ease,
+    background 220ms ease,
+    box-shadow 280ms ease,
+    transform 220ms var(--ease-home);
+}
+
+.special-evening-toggle:hover:not(:disabled) {
+  color: #fff0d3;
+  border-color: rgba(248, 205, 143, .72);
+  background: rgba(133, 78, 32, .3);
+  box-shadow: 0 0 20px rgba(205, 134, 61, .13);
+  transform: translateY(-1px);
+}
+
+.special-evening-toggle[aria-pressed="true"] {
+  color: #fff1d6;
+  border-color: rgba(255, 207, 139, .78);
+  background: rgba(139, 76, 27, .38);
+  box-shadow:
+    0 0 18px rgba(216, 145, 68, .18),
+    inset 0 0 12px rgba(255, 221, 170, .04);
+}
+
+.special-evening-toggle:disabled {
+  opacity: .42;
+  transform: none;
+  box-shadow: none;
+}
 .transcript { display: flex; flex: 1 1 auto; flex-direction: column; gap: 11px; min-height: 0; max-height: 43vh; margin: 0 0 16px; padding: 4px 9px 0 0; overflow-y: auto; list-style: none; }
 .message { width: fit-content; max-width: 94%; padding: 11px 13px; color: rgba(248,237,224,.94); border: 1px solid rgba(248,237,224,.08); background: rgba(23,18,13,.34); font: 400 15px/1.55 system-ui, sans-serif; white-space: pre-wrap; overflow-wrap: anywhere; }
 .message-user { align-self: flex-end; border-color: rgba(222,181,116,.24); background: rgba(90,57,25,.27); }
