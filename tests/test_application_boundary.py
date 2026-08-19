@@ -27,7 +27,7 @@ from backend.llm.model_router import ModelRouter
 from backend.memory.sqlite_repository import MemorySqliteRepository
 from backend.memory.memory_management import MemoryManagementService, MemoryMutationOperation
 from backend.memory.memory_models import CommitmentStatus
-from backend.presentation import PresenceActivity
+from backend.presentation import HomeMoment, PresenceActivity
 from backend.skills.agent_loop import (
     AgentRunReceipt,
     AgentRunStatus,
@@ -763,6 +763,55 @@ def test_home_presentation_session_is_deterministic_and_has_no_domain_mutation(t
     assert responded.composition.primary_surface_id == "home.conversation"
     assert repository.read_document() == before
 
+def test_special_evening_is_explicit_session_only_and_expires_at_day(tmp_path):
+    root, _, application = _application(tmp_path)
+    repository = MemorySqliteRepository(
+        root / "local-data" / "memory" / "masha.sqlite3"
+    )
+    before = repository.read_document()
+
+    current_time = [
+        datetime(
+            2026,
+            8,
+            19,
+            22,
+            0,
+            tzinfo=timezone(timedelta(hours=3)),
+        )
+    ]
+
+    application._home_snapshot._clock = lambda: current_time[0]
+
+    session = application.open_home_session()
+    session.opened()
+
+    special = session.enter_special_evening()
+
+    assert special is not None
+    assert (
+        special.presentation.home_moment
+        is HomeMoment.SPECIAL_EVENING
+    )
+
+    current_time[0] = datetime(
+        2026,
+        8,
+        20,
+        9,
+        0,
+        tzinfo=timezone(timedelta(hours=3)),
+    )
+
+    daytime = session.observe_time()
+
+    assert (
+        daytime.presentation.home_moment
+        is HomeMoment.ORDINARY
+    )
+
+    assert session.enter_special_evening() is None
+    assert repository.read_document() == before
 
 def test_home_session_model_change_updates_only_execution_overlay(tmp_path):
     _, _, application = _application(tmp_path)

@@ -39,6 +39,8 @@ from backend.presentation import (
     UserSentMessage,
     ViewportCharacteristics,
     presentation_model_from_application_state,
+    HomeMoment,
+    HomeMomentChanged,
 )
 
 from .contracts import MashaStatusView, ModelProfileView, UiContract, VisualAssetView
@@ -152,6 +154,29 @@ class HomePresentationSession:
 
     def opened(self) -> HomeSnapshotView:
         return self._dispatch(UserOpenedApplication(occurred_at=self._now()))
+
+    def enter_special_evening(self) -> HomeSnapshotView | None:
+        """Enter the explicit shared evening moment only during evening hours."""
+        now = self._now()
+
+        if 7 <= now.hour < 18:
+            return None
+
+        return self._dispatch(
+            HomeMomentChanged(
+                occurred_at=now,
+                moment=HomeMoment.SPECIAL_EVENING,
+            )
+        )
+
+    def leave_special_evening(self) -> HomeSnapshotView:
+        """Return Home to the ordinary day/evening presence family."""
+        return self._dispatch(
+            HomeMomentChanged(
+                occurred_at=self._now(),
+                moment=HomeMoment.ORDINARY,
+            )
+        )
 
     def user_sent(self) -> HomeSnapshotView:
         return self._dispatch(UserSentMessage(occurred_at=self._now()))
@@ -481,8 +506,20 @@ class HomePresentationSession:
         return self._dispatch(AutonomyResumed(occurred_at=self._now()))
 
     def observe_time(self) -> HomeSnapshotView:
-        """Refresh Home time without changing the current Presentation state."""
+        """Refresh Home time and close an expired special evening."""
         observed_at = self._now()
+
+        if (
+                7 <= observed_at.hour < 18
+                and self._runtime.model.home_moment
+                is HomeMoment.SPECIAL_EVENING
+        ):
+            return self._dispatch(
+                HomeMomentChanged(
+                    occurred_at=observed_at,
+                    moment=HomeMoment.ORDINARY,
+                )
+            )
 
         self._runtime.model = self._runtime.model.model_copy(
             update={"observed_at": observed_at}
