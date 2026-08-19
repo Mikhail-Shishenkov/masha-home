@@ -30,8 +30,6 @@
   const EVENING_SCENES = Object.freeze({
     idle: scene("evening", "idle", "assets/presence/evening/idle.png", "Маша дома в тёплой вечерней гостиной"),
     conversation: scene("evening", "conversation", "assets/presence/evening/conversation.png", "Маша разговаривает в вечерней гостиной"),
-    supportive: scene("evening", "supportive", "assets/presence/evening/quiet-with-mug.png", "Маша мягко и заботливо рядом"),
-    amused: scene("evening", "amused", "assets/presence/evening/cozy-with-mug.png", "Маша тепло улыбается и слегка веселится"),
     listening: scene("evening", "listening", "assets/presence/evening/listening.png", "Маша внимательно слушает в вечерней гостиной"),
     thinking: scene("evening", "thinking", "assets/presence/evening/thinking.png", "Маша задумалась в вечерней гостиной"),
     activity: scene("evening", "activity", "assets/presence/evening/activity.png", "Маша занята делом в вечернем доме"),
@@ -45,7 +43,61 @@
     specialEvening: scene("evening", "special", "assets/presence/evening/special-cozy-wide.png", "Особенный тихий вечер дома с Машей"),
   });
 
-  const SCENES = Object.freeze({ day: DAY_SCENES, evening: EVENING_SCENES });
+const CONTEXT_SCENES = Object.freeze({
+  calmAttentive: scene(
+    "context",
+    "calm_attentive",
+    "assets/presence/context/calm-attentive.png",
+    "Маша спокойно и внимательно рядом"
+  ),
+
+  listeningWithMug: scene(
+    "context",
+    "listening_with_mug",
+    "assets/presence/context/listening-with-mug.png",
+    "Маша внимательно и мягко слушает"
+  ),
+
+  speakingOpen: scene(
+    "context",
+    "speaking_open",
+    "assets/presence/context/speaking-open.png",
+    "Маша живо и открыто отвечает"
+  ),
+
+  thoughtfulAway: scene(
+    "context",
+    "thoughtful_away",
+    "assets/presence/context/thoughtful-away.png",
+    "Маша задумалась и ненадолго отвела взгляд"
+  ),
+
+  boundaryCalm: scene(
+    "context",
+    "boundary_calm",
+    "assets/presence/context/boundary-calm.png",
+    "Маша спокойно обозначает границу"
+  ),
+
+  focusedWork: scene(
+    "context",
+    "focused_work",
+    "assets/presence/context/focused-work.png",
+    "Маша сосредоточенно занята делом"
+  ),
+    supportive: scene(
+    "context",
+    "supportive",
+    "assets/presence/context/supportive.png",
+    "Маша мягко и поддерживающе рядом"
+  ),
+});
+
+  const SCENES = Object.freeze({
+  day: DAY_SCENES,
+  evening: EVENING_SCENES,
+  context: CONTEXT_SCENES,
+});
 
   function resolveHomePeriod(presentation) {
     // observed_at belongs to the Presentation Runtime and already carries Home's
@@ -103,6 +155,9 @@
     return scenes.firmDisagreement;
   }
 
+  if (["skeptical", "serious"].includes(expression)) {
+    return CONTEXT_SCENES.boundaryCalm;
+  }
   /*
    * Contextual alternates currently belong to the coherent evening family.
    * Daytime keeps its authored day scene set rather than unexpectedly
