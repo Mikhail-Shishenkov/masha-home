@@ -56,6 +56,7 @@ from .commitments import CommitmentApplicationService
 from .continuity import ContinuityApplicationService
 from .home_snapshot import HomeSnapshotService
 from .human_information import HumanInformationService
+from .external_context import LocalExternalContextHintProvider
 from .model_settings import ModelSettingsService
 from .memory_candidates import MemoryCandidateApplicationService
 from .proactive import ProactiveApplicationService
@@ -74,6 +75,7 @@ class _Core:
     profiles: ModelProfileStore
     router: ModelRouter
     human_information: HumanInformationService
+    reflection: ReflectionService
 
 
 def build_conversation_service(*, project_root: Path, router: ModelRouter | None = None) -> ConversationService:
@@ -137,6 +139,10 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
             router=core.router,
             identity_kernel=core.identity,
             model_profiles=core.profiles,
+        ),
+        context_hint_provider=LocalExternalContextHintProvider(
+            human_information=core.human_information,
+            reflections=core.reflection,
         ),
         store=ExternalObservationStore(runtime / "external-observations.json"),
         clock=core.conversation.temporal_engine.clock.now_utc,
@@ -299,4 +305,5 @@ def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
         profiles=profiles,
         router=selected_router,
         human_information=human_information,
+        reflection=reflection,
     )

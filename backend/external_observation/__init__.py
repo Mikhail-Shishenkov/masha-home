@@ -1,6 +1,13 @@
 """Read-only external observation foundation."""
 
 from .intent import ExplicitExternalIntentGate, ExplicitWebFetchIntentGate, ExternalIntentDecision, FetchIntentDecision
+from .context import (
+    ExternalContextHint,
+    ExternalContextHintKind,
+    ExternalContextHintProvider,
+    ExternalContextResolution,
+    requires_local_context_resolution,
+)
 from .models import (
     ExternalObservation,
     FetchedPageEvidence,
@@ -37,6 +44,10 @@ __all__ = [
     "EXTERNAL_INFORMATION_CONTRACT",
     "ExplicitExternalIntentGate",
     "ExplicitWebFetchIntentGate",
+    "ExternalContextHint",
+    "ExternalContextHintKind",
+    "ExternalContextHintProvider",
+    "ExternalContextResolution",
     "ExternalIntentDecision",
     "FetchIntentDecision",
     "ExternalObservation",
@@ -53,6 +64,7 @@ __all__ = [
     "InternetAccessPolicyStore",
     "InvocationAuthority",
     "LocalExternalQueryPlanner",
+    "requires_local_context_resolution",
     "LocalSourceSelector",
     "ObservationKind",
     "ObservationRequest",

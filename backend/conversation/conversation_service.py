@@ -231,6 +231,8 @@ class ConversationService:
                 origin_message_id=user_history_message.id,
                 conversation_message_ids=conversation_message_ids,
                 recent_messages=recent_external_context,
+                project_id=project_id,
+                active_continuity_thread_id=active_continuity_thread_id,
             )
             if fetch_turn is not None:
                 external_observations = fetch_turn
@@ -239,6 +241,8 @@ class ConversationService:
                     user_message,
                     origin_message_id=user_history_message.id,
                     recent_messages=recent_external_context,
+                    project_id=project_id,
+                    active_continuity_thread_id=active_continuity_thread_id,
                 )
                 external_observations = () if search is None else (search,)
             self.last_external_observations = external_observations

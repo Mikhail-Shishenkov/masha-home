@@ -16,6 +16,11 @@ from backend.skills.models import SkillCapability, SkillIntegrity
 from backend.skills.registry import SkillRegistry
 
 from .intent import ExplicitExternalIntentGate, ExplicitWebFetchIntentGate
+from .context import (
+    ExternalContextHintProvider,
+    ExternalContextResolution,
+    requires_local_context_resolution,
+)
 from .models import (
     ExternalObservation,
     FetchedPageEvidence,
@@ -72,6 +77,7 @@ class ExternalObservationService:
         fetch_gate: ExplicitWebFetchIntentGate | None = None,
         fetcher: SafePublicHttpsFetcher | None = None,
         source_selector: SourceSelector | None = None,
+        context_hint_provider: ExternalContextHintProvider | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         url_opener: Callable[[str], bool] = lambda url: webbrowser.open(url, new=2),
     ):
@@ -85,6 +91,7 @@ class ExternalObservationService:
         self.fetch_gate = fetch_gate or ExplicitWebFetchIntentGate()
         self.fetcher = fetcher or SafePublicHttpsFetcher()
         self.source_selector = source_selector
+        self.context_hint_provider = context_hint_provider
         self._clock = clock
         self._url_opener = url_opener
 
@@ -95,18 +102,41 @@ class ExternalObservationService:
         origin_message_id: str,
         recent_messages: tuple[str, ...] = (),
         memory_hints: tuple[str, ...] = (),
+        project_id: str | None = None,
+        active_continuity_thread_id: str | None = None,
         authority: InvocationAuthority = InvocationAuthority.USER_EXPLICIT,
     ) -> ExternalObservation | None:
         decision = self.gate.detect(message, recent_messages=recent_messages)
         if not decision.explicit:
             return None
+        resolution = self._resolve_local_context(
+            decision.query_hint,
+            current_message=message,
+            project_id=project_id,
+            recent_messages=recent_messages,
+            active_continuity_thread_id=active_continuity_thread_id,
+        )
+        query = "нужна конкретная тема"
+        if resolution.clarification_required:
+            request = ObservationRequest(
+                observation_id=f"obs_{uuid4()}",
+                kind=ObservationKind.WEB_SEARCH,
+                query=query,
+                authority=authority,
+                freshness=decision.freshness,
+                reason=decision.reason,
+                requested_at=self._now(),
+                origin_message_id=origin_message_id,
+            )
+            return self._terminal(request, ObservationStatus.CLARIFICATION_REQUIRED, "context_clarification_required")
         plan = self.planner.plan(
             current_message=message,
             query_hint=decision.query_hint,
             recent_messages=recent_messages,
             memory_hints=memory_hints,
+            context_hints=resolution.hints,
         )
-        query = plan.query or "нужна конкретная тема"
+        query = plan.query or query
         request = ObservationRequest(
             observation_id=f"obs_{uuid4()}",
             kind=ObservationKind.WEB_SEARCH,
@@ -132,6 +162,8 @@ class ExternalObservationService:
         origin_message_id: str,
         conversation_message_ids: tuple[str, ...],
         recent_messages: tuple[str, ...] = (),
+        project_id: str | None = None,
+        active_continuity_thread_id: str | None = None,
     ) -> tuple[ExternalObservation, ...] | None:
         decision = self.fetch_gate.detect(message)
         if not decision.explicit:
@@ -169,12 +201,33 @@ class ExternalObservationService:
             )
             return (self._execute_fetch(request),)
         assert decision.search_then_fetch
+        resolution = self._resolve_local_context(
+            decision.query_hint,
+            current_message=message,
+            project_id=project_id,
+            recent_messages=recent_messages,
+            active_continuity_thread_id=active_continuity_thread_id,
+        )
+        query = "нужна конкретная тема"
+        if resolution.clarification_required:
+            search_request = ObservationRequest(
+                observation_id=f"obs_{uuid4()}",
+                kind=ObservationKind.WEB_SEARCH,
+                query=query,
+                authority=InvocationAuthority.USER_EXPLICIT,
+                freshness=decision.freshness,
+                reason=decision.reason,
+                requested_at=self._now(),
+                origin_message_id=origin_message_id,
+            )
+            return (self._terminal(search_request, ObservationStatus.CLARIFICATION_REQUIRED, "context_clarification_required"),)
         plan = self.planner.plan(
             current_message=message,
             query_hint=decision.query_hint,
             recent_messages=recent_messages,
+            context_hints=resolution.hints,
         )
-        query = plan.query or "нужна конкретная тема"
+        query = plan.query or query
         search_request = ObservationRequest(
             observation_id=f"obs_{uuid4()}",
             kind=ObservationKind.WEB_SEARCH,
@@ -260,6 +313,29 @@ class ExternalObservationService:
             completed_at=self._now(),
         )
         return self.store.save(observation)
+
+    def _resolve_local_context(
+        self,
+        query_hint: str | None,
+        *,
+        current_message: str,
+        project_id: str | None,
+        recent_messages: tuple[str, ...],
+        active_continuity_thread_id: str | None,
+    ) -> ExternalContextResolution:
+        if not requires_local_context_resolution(query_hint):
+            return ExternalContextResolution()
+        if self.context_hint_provider is None:
+            return ExternalContextResolution()
+        try:
+            return self.context_hint_provider.resolve(
+                current_message=current_message,
+                project_id=project_id,
+                recent_messages=recent_messages,
+                active_continuity_thread_id=active_continuity_thread_id,
+            )
+        except Exception:
+            return ExternalContextResolution(clarification_required=True)
 
     def _execute_fetch(self, request: ObservationRequest) -> ExternalObservation:
         blocked = self._authorization_failure(request, WEB_FETCH_SKILL_ID, WEB_FETCH_SCOPE)

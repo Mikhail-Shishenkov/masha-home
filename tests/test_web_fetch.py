@@ -634,7 +634,7 @@ def test_web_workbench_permission_copy_reflects_explicit_request_contract(tmp_pa
 
     assert set(grants) == {"web_search", "web_fetch"}
     assert all(item.label == "Только по твоей просьбе" for item in grants.values())
-    assert all(item.capability == "доступ к публичному интернету" for item in grants.values())
+    assert all(item.capability == "network_access" for item in grants.values())
 
 
 def test_ordinary_or_search_only_model_turn_cannot_claim_a_page_read(tmp_path):

@@ -10,6 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from backend.llm.model_models import MessageRole, ModelCapabilities, ModelMessage, ModelRequest, PrivacyScope
 from backend.llm.model_provider import ModelProviderUnavailableError, ModelTimeoutError
 
+from .context import ExternalContextHint, requires_local_context_resolution
+
 
 class ExternalQueryPlan(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -27,6 +29,7 @@ class ExternalQueryPlanner(Protocol):
         query_hint: str | None,
         recent_messages: tuple[str, ...],
         memory_hints: tuple[str, ...] = (),
+        context_hints: tuple[ExternalContextHint, ...] = (),
     ) -> ExternalQueryPlan: ...
 
 
@@ -35,7 +38,7 @@ _MEANINGFUL = re.compile(r"[a-zа-я0-9][a-zа-я0-9+.#:/_-]{1,}", re.IGNORECASE
 
 def _bounded_query(value: str) -> str | None:
     normalized = " ".join(value.replace("\n", " ").split()).strip(" `\"'.,;:—-")
-    if not normalized or len(normalized) > 300 or len(_MEANINGFUL.findall(normalized)) < 2:
+    if not normalized or len(normalized) > 300 or not _MEANINGFUL.findall(normalized):
         return None
     return normalized
 
@@ -55,14 +58,17 @@ class LocalExternalQueryPlanner:
         query_hint: str | None,
         recent_messages: tuple[str, ...],
         memory_hints: tuple[str, ...] = (),
+        context_hints: tuple[ExternalContextHint, ...] = (),
     ) -> ExternalQueryPlan:
         deterministic = _bounded_query(query_hint or "")
-        if deterministic is not None:
+        if deterministic is not None and not requires_local_context_resolution(query_hint):
             return ExternalQueryPlan(query=deterministic, source="deterministic")
         profile = self.model_profiles.get_active_profile()
+        bounded_hints = self._bounded_hints(context_hints)
         context_rows = [
-            *(f"Разговор: {row[:500]}" for row in recent_messages[-6:]),
-            *(f"Локальная подсказка: {row[:300]}" for row in memory_hints[:3]),
+            *(f"Недавний разговор: {row[:300]}" for row in recent_messages[-4:]),
+            *(f"Контекст ({item.kind.value}): {item.text}" + (f" [{item.state}]" if item.state else "") for item in bounded_hints),
+            *(f"Контекст (memory): {row[:300]}" for row in memory_hints[:3]),
         ]
         request = ModelRequest(
             messages=(
@@ -81,7 +87,7 @@ class LocalExternalQueryPlanner:
                     content=(
                         f"Текущая просьба: {current_message[:500]}\n"
                         + "\n".join(context_rows)
-                    )[:3_500],
+                    )[:3_000],
                 ),
             ),
             identity_context=self.identity_kernel.build_context(),
@@ -107,6 +113,18 @@ class LocalExternalQueryPlanner:
             clarification_required=query is None,
             source="local_planner",
         )
+
+    @staticmethod
+    def _bounded_hints(hints: tuple[ExternalContextHint, ...]) -> tuple[ExternalContextHint, ...]:
+        rows: list[ExternalContextHint] = []
+        used = 0
+        for hint in hints[:5]:
+            text = hint.text[:400]
+            if used + len(text) > 1_500:
+                break
+            rows.append(hint.model_copy(update={"text": text}))
+            used += len(text)
+        return tuple(rows)
 
 
 class FakeExternalQueryPlanner:

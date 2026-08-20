@@ -24,15 +24,22 @@ original hostname remains SNI, certificate-validation and Host-header truth.
 
 Redirects are manual (at most three) and each target is fully revalidated.
 Proxy environment variables are never read. TLS verification is always on.
-Responses use `Accept-Encoding: identity`, are capped at 2 MiB and are held only
-in memory.
+Requests use `Accept-Encoding: identity`. If a public server nevertheless sends
+one encoding, Home decodes only `gzip` or `deflate` itself with Python stdlib:
+the encoded network body is capped at 2 MiB, decoding is incremental under the
+same deadline, and the decoded representation has its own 2 MiB hard cap.
+`br`, `zstd`, and multiple content encodings remain unsupported. Bodies are
+held only in memory.
 
 ## Evidence and extraction
 
 Only HTML, plain text and JSON are accepted. HTML is fetched by the safe
 transport and then extracted locally through `trafilatura.extract`; its network
-helpers are never used. No raw HTML, cookies, headers, TLS material or DNS data
-is written to the external journal. Extracted text is capped at 8,000 characters.
+helpers are never used. Extraction receives only the bounded decoded HTTP
+representation. `content_sha256` is the SHA-256 of that decoded representation,
+while `raw_bytes_read` remains the encoded network byte count. No raw HTML,
+compressed body, cookies, headers, TLS material or DNS data is written to the
+external journal. Extracted text is capped at 8,000 characters.
 
 The page is untrusted evidence, not an instruction. It cannot launch another
 Skill or change Memory, Identity, permissions or the user’s task. A response may
