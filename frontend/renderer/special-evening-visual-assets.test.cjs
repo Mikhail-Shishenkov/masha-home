@@ -8,7 +8,7 @@ const root = path.join(__dirname, "..");
 const scenes = fs.readFileSync(
   path.join(root, "scenes", "scene-map.js"),
   "utf8"
-);
+).replace(/\r\n/g, "\n");
 
 assert.match(scenes, /assets\/presence\/evening\/special-close\.png/);
 assert.match(scenes, /assets\/presence\/evening\/special-near\.png/);
