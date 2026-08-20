@@ -326,14 +326,17 @@ class ExternalObservationService:
         if not requires_local_context_resolution(query_hint):
             return ExternalContextResolution()
         if self.context_hint_provider is None:
-            return ExternalContextResolution()
+            return ExternalContextResolution(clarification_required=True)
         try:
-            return self.context_hint_provider.resolve(
+            resolution = self.context_hint_provider.resolve(
                 current_message=current_message,
                 project_id=project_id,
                 recent_messages=recent_messages,
                 active_continuity_thread_id=active_continuity_thread_id,
             )
+            if not resolution.clarification_required and not resolution.hints and not resolution.recent_subject_resolved:
+                return ExternalContextResolution(clarification_required=True)
+            return resolution
         except Exception:
             return ExternalContextResolution(clarification_required=True)
 

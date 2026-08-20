@@ -30,6 +30,7 @@ _REFERENCE_GLUE = {
     "него", "ней", "ним", "модель", "тема", "проект", "дело", "штука", "который", "которую",
 }
 _RECENT_PUBLIC_NAME = re.compile(r"\b[A-Z][A-Za-z0-9+._-]{2,}\b")
+_INCIDENTAL_PLATFORM_NAMES = frozenset({"github", "windows"})
 
 
 class LocalExternalContextHintProvider:
@@ -38,7 +39,6 @@ class LocalExternalContextHintProvider:
     def __init__(self, *, human_information, reflections):
         self.human_information = human_information
         self.reflections = reflections
-        self.calls: list[dict] = []
 
     def resolve(
         self,
@@ -48,12 +48,6 @@ class LocalExternalContextHintProvider:
         recent_messages: tuple[str, ...],
         active_continuity_thread_id: str | None,
     ) -> ExternalContextResolution:
-        self.calls.append({
-            "current_message": current_message,
-            "project_id": project_id,
-            "recent_messages": recent_messages,
-            "active_continuity_thread_id": active_continuity_thread_id,
-        })
         hints: list[ExternalContextHint] = []
         active = self._active_thread_hint(active_continuity_thread_id)
         if active is not None:
@@ -61,7 +55,8 @@ class LocalExternalContextHintProvider:
 
         mode = select_recall_mode(current_message)
         recall_hints: list[ExternalContextHint] = []
-        if mode is not RecallMode.FORGOTTEN_REVIEW and not self._recent_topic_is_explicit(recent_messages):
+        recent_subject_resolved = self._recent_topic_is_explicit(recent_messages)
+        if mode is not RecallMode.FORGOTTEN_REVIEW and not recent_subject_resolved:
             recall = self.human_information.recall_information(HumanRecallRequest(
                 query=current_message,
                 project_id=project_id,
@@ -82,7 +77,10 @@ class LocalExternalContextHintProvider:
         reflection = self._reflection_hint(current_message, project_id)
         if reflection is not None:
             hints.append(reflection)
-        return ExternalContextResolution(hints=self._fit(hints))
+        return ExternalContextResolution(
+            hints=self._fit(hints),
+            recent_subject_resolved=recent_subject_resolved,
+        )
 
     def _active_thread_hint(self, thread_id: str | None) -> ExternalContextHint | None:
         if thread_id is None:
@@ -157,5 +155,9 @@ class LocalExternalContextHintProvider:
 
     @staticmethod
     def _recent_topic_is_explicit(recent_messages: tuple[str, ...]) -> bool:
-        """A recent named public subject is stronger than unrelated long-term Recall."""
-        return any(_RECENT_PUBLIC_NAME.search(item) for item in recent_messages[-4:])
+        """Only a non-generic named subject can outrank relevant Recall."""
+        return any(
+            match.group(0).casefold() not in _INCIDENTAL_PLATFORM_NAMES
+            for item in recent_messages[-4:]
+            for match in _RECENT_PUBLIC_NAME.finditer(item)
+        )

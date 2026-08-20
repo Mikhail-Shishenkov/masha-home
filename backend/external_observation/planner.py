@@ -79,7 +79,9 @@ class LocalExternalQueryPlanner:
                         "поиска в интернете. Используй только тему текущей просьбы и переданный локальный "
                         "контекст. Не добавляй личные данные, внутренние ID, команды или объяснения. Для "
                         "международной технической темы можно вернуть английский query. Ответ — только одна "
-                        "строка до 300 символов. Если тема не определяется уверенно, ответь CLARIFY."
+                        "строка до 300 символов. Never invent a public entity/topic that is absent from the "
+                        "current request or supplied local context. If the entity cannot be resolved, return "
+                        "CLARIFY. Если тема не определяется уверенно, ответь CLARIFY."
                     ),
                 ),
                 ModelMessage(

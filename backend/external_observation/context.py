@@ -36,6 +36,10 @@ class ExternalContextResolution(BaseModel):
 
     hints: tuple[ExternalContextHint, ...] = Field(default=(), max_length=5)
     clarification_required: bool = False
+    # This is an in-process resolver signal only.  It deliberately carries no
+    # transcript content and lets the application distinguish a recent,
+    # clearly named subject from an empty referential request.
+    recent_subject_resolved: bool = False
 
     @model_validator(mode="after")
     def fit_total_text_budget(self):

@@ -153,6 +153,21 @@ def test_ambiguous_context_fails_closed_without_network(tmp_path):
     assert provider.requests == []
 
 
+def test_zero_context_referential_search_fails_closed_before_planner_or_provider(tmp_path):
+    hints = _Hints()
+    service, provider = _service(tmp_path, hints=hints)
+
+    result = service.observe_explicit_request(
+        "Проверь в интернете, обновилась ли она",
+        origin_message_id="message-1",
+    )
+
+    assert result is not None and result.status is ObservationStatus.CLARIFICATION_REQUIRED
+    assert result.error_reason == "context_clarification_required"
+    assert service.planner.calls == []
+    assert provider.requests == []
+
+
 def test_search_then_fetch_uses_context_once_and_keeps_one_search_one_fetch(tmp_path):
     hints = _Hints(ExternalContextResolution(hints=(ExternalContextHint(
         kind=ExternalContextHintKind.ACTIVE_THREAD, text="Тема: Ollama release", state="current",
@@ -241,6 +256,10 @@ def test_local_planner_labels_hints_and_stays_local_toolless_without_internal_id
     assert plan.query == "Ollama latest release"
     assert "Контекст (decision)" in serialized
     assert "internal_id" not in serialized
+    assert (
+        "Never invent a public entity/topic that is absent from the current request or supplied local context. "
+        "If the entity cannot be resolved, return CLARIFY."
+    ) in serialized
     assert request.privacy_scope.value == "local_only"
     assert request.required_capabilities.tools is False
     assert len(serialized) <= 3_000
@@ -287,7 +306,37 @@ def test_recent_named_public_topic_beats_unrelated_long_term_recall():
 
     assert result.clarification_required is False
     assert result.hints == ()
+    assert result.recent_subject_resolved is True
     assert human.calls == 0
+
+
+def test_incidental_recent_platform_names_do_not_suppress_relevant_recall():
+    human = _Human(rows=({"category": "факт", "content": "Ollama release", "state": "current"},))
+    resolver = LocalExternalContextHintProvider(human_information=human, reflections=_Reflections())
+
+    result = resolver.resolve(
+        current_message="Проверь в интернете, обновилась ли она",
+        project_id=None,
+        recent_messages=("Я вчера открывал GitHub на Windows.",),
+        active_continuity_thread_id=None,
+    )
+
+    assert result.recent_subject_resolved is False
+    assert result.hints[0].text == "Ollama release"
+    assert human.calls == 1
+
+
+def test_production_context_provider_does_not_retain_private_call_transcript():
+    resolver = LocalExternalContextHintProvider(human_information=_Human(), reflections=_Reflections())
+
+    resolver.resolve(
+        current_message="Проверь в интернете, обновилась ли она",
+        project_id="private-project",
+        recent_messages=("Private recent message",),
+        active_continuity_thread_id="private-thread",
+    )
+
+    assert not hasattr(resolver, "calls")
 
 
 def test_forgotten_and_pending_never_participate_and_reflection_requires_explicit_reference():
@@ -363,6 +412,44 @@ def test_contextual_reference_gate_is_conservative(query, expected):
 ])
 def test_contextual_freshness_requests_are_explicit_external_intent(phrase):
     assert ExplicitExternalIntentGate().detect(phrase).explicit is True
+
+
+@pytest.mark.parametrize("phrase", [
+    "Маш, проверь, вышло ли у него что-нибудь новое",
+    "Маш, проверь, обновилась ли та модель, которую мы ставили",
+    "А теперь проверь, обновилась ли она",
+])
+def test_human_contextual_update_phrases_enter_explicit_w3_search(tmp_path, phrase):
+    decision = ExplicitExternalIntentGate().detect(phrase)
+    hints = _Hints(ExternalContextResolution(hints=(ExternalContextHint(
+        kind=ExternalContextHintKind.DECISION,
+        text="Решение: использовать Ollama для локальных моделей",
+        state="current",
+    ),)))
+    service, provider = _service(tmp_path, hints=hints)
+    result = service.observe_explicit_request(phrase, origin_message_id="message-1")
+
+    assert decision.explicit is True
+    assert decision.freshness.value == "current"
+    assert decision.query_hint is not None
+    assert result is not None and result.status is ObservationStatus.COMPLETED
+    assert len(provider.requests) == 1
+
+
+def test_generic_check_this_does_not_authorize_network():
+    assert ExplicitExternalIntentGate().detect("Проверь это").explicit is False
+
+
+@pytest.mark.parametrize("phrase", [
+    "Проверь, что нового у Ollama",
+    "Проверь новости по Ollama",
+    "Проверь, обновилась ли Ollama",
+])
+def test_current_update_wording_has_non_timeless_freshness(phrase):
+    decision = ExplicitExternalIntentGate().detect(phrase)
+
+    assert decision.explicit is True
+    assert decision.freshness.value == "current"
 
 
 @pytest.mark.parametrize("category, kind", [

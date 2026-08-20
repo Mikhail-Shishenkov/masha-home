@@ -53,8 +53,9 @@ _EXPLICIT = (
         r"(?:пишут|говорят|известно)\s+(?:о|об|про)?\s*(?P<query>.*)$"
     ),
     re.compile(
-        r"^(?:проверь|узнай)\s*,?\s*(?:исправили|вышла|вышел|обновили|изменилось|"
-        r"доступно|появилось)\s*(?P<query>.*)$"
+        r"^(?:а\s+теперь\s+)?(?:проверь|узнай)\s*,?\s*"
+        r"(?:исправили|вышла|вышел|вышло|обновили|обновилась|обновился|обновилось|"
+        r"изменилось|доступно|появилось)\s+(?:ли\s+)?(?P<query>.+)$"
     ),
     re.compile(
         r"^(?:найди|поищи|посмотри|проверь)\s*,?\s*(?:что\s+)?нового\s+"
@@ -104,7 +105,11 @@ def normalize_external_utterance(value: str) -> str:
 def infer_freshness(value: str) -> FreshnessRequirement:
     if re.search(r"\b(?:срочно|прямо\s+сейчас|breaking|свежие\s+новости|последние\s+новости)\b", value):
         return FreshnessRequirement.BREAKING
-    if re.search(r"\b(?:сейчас|актуальн|текущ|последн\w*\s+верси|уже|исправили|вышл\w*)\b", value):
+    if re.search(
+        r"\b(?:сейчас|актуальн|текущ|последн\w*\s+верси|уже|исправили|"
+        r"вышл\w*|обновил\w*|нового|новост\w*)\b",
+        value,
+    ):
         return FreshnessRequirement.CURRENT
     if re.search(r"\b(?:недавн|за\s+(?:неделю|месяц)|свеж\w*)\b", value):
         return FreshnessRequirement.RECENT
