@@ -25,6 +25,12 @@ class HomeMoment(str, Enum):
     ORDINARY = "ordinary"
     SPECIAL_EVENING = "special_evening"
 
+class HomeProximity(str, Enum):
+    WIDE = "wide"
+    CLOSE = "close"
+    NEAR = "near"
+
+
 class PresentationTier(str, Enum):
     TIER_0 = "tier_0_static"
     TIER_1 = "tier_1_2d"
@@ -400,6 +406,7 @@ class HomePresentationModel(PresentationModel):
     opened: bool = False
     home_state: HomeState = HomeState.READY
     home_moment: HomeMoment = HomeMoment.ORDINARY
+    home_proximity: HomeProximity = HomeProximity.WIDE
     window_state: WindowState = WindowState.FOCUSED
     privacy_masked: bool = False
     presence: MashaPresence

@@ -39,6 +39,7 @@ from backend.presentation.events import (
     UserSentMessage,
     WindowFocusChanged,
     HomeMomentChanged,
+    HomeProximityChanged,
     HomeMoment,
 )
 from backend.presentation.models import (
@@ -49,6 +50,7 @@ from backend.presentation.models import (
     DaemonOverlay,
     ExpressionCode,
     HomePresentationModel,
+    HomeProximity,
     InteractionSurface,
     ModelOverlay,
     PresenceActivity,
@@ -467,3 +469,56 @@ def test_presentation_events_do_not_touch_unrelated_persistent_files(tmp_path):
         model = reducer.reduce(model, event)
 
     assert {name: path.read_bytes() for name, path in files.items()} == before
+
+def test_special_evening_proximity_is_explicit_and_resets_when_leaving():
+    reducer = PresentationReducer()
+    model = _open_model()
+
+    ignored = reducer.reduce(
+        model,
+        _event(
+            HomeProximityChanged,
+            proximity=HomeProximity.NEAR,
+        ),
+    )
+    assert ignored.home_proximity is HomeProximity.WIDE
+
+    special = reducer.reduce(
+        model,
+        _event(
+            HomeMomentChanged,
+            seconds=2,
+            moment=HomeMoment.SPECIAL_EVENING,
+        ),
+    )
+    assert special.home_proximity is HomeProximity.WIDE
+
+    close = reducer.reduce(
+        special,
+        _event(
+            HomeProximityChanged,
+            seconds=3,
+            proximity=HomeProximity.CLOSE,
+        ),
+    )
+    assert close.home_proximity is HomeProximity.CLOSE
+
+    near = reducer.reduce(
+        close,
+        _event(
+            HomeProximityChanged,
+            seconds=4,
+            proximity=HomeProximity.NEAR,
+        ),
+    )
+    assert near.home_proximity is HomeProximity.NEAR
+
+    ordinary = reducer.reduce(
+        near,
+        _event(
+            HomeMomentChanged,
+            seconds=5,
+            moment=HomeMoment.ORDINARY,
+        ),
+    )
+    assert ordinary.home_proximity is HomeProximity.WIDE

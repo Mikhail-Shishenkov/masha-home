@@ -48,6 +48,7 @@ from .events import (
     UserSentMessage,
     WindowFocusChanged,
     HomeMomentChanged,
+    HomeProximityChanged,
 )
 from .models import (
     ActivityPresentation,
@@ -88,6 +89,7 @@ from .models import (
     WindowState,
     default_home_model,
     HomeMoment,
+    HomeProximity,
 )
 from .reducer import PresentationReducer, PresentationRuntime
 from .tier0 import TierZeroPrototypeController, TierZeroRenderer, TierZeroScene
@@ -129,6 +131,10 @@ __all__ = (
     "FocusOwner",
     "HomePresentationModel",
     "HomeState",
+    "HomeMoment",
+    "HomeProximity",
+    "HomeMomentChanged",
+    "HomeProximityChanged",
     "InteractionSurface",
     "MashaPresence",
     "MashaComposition",

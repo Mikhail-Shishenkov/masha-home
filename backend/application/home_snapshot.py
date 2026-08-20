@@ -41,6 +41,8 @@ from backend.presentation import (
     presentation_model_from_application_state,
     HomeMoment,
     HomeMomentChanged,
+    HomeProximity,
+    HomeProximityChanged,
 )
 
 from .contracts import MashaStatusView, ModelProfileView, UiContract, VisualAssetView
@@ -184,6 +186,24 @@ class HomePresentationSession:
             HomeMomentChanged(
                 occurred_at=self._now(),
                 moment=HomeMoment.ORDINARY,
+            )
+        )
+
+    def set_special_proximity(
+            self,
+            proximity: HomeProximity,
+    ) -> HomeSnapshotView | None:
+        """Change closeness only inside the explicit Special Evening."""
+        if (
+            self._runtime.model.home_moment
+            is not HomeMoment.SPECIAL_EVENING
+        ):
+            return None
+
+        return self._dispatch(
+            HomeProximityChanged(
+                occurred_at=self._now(),
+                proximity=proximity,
             )
         )
 

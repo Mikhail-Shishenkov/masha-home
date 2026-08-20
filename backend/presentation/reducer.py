@@ -36,6 +36,7 @@ from .events import (
     UserSentMessage,
     WindowFocusChanged,
     HomeMomentChanged,
+    HomeProximityChanged,
 )
 from .models import (
     ActivityPresentation,
@@ -50,6 +51,8 @@ from .models import (
     ExpressionHold,
     ExpressionSource,
     HomePresentationModel,
+    HomeMoment,
+    HomeProximity,
     InteractionSurface,
     ModelOverlay,
     OperatingOverlays,
@@ -120,9 +123,19 @@ class PresentationReducer:
             )
 
         if isinstance(event, HomeMomentChanged):
+            update = {
+                "home_moment": event.moment,
+            }
+            if event.moment is HomeMoment.ORDINARY:
+                update["home_proximity"] = HomeProximity.WIDE
+            return model.model_copy(update=update)
+
+        if isinstance(event, HomeProximityChanged):
+            if model.home_moment is not HomeMoment.SPECIAL_EVENING:
+                return model
             return model.model_copy(
                 update={
-                    "home_moment": event.moment,
+                    "home_proximity": event.proximity,
                 }
             )
 
