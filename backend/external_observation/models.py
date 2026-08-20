@@ -95,8 +95,6 @@ class ObservationRequest(StrictObservationModel):
     def web_fetch_target_and_parent_are_coherent(self):
         if self.kind is ObservationKind.WEB_SEARCH and self.target_url is not None:
             raise ValueError("WEB_SEARCH must not include target_url")
-        if self.kind is ObservationKind.WEB_FETCH and not self.target_url:
-            raise ValueError("WEB_FETCH requires target_url")
         if (self.parent_observation_id is None) != (self.parent_source_id is None):
             raise ValueError("parent observation and source must be provided together")
         return self
@@ -144,7 +142,10 @@ class FetchedPageEvidence(StrictObservationModel):
     charset: str | None = Field(default=None, max_length=80)
     fetched_at: AwareDatetime
     raw_bytes_read: int = Field(ge=0, le=2 * 1024 * 1024)
-    content_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    content_sha256: str = Field(
+        pattern=r"^[a-f0-9]{64}$",
+        description="SHA-256 of the bounded decoded HTTP representation passed to extraction.",
+    )
     truncated: bool = False
     extractor_id: str = Field(min_length=1, max_length=80)
     extracted_text: str = Field(min_length=1, max_length=8_000)

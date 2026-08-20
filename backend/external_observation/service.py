@@ -9,6 +9,8 @@ from typing import Callable
 from urllib.parse import urlsplit
 from uuid import uuid4
 
+from pydantic import ValidationError
+
 from backend.runtime.safety import AutonomySafetyStore
 from backend.skills.models import SkillCapability, SkillIntegrity
 from backend.skills.registry import SkillRegistry
@@ -151,7 +153,7 @@ class ExternalObservationService:
             if source is None:
                 request = self._fetch_request(
                     query="источник предыдущего поиска",
-                    target_url="https://invalid.example/",
+                    target_url=None,
                     origin_message_id=origin_message_id,
                     reason=decision.reason,
                 )
@@ -206,11 +208,9 @@ class ExternalObservationService:
         if selected is None:
             fetch_request = self._fetch_request(
                 query=search.request.query,
-                target_url="https://invalid.example/",
+                target_url=None,
                 origin_message_id=origin_message_id,
                 reason="source_selector",
-                parent_observation_id=search.request.observation_id,
-                parent_source_id="S1",
             )
             return (search, self._fetch_terminal(fetch_request, ObservationStatus.CLARIFICATION_REQUIRED, "source_selector_unresolved"))
         fetch_request = self._fetch_request(
@@ -274,10 +274,8 @@ class ExternalObservationService:
             return self._fetch_terminal(request, ObservationStatus.UNAVAILABLE, error.code)
         except Exception:
             return self._fetch_terminal(request, ObservationStatus.FAILED, "fetch_failed")
-        return self.store.save(ExternalObservation(
-            request=request,
-            status=ObservationStatus.COMPLETED,
-            fetched_page=FetchedPageEvidence(
+        try:
+            fetched_page = FetchedPageEvidence(
                 requested_url=response.requested_url,
                 final_url=response.final_url,
                 domain=urlsplit(response.final_url).hostname or "unknown",
@@ -285,12 +283,22 @@ class ExternalObservationService:
                 content_type=page.content_type,
                 charset=page.charset,
                 fetched_at=self._now(),
-                raw_bytes_read=len(response.body),
+                raw_bytes_read=(
+                    len(response.body)
+                    if response.raw_bytes_read is None
+                    else response.raw_bytes_read
+                ),
                 content_sha256=page.content_sha256,
-                truncated=False,
+                truncated=page.truncated,
                 extractor_id=page.extractor_id,
                 extracted_text=page.extracted_text,
-            ),
+            )
+        except ValidationError:
+            return self._fetch_terminal(request, ObservationStatus.FAILED, "fetch_metadata_invalid")
+        return self.store.save(ExternalObservation(
+            request=request,
+            status=ObservationStatus.COMPLETED,
+            fetched_page=fetched_page,
             completed_at=self._now(),
         ))
 
@@ -414,7 +422,7 @@ class ExternalObservationService:
         self,
         *,
         query: str,
-        target_url: str,
+        target_url: str | None,
         origin_message_id: str,
         reason: str,
         parent_observation_id: str | None = None,

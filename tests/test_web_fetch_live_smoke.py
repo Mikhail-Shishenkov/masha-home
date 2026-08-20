@@ -48,7 +48,7 @@ def test_manual_direct_fetch_and_search_then_fetch(tmp_path):
         origin_message_id="manual-direct",
         conversation_message_ids=("manual-direct",),
     )
-    assert direct is not None and direct[-1].status.value == "completed"
+    assert direct is not None and direct[-1].status.value == "completed", None if direct is None else direct[-1].error_reason
     assert direct[-1].fetched_page is not None and direct[-1].fetched_page.extracted_text
 
     chained = service.observe_fetch_request(

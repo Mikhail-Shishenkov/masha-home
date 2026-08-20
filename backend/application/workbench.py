@@ -53,10 +53,16 @@ class WorkbenchApplicationService:
                             mode="self" if item.effective else "forbidden",
                         ))
                 else:
+                    explicit_web = (
+                        skill.skill_id in {"web_search", "web_fetch"}
+                        and capability.value == "network_access"
+                    )
                     grant_rows.append(PermissionGrantView(
-                        skill_id=skill.skill_id, capability=capability.value,
+                        skill_id=skill.skill_id, capability=self._human_capability(capability.value),
                         scope=skill.scopes[0] if skill.scopes else "без разрешённой области",
-                        effective=False, label="Сначала спрошу", mode="ask",
+                        effective=False,
+                        label="Только по твоей просьбе" if explicit_web else "Сначала спрошу",
+                        mode="ask",
                     ))
         grants = tuple(grant_rows[:grant_limit])
         pending = tuple(
@@ -101,6 +107,10 @@ class WorkbenchApplicationService:
             },
         }
         return cards.get(skill_id, {})
+
+    @staticmethod
+    def _human_capability(capability: str) -> str:
+        return "доступ к публичному интернету" if capability == "network_access" else capability
 
     def propose_install(self, source_path: str) -> SkillInstallPreviewView:
         if self._installer is None:

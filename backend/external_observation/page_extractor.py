@@ -22,6 +22,7 @@ class ExtractedPage(NamedTuple):
     charset: str | None
     title: str | None
     extracted_text: str
+    truncated: bool
     extractor_id: str
     content_sha256: str
 
@@ -65,7 +66,7 @@ def extract_page(response: SafeFetchResponse, *, max_chars: int = 8_000) -> Extr
         except Exception as error:
             raise PageExtractionError("page_unreadable_or_dynamic") from error
         extractor_id = "trafilatura-2"
-        title = _normalize(" ".join(title_parser.rows)) or None
+        title = (_normalize(" ".join(title_parser.rows))[:300] or None)
     elif content_type == "text/plain":
         text = decoded
         extractor_id = "plain-text"
@@ -85,25 +86,42 @@ def extract_page(response: SafeFetchResponse, *, max_chars: int = 8_000) -> Extr
         charset=charset,
         title=title,
         extracted_text=normalized[:max_chars],
+        truncated=len(normalized) > max_chars,
         extractor_id=extractor_id,
         content_sha256=digest,
     )
 
 
 def _content_type(value: str) -> tuple[str, str | None]:
-    media, *parameters = value.split(";")
+    # Headers are page-controlled. Keep parsing bounded before the values
+    # cross into strict evidence/UI contracts.
+    media, *parameters = str(value)[:1_024].split(";")
     content_type = media.strip().casefold()
-    charset = next((part.split("=", 1)[1].strip().strip('"') for part in parameters if "=" in part and part.split("=", 1)[0].strip().casefold() == "charset"), None)
+    charset = next(
+        (
+            candidate
+            for part in parameters
+            if "=" in part and part.split("=", 1)[0].strip().casefold() == "charset"
+            for candidate in (_safe_charset(part.split("=", 1)[1]),)
+            if candidate is not None
+        ),
+        None,
+    )
     if content_type == "text/html" or content_type == "text/plain" or content_type == "application/json" or content_type.endswith("+json"):
         return content_type, charset
     raise PageExtractionError("unsupported_content_type")
+
+
+def _safe_charset(value: str) -> str | None:
+    candidate = value.strip().strip('"')
+    return candidate if re.fullmatch(r"[A-Za-z0-9._-]{1,80}", candidate) else None
 
 
 def _decode(value: bytes, charset: str | None) -> str:
     if charset:
         try:
             return value.decode(charset, errors="replace")
-        except LookupError:
+        except (LookupError, UnicodeError):
             pass
     return value.decode("utf-8", errors="replace")
 

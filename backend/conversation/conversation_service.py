@@ -218,6 +218,9 @@ class ConversationService:
         external_observations = ()
         if self.external_observation_service is not None:
             conversation_messages = self.history.messages(conversation.id, limit=self.history_limit)
+            conversation_message_ids = tuple(
+                item.id for item in self.history.messages(conversation.id, limit=None)
+            )
             recent_external_context = tuple(
                 message.content
                 for message in conversation_messages[-7:]
@@ -226,7 +229,7 @@ class ConversationService:
             fetch_turn = self.external_observation_service.observe_fetch_request(
                 user_message,
                 origin_message_id=user_history_message.id,
-                conversation_message_ids=tuple(item.id for item in conversation_messages),
+                conversation_message_ids=conversation_message_ids,
                 recent_messages=recent_external_context,
             )
             if fetch_turn is not None:

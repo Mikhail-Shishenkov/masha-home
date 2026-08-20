@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import gzip
+import hashlib
 import json
 import os
 import ssl
+import zlib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -47,21 +50,26 @@ class _Response:
         self.status = status
         self._headers = headers or {"Content-Type": "text/plain"}
         self._body = body
+        self._offset = 0
+        self.closed = False
 
     def getheaders(self):
         return list(self._headers.items())
 
     def read(self, amount):
-        return self._body[:amount]
+        chunk = self._body[self._offset:self._offset + amount]
+        self._offset += len(chunk)
+        return chunk
 
     def close(self):
-        pass
+        self.closed = True
 
 
 class _Connection:
     def __init__(self, *, host, ip, timeout, responses, calls):
         self.host, self.ip, self.timeout = host, ip, timeout
         self.responses, self.calls = responses, calls
+        self.closed = False
 
     def request(self, method, target, headers):
         self.calls.append({"host": self.host, "ip": self.ip, "method": method, "target": target, "headers": headers})
@@ -70,7 +78,7 @@ class _Connection:
         return self.responses.pop(0)
 
     def close(self):
-        pass
+        self.closed = True
 
 
 def _transport(*responses, addresses=("8.8.8.8",)):
@@ -181,12 +189,185 @@ def test_redirect_chain_over_limit_and_response_bounds_are_rejected():
         fetcher.fetch("https://public.example/page")
 
 
-def test_compression_and_unsupported_content_are_rejected():
-    fetcher, _, _ = _transport(_Response(200, {"Content-Type": "text/plain", "Content-Encoding": "gzip"}))
+def test_fetch_uses_one_monotonic_deadline_for_a_slow_drip_without_sleeping():
+    class _Clock:
+        value = 0.0
+
+        def __call__(self):
+            return self.value
+
+    class _SlowResponse(_Response):
+        def read(self, amount):
+            clock.value += 1.1
+            return super().read(amount)
+
+    clock = _Clock()
+    response = _SlowResponse()
+    connections = []
+
+    def factory(**kwargs):
+        connection = _Connection(responses=[response], calls=[], **kwargs)
+        connections.append(connection)
+        return connection
+
+    fetcher = SafePublicHttpsFetcher(
+        timeout_seconds=1,
+        resolver=lambda host, port: ("8.8.8.8",),
+        connection_factory=factory,
+        monotonic_clock=clock,
+    )
+
+    with pytest.raises(SafeFetchError, match="fetch_timeout"):
+        fetcher.fetch("https://public.example/page")
+
+    assert response.closed is True and connections[0].closed is True
+
+
+@pytest.mark.parametrize("response, expected", [
+    (_Response(200, {"Content-Type": "text/plain", "Content-Length": "99"}), "response_too_large"),
+    (_Response(200, {"Content-Type": "text/plain", "Content-Encoding": "br"}), "unsupported_content_encoding"),
+    (_Response(503, {"Content-Type": "text/plain"}), "http_status_failed"),
+    (_Response(302, {}), "redirect_missing_location"),
+    (_Response(200, {"Content-Type": "text/plain"}, b"x" * 11), "response_too_large"),
+])
+def test_transport_closes_response_and_connection_on_every_terminal_path(response, expected):
+    connections = []
+
+    def factory(**kwargs):
+        connection = _Connection(responses=[response], calls=[], **kwargs)
+        connections.append(connection)
+        return connection
+
+    fetcher = SafePublicHttpsFetcher(
+        max_bytes=10,
+        resolver=lambda host, port: ("8.8.8.8",),
+        connection_factory=factory,
+    )
+    with pytest.raises(SafeFetchError) as error:
+        fetcher.fetch("https://public.example/page")
+
+    assert error.value.code == expected
+    assert response.closed is True and connections[0].closed is True
+
+
+def test_transport_closes_resources_on_success():
+    response = _Response()
+    connections = []
+
+    def factory(**kwargs):
+        connection = _Connection(responses=[response], calls=[], **kwargs)
+        connections.append(connection)
+        return connection
+
+    fetcher = SafePublicHttpsFetcher(
+        resolver=lambda host, port: ("8.8.8.8",),
+        connection_factory=factory,
+    )
+    assert fetcher.fetch("https://public.example/page").body
+    assert response.closed is True and connections[0].closed is True
+
+
+def test_unsupported_content_encodings_and_content_are_rejected():
+    fetcher, _, _ = _transport(_Response(200, {"Content-Type": "text/plain", "Content-Encoding": "br"}))
+    with pytest.raises(SafeFetchError, match="unsupported_content_encoding"):
+        fetcher.fetch("https://public.example/page")
+    fetcher, _, _ = _transport(_Response(200, {"Content-Type": "text/plain", "Content-Encoding": "gzip, deflate"}))
     with pytest.raises(SafeFetchError, match="unsupported_content_encoding"):
         fetcher.fetch("https://public.example/page")
     with pytest.raises(PageExtractionError, match="unsupported_content_type"):
         extract_page(_page_response(content_type="application/pdf"))
+
+
+def test_identity_gzip_and_deflate_use_bounded_decoded_representation():
+    payload = b"A readable public page with enough bounded text for decoded content verification."
+    fixtures = (
+        ("identity", payload),
+        ("gzip", gzip.compress(payload)),
+        ("deflate", zlib.compress(payload)),
+    )
+    for encoding, encoded in fixtures:
+        fetcher, calls, _ = _transport(_Response(200, {"Content-Type": "text/plain", "Content-Encoding": encoding}, encoded))
+        response = fetcher.fetch("https://public.example/page")
+        page = extract_page(response)
+
+        assert response.body == payload
+        assert response.raw_bytes_read == len(encoded)
+        assert page.content_sha256 == hashlib.sha256(payload).hexdigest()
+        assert calls[0]["headers"]["Accept-Encoding"] == "identity"
+
+
+def test_compression_bomb_is_rejected_before_unbounded_decompressed_allocation():
+    compressed = gzip.compress(b"x" * (2 * 1024 * 1024 + 1))
+    fetcher, _, _ = _transport(_Response(200, {"Content-Type": "text/plain", "Content-Encoding": "gzip"}, compressed))
+
+    with pytest.raises(SafeFetchError) as error:
+        fetcher.fetch("https://public.example/page")
+
+    assert error.value.code == "decoded_response_too_large"
+
+
+@pytest.mark.parametrize("encoding, body", [
+    ("gzip", b"not a gzip stream"),
+    ("deflate", b"not a deflate stream"),
+])
+def test_malformed_supported_content_encoding_is_a_controlled_failure_and_closes_resources(encoding, body):
+    response = _Response(200, {"Content-Type": "text/plain", "Content-Encoding": encoding}, body)
+    connections = []
+
+    def factory(**kwargs):
+        connection = _Connection(responses=[response], calls=[], **kwargs)
+        connections.append(connection)
+        return connection
+
+    fetcher = SafePublicHttpsFetcher(
+        resolver=lambda host, port: ("8.8.8.8",),
+        connection_factory=factory,
+    )
+    with pytest.raises(SafeFetchError) as error:
+        fetcher.fetch("https://public.example/page")
+
+    assert error.value.code == "content_decoding_failed"
+    assert response.closed is True and connections[0].closed is True
+
+
+def test_decoding_respects_the_existing_monotonic_fetch_deadline_without_sleeping():
+    class _Clock:
+        value = 0.0
+
+        def __call__(self):
+            return self.value
+
+    class _SlowDecoder:
+        eof = True
+        unused_data = b""
+
+        def decompress(self, chunk, maximum):
+            clock.value += 1.1
+            return b"decoded text"
+
+        def flush(self, maximum):
+            return b""
+
+    clock = _Clock()
+    response = _Response(200, {"Content-Type": "text/plain", "Content-Encoding": "gzip"}, b"compressed")
+    connections = []
+
+    def factory(**kwargs):
+        connection = _Connection(responses=[response], calls=[], **kwargs)
+        connections.append(connection)
+        return connection
+
+    fetcher = SafePublicHttpsFetcher(
+        timeout_seconds=1,
+        resolver=lambda host, port: ("8.8.8.8",),
+        connection_factory=factory,
+        monotonic_clock=clock,
+    )
+    fetcher._decompressor = lambda encoding: _SlowDecoder()
+    with pytest.raises(SafeFetchError, match="fetch_timeout"):
+        fetcher.fetch("https://public.example/page")
+
+    assert response.closed is True and connections[0].closed is True
 
 
 def test_local_extraction_is_bounded_untrusted_and_never_returns_html():
@@ -201,6 +382,19 @@ def test_local_extraction_is_bounded_untrusted_and_never_returns_html():
         extract_page(_page_response(content_type="application/json", body=b"{bad"))
     with pytest.raises(PageExtractionError, match="page_unreadable_or_dynamic"):
         extract_page(_page_response(body=b"<html><body><script>app()</script></body></html>"))
+
+
+def test_page_extraction_reports_truthful_text_truncation_and_bounds_metadata():
+    complete = extract_page(_page_response(content_type="text/plain", body=b"short readable public text with enough characters for a complete page fixture"))
+    partial = extract_page(_page_response(content_type="text/plain", body=b"x" * 8_100))
+    long_title = "T" * 400
+    html = f"<html><head><title>{long_title}</title></head><body><article>This is enough readable public text to safely exercise the metadata boundary.</article></body></html>".encode()
+    metadata = extract_page(_page_response(content_type="text/html; charset=" + "x" * 200, body=html))
+
+    assert complete.truncated is False
+    assert partial.truncated is True and len(partial.extracted_text) == 8_000
+    assert metadata.title == long_title[:300]
+    assert metadata.charset is None
 
 
 def test_old_w1_journal_receipt_loads_without_fetch_fields(tmp_path):
@@ -298,6 +492,27 @@ def test_direct_fetch_and_truthful_receipt_keep_main_model_local_and_memory_clea
     assert "<html" not in journal.casefold()
 
 
+def test_fetch_receipt_keeps_network_byte_count_and_decoded_representation_hash(tmp_path):
+    root = _isolated_root(tmp_path)
+    payload = b"A readable decoded page with enough public text for stable provenance testing."
+    response = SafeFetchResponse(
+        requested_url="https://public.example/page",
+        final_url="https://public.example/page",
+        headers={"content-type": "text/plain"},
+        body=payload,
+        redirects=0,
+        raw_bytes_read=17,
+    )
+    application = _application(root, _service(root, fetcher=_FakeFetcher(response)))
+
+    application.send_message("прочитай https://public.example/page", project_id=PROJECT_ID)
+    page = application._conversation._conversation.last_external_observation.fetched_page
+
+    assert page is not None
+    assert page.raw_bytes_read == 17
+    assert page.content_sha256 == hashlib.sha256(payload).hexdigest()
+
+
 def test_source_reference_is_same_conversation_only_and_never_searches_again(tmp_path):
     root = _isolated_root(tmp_path)
     provider, fetcher = FakeWebSearchProvider((_evidence(),)), _FakeFetcher()
@@ -310,6 +525,50 @@ def test_source_reference_is_same_conversation_only_and_never_searches_again(tmp
     other = application.send_message("прочитай S1", project_id=PROJECT_ID)
     assert "не вижу такого источника" in other.assistant_message.content.casefold()
     assert len(fetcher.calls) == 1
+
+
+def test_natural_source_reference_follow_up_fetches_existing_source_without_a_new_search(tmp_path):
+    root = _isolated_root(tmp_path)
+    provider, fetcher = FakeWebSearchProvider((_evidence(),)), _FakeFetcher()
+    application = _application(root, _service(root, provider=provider, fetcher=fetcher))
+    search = application.send_message("Поищи в интернете Ollama latest release", project_id=PROJECT_ID)
+
+    turn = application.send_message(
+        "прочитай первый источник и расскажи подробнее",
+        project_id=PROJECT_ID,
+        conversation_id=search.conversation_id,
+    )
+    observation = application._conversation._conversation.last_external_observation
+
+    assert len(provider.requests) == 1
+    assert fetcher.calls == [_evidence().url]
+    assert observation.status is ObservationStatus.COMPLETED
+    assert observation.request.kind is ObservationKind.WEB_FETCH
+    assert observation.request.parent_source_id == "S1"
+    assert turn.assistant_message.external_observations[-1].kind == "web_fetch"
+
+
+def test_source_reference_uses_full_conversation_provenance_not_model_history_window(tmp_path):
+    root = _isolated_root(tmp_path)
+    provider, fetcher = FakeWebSearchProvider((_evidence(),)), _FakeFetcher()
+    application = _application(root, _service(root, provider=provider, fetcher=fetcher))
+    search = application.send_message("Поищи в интернете Ollama latest release", project_id=PROJECT_ID)
+    for index in range(17):
+        application.send_message(
+            f"обычное сообщение {index}",
+            project_id=PROJECT_ID,
+            conversation_id=search.conversation_id,
+        )
+
+    application.send_message(
+        "прочитай S1",
+        project_id=PROJECT_ID,
+        conversation_id=search.conversation_id,
+    )
+
+    assert len(provider.requests) == 1
+    assert fetcher.calls == [_evidence().url]
+    assert application._conversation._conversation.last_external_observation.status is ObservationStatus.COMPLETED
 
 
 def test_search_then_fetch_has_one_search_one_fetch_and_selector_never_sees_url(tmp_path):
@@ -335,6 +594,47 @@ def test_invalid_selector_and_failed_fetch_cannot_claim_page_read(tmp_path):
     application = _application(root, _service(root, fetcher=_FakeFetcher(error=SafeFetchError("fetch_timeout"))))
     failed = application.send_message("прочитай https://public.example/page", project_id=PROJECT_ID)
     assert "прочитала страницу" not in failed.assistant_message.content.casefold()
+
+
+def test_unresolved_selector_does_not_fabricate_source_provenance_or_call_fetch(tmp_path):
+    root = _isolated_root(tmp_path)
+    provider, fetcher = FakeWebSearchProvider((_evidence(),)), _FakeFetcher()
+    application = _application(root, _service(root, provider=provider, fetcher=fetcher, selector=FakeSourceSelector("S99")))
+
+    application.send_message("найди официальный релиз Ollama и прочитай", project_id=PROJECT_ID)
+    search, unresolved = application._conversation._conversation.last_external_observations
+
+    assert search.status is ObservationStatus.COMPLETED
+    assert unresolved.status is ObservationStatus.CLARIFICATION_REQUIRED
+    assert unresolved.request.parent_observation_id is None
+    assert unresolved.request.parent_source_id is None
+    assert unresolved.request.target_url is None
+    assert fetcher.calls == []
+
+
+def test_long_page_title_is_bounded_without_breaking_the_conversation(tmp_path):
+    root = _isolated_root(tmp_path)
+    title = "T" * 400
+    body = f"<html><head><title>{title}</title></head><body><article>This is enough readable public text to complete a safe fetch conversation.</article></body></html>".encode()
+    application = _application(root, _service(root, fetcher=_FakeFetcher(_page_response(body=body))))
+
+    turn = application.send_message("прочитай https://public.example/page", project_id=PROJECT_ID)
+    observation = application._conversation._conversation.last_external_observation
+
+    assert turn.assistant_message is not None
+    assert observation.status is ObservationStatus.COMPLETED
+    assert observation.fetched_page is not None and observation.fetched_page.title == title[:300]
+
+
+def test_web_workbench_permission_copy_reflects_explicit_request_contract(tmp_path):
+    root = _isolated_root(tmp_path)
+    application = _application(root, _service(root))
+
+    grants = {item.skill_id: item for item in application.workbench().grants if item.skill_id in {"web_search", "web_fetch"}}
+
+    assert set(grants) == {"web_search", "web_fetch"}
+    assert all(item.label == "Только по твоей просьбе" for item in grants.values())
+    assert all(item.capability == "доступ к публичному интернету" for item in grants.values())
 
 
 def test_ordinary_or_search_only_model_turn_cannot_claim_a_page_read(tmp_path):

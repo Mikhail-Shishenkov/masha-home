@@ -11,6 +11,8 @@ assert.match(app, /external_observations/);
 assert.match(app, /Прочитала страницу/);
 assert.match(app, /bridge\.openObservationSource\(fetched\.observation_id, "page"\)/);
 assert.doesNotMatch(app, /fetched\.page\.(?:url|final_url|requested_url)/);
+assert.match(app, /network_access: "доступ к публичному интернету"/);
+assert.match(app, /grant\.label \|\|/);
 assert.match(css, /\.message-page/);
 
 console.log("web fetch presentation boundary passed");

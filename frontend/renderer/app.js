@@ -623,6 +623,7 @@ function humanCapability(capability) {
     vision: "работа с изображениями",
     tools: "инструменты",
     structured_output: "структурированные ответы",
+    network_access: "доступ к публичному интернету",
   }[capability] || "локальная возможность";
 }
 
@@ -696,7 +697,7 @@ function renderWorkbench(view) {
   const skillNames = new Map((view?.skills || []).map((skill) => [skill.skill_id, skill.name]));
   for (const grant of view?.grants || []) {
     workbenchPermissions.append(workbenchItem(
-      grant.mode === "self" ? "Могу сама" : grant.mode === "forbidden" ? "Запрещено" : "Сначала спрошу тебя",
+      grant.label || (grant.mode === "self" ? "Могу сама" : grant.mode === "forbidden" ? "Запрещено" : "Сначала спрошу тебя"),
       `${skillNames.get(grant.skill_id) || "Этот навык"} · ${humanCapability(grant.capability)}`,
     ));
   }

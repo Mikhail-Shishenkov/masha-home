@@ -69,7 +69,8 @@ _HTTPS_URL = re.compile(r"https://[^\s<>\"']+", re.IGNORECASE)
 _FETCH_VERB = re.compile(r"\b(?:прочитай|посмотри|глянь|изучи|расскажи)\b", re.IGNORECASE)
 _SOURCE_REFERENCE = re.compile(
     r"^(?:прочитай|посмотри|изучи)\s+(?:(?:источник\s+)?s(?P<id>[1-9][0-9]*)|"
-    r"(?P<ordinal>первый|второй|третий|четвертый|пятый)\s+источник)\s*$"
+    r"(?P<ordinal>первый|второй|третий|четвертый|пятый)\s+источник)"
+    r"(?:\s+(?:и|а)\s+.+)?$"
 )
 _SEARCH_THEN_FETCH = re.compile(
     r"^(?:найди|поищи)\s+(?P<query>.+?)\s*(?:и\s+|,\s*)"
