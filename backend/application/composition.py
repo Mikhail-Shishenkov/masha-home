@@ -35,6 +35,7 @@ from backend.external_observation import (
     LocalExternalQueryPlanner,
     LocalSourceSelector,
 )
+from backend.document_read import DocumentReadStore
 from backend.skills.agent_loop import AgentRunStore
 from backend.skills.autonomy import ActionAutonomyPolicyStore, ActionAutonomyService
 from backend.skills.installer import SkillInstallProposalStore, SkillInstallerService
@@ -145,6 +146,7 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
             reflections=core.reflection,
         ),
         store=ExternalObservationStore(runtime / "external-observations.json"),
+        document_store=DocumentReadStore(runtime / "document-read-receipts.json"),
         clock=core.conversation.temporal_engine.clock.now_utc,
     )
 

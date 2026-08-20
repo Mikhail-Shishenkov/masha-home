@@ -9,6 +9,8 @@ const css = fs.readFileSync(path.join(__dirname, "..", "styles", "home.css"), "u
 
 assert.match(app, /external_observations/);
 assert.match(app, /Прочитала страницу/);
+assert.match(app, /Прочитала PDF/);
+assert.match(app, /documentRead\.observation_id, "page"/);
 assert.match(app, /bridge\.openObservationSource\(fetched\.observation_id, "page"\)/);
 assert.doesNotMatch(app, /fetched\.page\.(?:url|final_url|requested_url)/);
 assert.match(app, /network_access: "доступ к публичному интернету"/);

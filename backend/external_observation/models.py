@@ -163,6 +163,7 @@ class ExternalObservation(StrictObservationModel):
     status: ObservationStatus
     evidence: tuple[SearchEvidence, ...] = Field(default=(), max_length=5)
     fetched_page: FetchedPageEvidence | None = None
+    document_read_receipt_id: str | None = Field(default=None, min_length=8, max_length=100)
     provider_calls: int = Field(default=0, ge=0, le=2)
     provider_id: str | None = Field(default=None, max_length=50)
     search_backend: str | None = Field(default=None, max_length=50)
@@ -174,11 +175,19 @@ class ExternalObservation(StrictObservationModel):
     def completed_observation_has_evidence(self):
         is_search = self.request.kind is ObservationKind.WEB_SEARCH
         if self.status is ObservationStatus.COMPLETED:
-            if is_search and (not self.evidence or self.fetched_page is not None):
+            if is_search and (
+                not self.evidence or self.fetched_page is not None or self.document_read_receipt_id is not None
+            ):
                 raise ValueError("completed WEB_SEARCH requires search evidence only")
-            if not is_search and (self.fetched_page is None or self.evidence):
-                raise ValueError("completed WEB_FETCH requires one fetched page only")
-        if self.status is not ObservationStatus.COMPLETED and (self.evidence or self.fetched_page is not None):
+            if not is_search and (
+                self.evidence
+                or (self.fetched_page is None and self.document_read_receipt_id is None)
+                or (self.fetched_page is not None and self.document_read_receipt_id is not None)
+            ):
+                raise ValueError("completed WEB_FETCH requires one bounded page or document receipt")
+        if self.status is not ObservationStatus.COMPLETED and (
+            self.evidence or self.fetched_page is not None or self.document_read_receipt_id is not None
+        ):
             raise ValueError("non-completed observation cannot expose evidence")
         return self
 

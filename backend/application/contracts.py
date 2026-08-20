@@ -65,6 +65,7 @@ class ExternalObservationView(UiContract):
     kind: Literal["web_search", "web_fetch"] = "web_search"
     sources: tuple[ExternalSourceView, ...] = Field(default=(), max_length=5)
     page: "FetchedPageView | None" = None
+    document: "DocumentReadView | None" = None
 
 
 class FetchedPageView(UiContract):
@@ -72,6 +73,17 @@ class FetchedPageView(UiContract):
     domain: str = Field(min_length=1, max_length=253)
     content_type: str = Field(min_length=1, max_length=120)
     fetched_at: datetime
+    truncated: bool
+    extractor: str = Field(min_length=1, max_length=80)
+
+
+class DocumentReadView(UiContract):
+    format: Literal["pdf"] = "pdf"
+    title: str | None = Field(default=None, max_length=300)
+    domain: str = Field(min_length=1, max_length=253)
+    page_count: int = Field(ge=1, le=100)
+    pages_read: int = Field(ge=1, le=100)
+    extracted_chars: int = Field(ge=1, le=16_000)
     truncated: bool
     extractor: str = Field(min_length=1, max_length=80)
 

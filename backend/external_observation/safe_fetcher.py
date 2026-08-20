@@ -71,7 +71,6 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
 class SafePublicHttpsFetcher:
     """One deadline-bounded GET with per-hop SSRF validation and no proxy support."""
 
-    _MAX_DECODED_BYTES = 2 * 1024 * 1024
     _READ_CHUNK_BYTES = 64 * 1024
 
     def __init__(
@@ -79,6 +78,7 @@ class SafePublicHttpsFetcher:
         *,
         timeout_seconds: float = 8.0,
         max_bytes: int = 2 * 1024 * 1024,
+        max_pdf_bytes: int = 10 * 1024 * 1024,
         max_redirects: int = 3,
         resolver: Resolver = _system_resolver,
         connection_factory: Callable[..., _PinnedHTTPSConnection] = _PinnedHTTPSConnection,
@@ -86,6 +86,7 @@ class SafePublicHttpsFetcher:
     ):
         self.timeout_seconds = max(1.0, min(float(timeout_seconds), 8.0))
         self.max_bytes = max(1, min(int(max_bytes), 2 * 1024 * 1024))
+        self.max_pdf_bytes = max(self.max_bytes, min(int(max_pdf_bytes), 10 * 1024 * 1024))
         self.max_redirects = max(0, min(int(max_redirects), 3))
         self._resolver = resolver
         self._connection_factory = connection_factory
@@ -109,7 +110,7 @@ class SafePublicHttpsFetcher:
                 )
                 target = self._request_target(current_url)
                 connection.request("GET", target, headers={
-                    "Accept": "text/html, text/plain, application/json, application/*+json;q=0.9",
+                    "Accept": "text/html, text/plain, application/json, application/*+json;q=0.9, application/pdf;q=0.9",
                     "Accept-Encoding": "identity",
                     "Connection": "close",
                     "User-Agent": "MashaHome/0.1 safe-web-fetch",
@@ -128,10 +129,11 @@ class SafePublicHttpsFetcher:
                     continue
                 if status < 200 or status >= 300:
                     raise SafeFetchError("http_status_failed", f"HTTP {status}")
+                body_limit = self.max_pdf_bytes if self._is_pdf(headers) else self.max_bytes
                 content_length = headers.get("content-length")
                 if content_length is not None:
                     try:
-                        if int(content_length) > self.max_bytes:
+                        if int(content_length) > body_limit:
                             raise SafeFetchError("response_too_large")
                     except ValueError:
                         pass
@@ -141,6 +143,7 @@ class SafePublicHttpsFetcher:
                     connection,
                     deadline,
                     content_encoding,
+                    body_limit,
                 )
             except SafeFetchError:
                 raise
@@ -161,13 +164,20 @@ class SafePublicHttpsFetcher:
             )
         raise SafeFetchError("too_many_redirects")
 
-    def _read_and_decode_body(self, response, connection, deadline: float, encoding: str) -> tuple[bytes, int]:
+    def _read_and_decode_body(
+        self,
+        response,
+        connection,
+        deadline: float,
+        encoding: str,
+        max_bytes: int,
+    ) -> tuple[bytes, int]:
         body = bytearray()
         raw_bytes_read = 0
         decompressor = self._decompressor(encoding)
         while True:
             self._set_remaining_timeout(connection, deadline)
-            remaining_bytes = self.max_bytes + 1 - raw_bytes_read
+            remaining_bytes = max_bytes + 1 - raw_bytes_read
             chunk = response.read(min(self._READ_CHUNK_BYTES, remaining_bytes))
             # A socket read may have returned only after its per-operation
             # timeout. Check the single wall-clock deadline before accepting it.
@@ -175,16 +185,17 @@ class SafePublicHttpsFetcher:
             if not chunk:
                 break
             raw_bytes_read += len(chunk)
-            if raw_bytes_read > self.max_bytes:
+            if raw_bytes_read > max_bytes:
                 raise SafeFetchError("response_too_large")
-            self._append_decoded(body, chunk, decompressor, deadline)
+            self._append_decoded(body, chunk, decompressor, deadline, max_bytes)
         if decompressor is not None:
             try:
                 self._append_decoded(
                     body,
-                    decompressor.flush(self._MAX_DECODED_BYTES + 1 - len(body)),
+                    decompressor.flush(max_bytes + 1 - len(body)),
                     None,
                     deadline,
+                    max_bytes,
                 )
             except zlib.error as error:
                 raise SafeFetchError("content_decoding_failed") from error
@@ -192,19 +203,23 @@ class SafePublicHttpsFetcher:
                 raise SafeFetchError("content_decoding_failed")
         return bytes(body), raw_bytes_read
 
-    def _append_decoded(self, body: bytearray, chunk: bytes, decompressor, deadline: float) -> None:
+    def _append_decoded(self, body: bytearray, chunk: bytes, decompressor, deadline: float, max_bytes: int) -> None:
         self._remaining_timeout(deadline)
         try:
             decoded = chunk if decompressor is None else decompressor.decompress(
                 chunk,
-                self._MAX_DECODED_BYTES + 1 - len(body),
+                max_bytes + 1 - len(body),
             )
         except zlib.error as error:
             raise SafeFetchError("content_decoding_failed") from error
         self._remaining_timeout(deadline)
         body.extend(decoded)
-        if len(body) > self._MAX_DECODED_BYTES:
+        if len(body) > max_bytes:
             raise SafeFetchError("decoded_response_too_large")
+
+    @staticmethod
+    def _is_pdf(headers: dict[str, str]) -> bool:
+        return headers.get("content-type", "").split(";", 1)[0].strip().casefold() == "application/pdf"
 
     @staticmethod
     def _decompressor(encoding: str):

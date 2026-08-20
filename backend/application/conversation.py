@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict
 
@@ -32,6 +33,7 @@ from .contracts import (
     ConversationSummaryView,
     ConversationView,
     ExternalObservationView,
+    DocumentReadView,
     ExternalSourceView,
     FetchedPageView,
     MessageView,
@@ -609,9 +611,11 @@ class ConversationApplicationService:
             external_observations=views,
         )
 
-    @staticmethod
-    def _external_observation(observation) -> ExternalObservationView:
+    def _external_observation(self, observation) -> ExternalObservationView:
         page = observation.fetched_page
+        service = self._conversation.external_observation_service
+        receipt = None if service is None else service.document_receipt(observation)
+        document = None if receipt is None else receipt.evidence
         return ExternalObservationView(
             observation_id=observation.request.observation_id,
             kind=observation.request.kind.value,
@@ -629,6 +633,15 @@ class ConversationApplicationService:
             page=None if page is None else FetchedPageView(
                 title=page.title, domain=page.domain, content_type=page.content_type,
                 fetched_at=page.fetched_at, truncated=page.truncated, extractor=page.extractor_id,
+            ),
+            document=None if document is None else DocumentReadView(
+                title=document.title,
+                domain=(urlsplit(observation.request.target_url or "").hostname or "unknown"),
+                page_count=document.page_count,
+                pages_read=document.pages_read,
+                extracted_chars=document.extracted_chars,
+                truncated=document.truncated,
+                extractor=document.extractor_id,
             ),
         )
 

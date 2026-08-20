@@ -11,6 +11,14 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+from backend.document_read import (
+    DocumentInput,
+    DocumentReadError,
+    DocumentReadReceipt,
+    DocumentReadSourceKind,
+    DocumentReadStore,
+    DocumentReader,
+)
 from backend.runtime.safety import AutonomySafetyStore
 from backend.skills.models import SkillCapability, SkillIntegrity
 from backend.skills.registry import SkillRegistry
@@ -78,6 +86,8 @@ class ExternalObservationService:
         fetcher: SafePublicHttpsFetcher | None = None,
         source_selector: SourceSelector | None = None,
         context_hint_provider: ExternalContextHintProvider | None = None,
+        document_reader: DocumentReader | None = None,
+        document_store: DocumentReadStore | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         url_opener: Callable[[str], bool] = lambda url: webbrowser.open(url, new=2),
     ):
@@ -92,6 +102,8 @@ class ExternalObservationService:
         self.fetcher = fetcher or SafePublicHttpsFetcher()
         self.source_selector = source_selector
         self.context_hint_provider = context_hint_provider
+        self.document_reader = document_reader or DocumentReader()
+        self.document_store = document_store
         self._clock = clock
         self._url_opener = url_opener
 
@@ -346,6 +358,13 @@ class ExternalObservationService:
             return self._fetch_terminal(request, ObservationStatus.BLOCKED, blocked)
         try:
             response = self.fetcher.fetch(request.target_url or "")
+        except SafeFetchError as error:
+            return self._fetch_terminal(request, ObservationStatus.UNAVAILABLE, error.code)
+        except Exception:
+            return self._fetch_terminal(request, ObservationStatus.FAILED, "fetch_failed")
+        if self._media_type(response.headers) == "application/pdf":
+            return self._execute_document_read(request, response)
+        try:
             page = extract_page(response)
         except PageExtractionError as error:
             return self._fetch_terminal(request, ObservationStatus.FAILED, error.code)
@@ -381,6 +400,36 @@ class ExternalObservationService:
             completed_at=self._now(),
         ))
 
+    def _execute_document_read(self, request: ObservationRequest, response) -> ExternalObservation:
+        if self.document_store is None:
+            return self._fetch_terminal(request, ObservationStatus.FAILED, "document_reader_unavailable")
+        try:
+            evidence = self.document_reader.read(DocumentInput(
+                media_type="application/pdf",
+                content=response.body,
+                source_kind=DocumentReadSourceKind.WEB,
+                display_name=self._document_display_name(response.final_url),
+                source_reference=request.observation_id,
+            ))
+        except DocumentReadError as error:
+            return self._fetch_terminal(request, ObservationStatus.FAILED, error.code)
+        except Exception:
+            return self._fetch_terminal(request, ObservationStatus.FAILED, "pdf_unreadable")
+        receipt = self.document_store.save(DocumentReadReceipt(
+            receipt_id=f"doc_{uuid4()}",
+            source_kind=DocumentReadSourceKind.WEB,
+            source_reference=request.observation_id,
+            display_name=self._document_display_name(response.final_url),
+            evidence=evidence,
+            completed_at=self._now(),
+        ))
+        return self.store.save(ExternalObservation(
+            request=request,
+            status=ObservationStatus.COMPLETED,
+            document_read_receipt_id=receipt.receipt_id,
+            completed_at=self._now(),
+        ))
+
     def human_failure(self, observation: ExternalObservation) -> str:
         reason = observation.error_reason
         if observation.request.kind is ObservationKind.WEB_FETCH:
@@ -388,6 +437,12 @@ class ExternalObservationService:
                 return "Не вижу такого источника в этом разговоре. Скажи, какой из найденных открыть для чтения."
             if reason in {"page_unreadable_or_dynamic", "unsupported_content_type", "invalid_json"}:
                 return "Эту страницу сейчас не получилось прочитать как обычный текст."
+            if reason == "pdf_text_unavailable":
+                return "В этом PDF я не нашла доступного текстового слоя. Сканированные PDF пока не умею читать."
+            if reason == "pdf_encrypted_unsupported":
+                return "Этот PDF защищён паролем. Пока я не умею читать защищённые документы."
+            if reason in {"pdf_unreadable", "pdf_page_limit_exceeded", "pdf_input_too_large"}:
+                return "Этот PDF сейчас не получилось безопасно прочитать."
             return "Сейчас не смогла безопасно прочитать эту страницу."
         if observation.status is ObservationStatus.CLARIFICATION_REQUIRED:
             return "Я поняла, что нужно проверить сеть, но не уверена, что именно искать. Скажи тему чуть конкретнее."
@@ -415,6 +470,23 @@ class ExternalObservationService:
                 "truncated": page.truncated,
                 "text": page.extracted_text[:8_000],
             }]
+        if observation.document_read_receipt_id is not None and self.document_store is not None:
+            receipt = self.document_store.get(observation.document_read_receipt_id)
+            if receipt is None:
+                return []
+            evidence = receipt.evidence
+            return [{
+                "kind": "document_read",
+                "format": evidence.format.value,
+                "title": evidence.title,
+                "page_count": evidence.page_count,
+                "pages_read": evidence.pages_read,
+                "truncated": evidence.truncated,
+                "pages": [
+                    {"page_number": page.page_number, "text": page.text, "truncated": page.truncated}
+                    for page in evidence.pages
+                ],
+            }]
         budget = self.policy_store.load().max_external_context_chars
         rows: list[dict] = []
         for item in observation.evidence:
@@ -439,13 +511,21 @@ class ExternalObservationService:
         return rows
 
     def attach_assistant_message(self, observation_id: str, message_id: str) -> ExternalObservation:
-        return self.store.attach_assistant_message(observation_id, message_id)
+        observation = self.store.attach_assistant_message(observation_id, message_id)
+        if observation.document_read_receipt_id is not None and self.document_store is not None:
+            self.document_store.attach_assistant_message(observation.document_read_receipt_id, message_id)
+        return observation
 
     def observation_for_message(self, message_id: str) -> ExternalObservation | None:
         return self.store.for_assistant_message(message_id)
 
     def observations_for_message(self, message_id: str) -> tuple[ExternalObservation, ...]:
         return self.store.for_assistant_message_all(message_id)
+
+    def document_receipt(self, observation: ExternalObservation):
+        if observation.document_read_receipt_id is None or self.document_store is None:
+            return None
+        return self.document_store.get(observation.document_read_receipt_id)
 
     def open_source(self, observation_id: str, source_id: str) -> bool:
         try:
@@ -458,6 +538,15 @@ class ExternalObservationService:
             return bool(self._url_opener(url))
         except Exception:
             return False
+
+    @staticmethod
+    def _media_type(headers: dict[str, str]) -> str:
+        return str(headers.get("content-type", ""))[:1_024].split(";", 1)[0].strip().casefold()
+
+    @staticmethod
+    def _document_display_name(final_url: str) -> str | None:
+        path = urlsplit(final_url).path.rsplit("/", 1)[-1].strip()
+        return path[:300] or None
 
     def _authorization_failure(self, request: ObservationRequest, skill_id: str, scope: str) -> str | None:
         policy = self.policy_store.load()

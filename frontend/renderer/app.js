@@ -1581,6 +1581,40 @@ function renderMessage(message, { provisional = false } = {}) {
       : message.external_observation ? [message.external_observation] : [];
     const search = observations.find((observation) => observation.kind === "web_search" && observation.sources?.length);
     const fetched = observations.find((observation) => observation.kind === "web_fetch" && observation.page);
+    const documentRead = observations.find((observation) => observation.kind === "web_fetch" && observation.document);
+    if (documentRead?.document) {
+      const pdf = documentRead.document;
+      const details = document.createElement("details");
+      details.className = "message-page";
+      const summary = document.createElement("summary");
+      const scope = pdf.truncated ? "Прочитала часть PDF" : "Прочитала PDF";
+      summary.textContent = `${scope} · ${pdf.page_count} стр. · ${pdf.domain}`;
+      const body = document.createElement("div");
+      body.className = "message-page-body";
+      if (pdf.title) body.append(Object.assign(document.createElement("span"), { textContent: pdf.title }));
+      body.append(Object.assign(document.createElement("span"), {
+        textContent: `Прочитано страниц: ${pdf.pages_read}`,
+      }));
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "message-source";
+      open.textContent = "Открыть источник";
+      open.addEventListener("click", () => {
+        if (ready) bridge.openObservationSource(documentRead.observation_id, "page");
+      });
+      body.append(open);
+      const technical = document.createElement("details");
+      technical.className = "message-page-technical";
+      technical.append(
+        Object.assign(document.createElement("summary"), { textContent: "Технически" }),
+        Object.assign(document.createElement("span"), {
+          textContent: `PDF · ${pdf.truncated ? "частично" : "полностью"} · ${pdf.extractor}`,
+        }),
+      );
+      body.append(technical);
+      details.append(summary, body);
+      item.append(details);
+    }
     if (fetched?.page) {
       const details = document.createElement("details");
       details.className = "message-page";
