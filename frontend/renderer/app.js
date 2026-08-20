@@ -1564,6 +1564,28 @@ function renderMessage(message, { provisional = false } = {}) {
   item.className = `message message-${message.role}${provisional ? " is-provisional" : ""}`;
   if (message.role === "assistant") {
     window.MashaSafeMarkdown.renderInto(item, message.content);
+    const observation = message.external_observation;
+    if (observation?.sources?.length) {
+      const sources = document.createElement("div");
+      sources.className = "message-sources";
+      sources.append(Object.assign(document.createElement("span"), {
+        className: "message-sources-label",
+        textContent: "Источники",
+      }));
+      for (const source of observation.sources) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "message-source";
+        button.textContent = `${source.source_id} · ${source.domain}`;
+        button.title = source.title;
+        button.addEventListener("click", () => {
+          if (!ready) return;
+          bridge.openObservationSource(observation.observation_id, source.source_id);
+        });
+        sources.append(button);
+      }
+      item.append(sources);
+    }
   } else {
     item.textContent = message.content;
   }
@@ -2000,6 +2022,10 @@ function handleBridgeEvent(encoded) {
   }
   if (["human_search_unavailable", "memory_candidate_rejected", "memory_restore_unavailable"].includes(payload.kind)) {
     showLocalFailure(payload.message || "Сейчас это действие недоступно. Попробуй ещё раз чуть позже.");
+    return;
+  }
+  if (payload.kind === "external_source_unavailable") {
+    showLocalFailure("Этот источник сейчас не удалось открыть.");
     return;
   }
   if (payload.kind === "commitment_operation_rejected" || payload.kind === "commitments_unavailable") {

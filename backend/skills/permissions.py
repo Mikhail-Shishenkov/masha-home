@@ -96,7 +96,7 @@ class PermissionControlService:
         install_store: SkillInstallProposalStore,
         proactive_policy: ProactivePolicy,
         background_runtime_running: bool,
-        supported_skill_ids: frozenset[str] = frozenset({"project_observer"}),
+        supported_skill_ids: frozenset[str] = frozenset({"project_observer", "web_search"}),
     ):
         self.registry = registry
         self.action_policy_store = action_policy_store

@@ -14,6 +14,8 @@ from backend.memory.passive_detection import MemoryCandidateDetectionRequest
 from backend.memory.working_memory import WorkingMemory
 from backend.temporal.temporal_engine import TemporalEngine
 from backend.temporal.temporal_intent import temporal_readout
+from backend.external_observation.models import ObservationStatus
+from backend.external_observation.service import EXTERNAL_INFORMATION_CONTRACT
 
 from .conversation_models import ConversationMessageOrigin, ConversationRole
 from .context_compiler import ConversationContextCompiler
@@ -30,6 +32,8 @@ class ConversationUnavailableError(RuntimeError):
 
 _LENS_SPACE = re.compile(r"\s+")
 _LENS_PUNCTUATION = re.compile(r"[^\w\s'-]+", re.UNICODE)
+_MODEL_MARKDOWN_URL = re.compile(r"\[([^\]]+)\]\(https?://[^)\s]+\)", re.IGNORECASE)
+_MODEL_RAW_URL = re.compile(r"https?://\S+", re.IGNORECASE)
 _SHARED_CONTINUITY_QUERY = re.compile(
     r"\b(?:между\s+нами|наш(?:а|ей|у)\s+истори(?:я|и|ю)|общ(?:ая|ей|ую)\s+истори(?:я|и|ю)|"
     r"открыт(?:ая|ые|ую)\s+нит(?:ь|и)|что\s+у\s+нас\s+продолжается)\b"
@@ -98,6 +102,12 @@ def contextualized_retrieval_query(
     return topic
 
 
+def remove_model_authored_urls(value: str) -> str:
+    """URLs on web-assisted turns are rendered only from application evidence."""
+    without_markdown_targets = _MODEL_MARKDOWN_URL.sub(r"\1", value)
+    return _MODEL_RAW_URL.sub("", without_markdown_targets).strip()
+
+
 class ConversationService:
     def __init__(
         self,
@@ -119,6 +129,7 @@ class ConversationService:
         reflection_service=None,
         passive_memory_service=None,
         human_information=None,
+        external_observation_service=None,
     ):
         self.identity_kernel = identity_kernel
         self.memory_retriever = memory_retriever
@@ -137,7 +148,9 @@ class ConversationService:
         self.reflection_service = reflection_service
         self.passive_memory_service = passive_memory_service
         self.human_information = human_information
+        self.external_observation_service = external_observation_service
         self.last_recall_result = None
+        self.last_external_observation = None
 
     def send(
         self,
@@ -149,6 +162,7 @@ class ConversationService:
         active_continuity_thread_id: str | None = None,
         home_moment: str = "ordinary",
     ) -> tuple[str, str]:
+        self.last_external_observation = None
         conversation = self.history.create() if conversation_id is None else self.history.get(conversation_id)
         last_interaction_at = self.history.last_interaction_at(conversation.id)
         temporal_context = self.temporal_engine.context(
@@ -190,7 +204,41 @@ class ConversationService:
                 )
                 return conversation.id, reflection_intent.response
 
-        if allow_capability_routing and self.memory_intent_handler is not None:
+        external_observation = None
+        if self.external_observation_service is not None:
+            recent_external_context = tuple(
+                message.content
+                for message in self.history.messages(conversation.id, limit=7)
+                if message.id != user_history_message.id
+            )
+            external_observation = self.external_observation_service.observe_explicit_request(
+                user_message,
+                origin_message_id=user_history_message.id,
+                recent_messages=recent_external_context,
+            )
+            self.last_external_observation = external_observation
+            if (
+                external_observation is not None
+                and external_observation.status is not ObservationStatus.COMPLETED
+            ):
+                failure = self.external_observation_service.human_failure(external_observation)
+                assistant = self.history.append(
+                    conversation.id,
+                    ConversationRole.ASSISTANT,
+                    failure,
+                    origin=ConversationMessageOrigin.APPLICATION,
+                )
+                self.external_observation_service.attach_assistant_message(
+                    external_observation.request.observation_id,
+                    assistant.id,
+                )
+                return conversation.id, failure
+
+        if (
+            external_observation is None
+            and allow_capability_routing
+            and self.memory_intent_handler is not None
+        ):
             intent = self.memory_intent_handler.handle(
                 user_message,
                 conversation_id=conversation.id,
@@ -267,6 +315,14 @@ class ConversationService:
             context_lens=context_lens.value,
             home_moment=home_moment,
             active_continuity=active_continuity,
+            external_information=(
+                None
+                if external_observation is None
+                else self.external_observation_service.model_context(external_observation)
+            ),
+            external_information_contract=(
+                None if external_observation is None else EXTERNAL_INFORMATION_CONTRACT
+            ),
         )
         try:
             response = self.router.generate(request)
@@ -280,6 +336,11 @@ class ConversationService:
             user_message=user_message,
             context=temporal_context,
         )
+        if external_observation is not None:
+            grounded_response = (
+                remove_model_authored_urls(grounded_response)
+                or "Проверила источники, но не смогла уверенно сформулировать ответ."
+            )
         grounded_completed_items = tuple(
             str(item.get("data", {}).get("content") or item.get("data", {}).get("text") or "")
             for item in self.working_memory.get_all()
@@ -297,8 +358,21 @@ class ConversationService:
             application_receipts=(),
             grounded_completed_items=grounded_completed_items,
         )
-        self.history.append(conversation.id, ConversationRole.ASSISTANT, rendered)
-        if allow_capability_routing and self.passive_memory_service is not None:
+        assistant_history_message = self.history.append(
+            conversation.id,
+            ConversationRole.ASSISTANT,
+            rendered,
+        )
+        if external_observation is not None:
+            self.last_external_observation = self.external_observation_service.attach_assistant_message(
+                external_observation.request.observation_id,
+                assistant_history_message.id,
+            )
+        if (
+            external_observation is None
+            and allow_capability_routing
+            and self.passive_memory_service is not None
+        ):
             self.passive_memory_service.observe_safely(
                 MemoryCandidateDetectionRequest(
                     conversation_id=conversation.id,
@@ -309,6 +383,16 @@ class ConversationService:
                 )
             )
         return conversation.id, rendered
+
+    def external_observation_for_message(self, message_id: str):
+        if self.external_observation_service is None:
+            return None
+        return self.external_observation_service.observation_for_message(message_id)
+
+    def open_external_source(self, observation_id: str, source_id: str) -> bool:
+        if self.external_observation_service is None:
+            return False
+        return self.external_observation_service.open_source(observation_id, source_id)
 
     def _active_continuity_context(
         self,

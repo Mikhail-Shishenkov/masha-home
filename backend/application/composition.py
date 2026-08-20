@@ -27,6 +27,13 @@ from backend.memory.working_memory import WorkingMemory
 from backend.runtime.health import RuntimeHealthService
 from backend.runtime.daily_runtime import DailyRuntime, DailyRuntimeJournal
 from backend.runtime.safety import AutonomySafetyService, AutonomySafetyStore
+from backend.external_observation import (
+    DDGSWebSearchProvider,
+    ExternalObservationService,
+    ExternalObservationStore,
+    InternetAccessPolicyStore,
+    LocalExternalQueryPlanner,
+)
 from backend.skills.agent_loop import AgentRunStore
 from backend.skills.autonomy import ActionAutonomyPolicyStore, ActionAutonomyService
 from backend.skills.installer import SkillInstallProposalStore, SkillInstallerService
@@ -110,6 +117,23 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
         autonomy=autonomy,
         proposal_store=install_store,
         runtime_root=runtime / "skill-installs",
+    )
+    internet_policy = InternetAccessPolicyStore(config / "internet-access.json")
+    core.conversation.external_observation_service = ExternalObservationService(
+        provider=DDGSWebSearchProvider(
+            timeout_seconds=internet_policy.load().provider_timeout_seconds,
+            clock=core.conversation.temporal_engine.clock.now_utc,
+        ),
+        policy_store=internet_policy,
+        safety_store=safety.store,
+        registry=registry,
+        planner=LocalExternalQueryPlanner(
+            router=core.router,
+            identity_kernel=core.identity,
+            model_profiles=core.profiles,
+        ),
+        store=ExternalObservationStore(runtime / "external-observations.json"),
+        clock=core.conversation.temporal_engine.clock.now_utc,
     )
 
     def permissions_snapshot() -> PermissionsSnapshot:

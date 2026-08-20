@@ -51,6 +51,20 @@ class ApplicationBoundaryError(RuntimeError):
         self.code = code
 
 
+class ExternalSourceView(UiContract):
+    source_id: str = Field(pattern=r"^S[1-9][0-9]*$")
+    title: str = Field(min_length=1, max_length=300)
+    domain: str = Field(min_length=1, max_length=253)
+    retrieved_at: datetime
+    source_time: str | None = None
+    freshness_status: Literal["fresh", "aged", "unknown"]
+
+
+class ExternalObservationView(UiContract):
+    observation_id: str = Field(min_length=8, max_length=100)
+    sources: tuple[ExternalSourceView, ...] = Field(default=(), max_length=5)
+
+
 class MessageView(UiContract):
     message_id: str | None
     conversation_id: str | None
@@ -58,6 +72,7 @@ class MessageView(UiContract):
     content: str = Field(min_length=1)
     created_at: datetime | None
     persisted: bool
+    external_observation: ExternalObservationView | None = None
 
 
 class ConversationView(UiContract):

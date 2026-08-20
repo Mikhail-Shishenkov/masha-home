@@ -104,6 +104,8 @@ class ConversationContextCompiler:
         context_lens: str = "general",
         home_moment: str = HOME_MOMENT_ORDINARY,
         active_continuity: dict[str, str] | None = None,
+        external_information: list[dict] | None = None,
+        external_information_contract: str | None = None,
     ) -> ModelRequest:
         safe_home_moment = (
             home_moment
@@ -164,6 +166,8 @@ class ConversationContextCompiler:
                 "current_local_time": (temporal_context.current_local_time if temporal_context else self._clock()).isoformat(),
                 "temporal_context": (temporal_context.model_dump(mode="json") if temporal_context else None),
                 "memory_context": [self._memory_record(item) for item in working_memory],
+                "external_information": external_information or [],
+                "external_information_contract": external_information_contract,
             },
             preferred_provider_id="ollama-local",
             execution_model_id=execution_model_id,

@@ -9,6 +9,7 @@ description = "Local-first personal AI companion and shared digital space"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
 dependencies = [
+    "ddgs>=9.15,<10",
     "jsonschema>=4.26,<5",
     "pydantic>=2.12,<3",
 ]

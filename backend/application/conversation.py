@@ -31,6 +31,8 @@ from .contracts import (
     ConversationPageView,
     ConversationSummaryView,
     ConversationView,
+    ExternalObservationView,
+    ExternalSourceView,
     MessageView,
     ResponseExpressionCue,
     PendingConfirmationView,
@@ -179,6 +181,9 @@ class ConversationApplicationService:
         handler = self._conversation.memory_intent_handler
         if handler is not None:
             handler.discard_presented_entity_set(conversation_id)
+
+    def open_external_source(self, observation_id: str, source_id: str) -> bool:
+        return self._conversation.open_external_source(observation_id, source_id)
 
     def activate_continuity_thread(
         self,
@@ -586,8 +591,8 @@ class ConversationApplicationService:
         latest = self._conversation.history.latest()
         return None if latest is None else latest.id
 
-    @staticmethod
-    def _message(message: ConversationMessage) -> MessageView:
+    def _message(self, message: ConversationMessage) -> MessageView:
+        observation = self._conversation.external_observation_for_message(message.id)
         return MessageView(
             message_id=message.id,
             conversation_id=message.conversation_id,
@@ -595,6 +600,28 @@ class ConversationApplicationService:
             content=ConversationApplicationService._human_content(message.content),
             created_at=message.created_at,
             persisted=True,
+            external_observation=(
+                None
+                if observation is None or not observation.evidence
+                else ExternalObservationView(
+                    observation_id=observation.request.observation_id,
+                    sources=tuple(
+                        ExternalSourceView(
+                            source_id=item.source_id,
+                            title=item.title,
+                            domain=item.domain,
+                            retrieved_at=item.retrieved_at,
+                            source_time=(
+                                None
+                                if item.source_time.value is None
+                                else item.source_time.value.isoformat()
+                            ),
+                            freshness_status=item.freshness_status.value,
+                        )
+                        for item in observation.evidence
+                    ),
+                )
+            ),
         )
 
     @classmethod

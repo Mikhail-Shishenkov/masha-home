@@ -768,6 +768,16 @@ class LocalConversationBridge(QObject):
             self._emit({"kind": "skill_install_rejected", "reason": "apply_failed"})
             return
         self._emit({"kind": "skill_install_result", "result": result.model_dump(mode="json")})
+
+    @Slot(str, str)
+    def openObservationSource(self, observation_id: str, source_id: str):  # noqa: N802
+        """Open one saved HTTPS source; renderer-provided URL strings are impossible."""
+        if self._application is None:
+            self._emit({"kind": "external_source_unavailable"})
+            return
+        if not self._application.open_external_source(observation_id, source_id):
+            self._emit({"kind": "external_source_unavailable"})
+
     @Slot(str, str)
     def resolveReflection(self, candidate_id: str, decision: str):  # noqa: N802
         if self._application is None or self._turn_in_flight:

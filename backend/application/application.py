@@ -554,3 +554,7 @@ class MashaApplication:
     def open_home_session(self):
         """Create a deterministic presentation session for one local Home window."""
         return self._home_snapshot.open_session()
+
+    def open_external_source(self, observation_id: str, source_id: str) -> bool:
+        """Open only a saved HTTPS source resolved from opaque application IDs."""
+        return self._conversation.open_external_source(observation_id, source_id)

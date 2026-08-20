@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "skill_id": "web_search",
+  "name": "Web Search",
+  "version": "1.0.0",
+  "description": "Выполняет только явный ограниченный поиск во внешней сети и возвращает нормализованные источники без внешних действий.",
+  "entrypoint": null,
+  "instructions_file": "SKILL.md",
+  "capabilities": [
+    "network_access"
+  ],
+  "requested_scopes": [
+    "web.search"
+  ],
+  "risk_level": "consequential",
+  "maximum_autonomy_level": 1,
+  "supports_dry_run": true,
+  "supports_rollback": false,
+  "verification": "Проверяет bounded provider receipt, HTTPS-источники, provenance, время получения и отсутствие любых внешних изменений."
+}
