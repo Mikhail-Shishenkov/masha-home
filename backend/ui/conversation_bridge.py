@@ -16,6 +16,8 @@ from backend.application.human_information import (
     RecallMode,
 )
 
+from backend.presentation import HomeProximity
+
 
 HOME_PROJECT_ID = "project_masha_home"
 MAX_MESSAGE_CHARACTERS = 4_000
@@ -287,6 +289,39 @@ class LocalConversationBridge(QObject):
             self._emit({
                 "kind": "special_evening_unavailable",
             })
+            return
+
+        self._emit({
+            "kind": "special_evening_changed",
+            "snapshot": snapshot.model_dump(mode="json"),
+        })
+
+    @Slot()
+    def advanceSpecialEveningProximity(self):  # noqa: N802
+        # Move one authored step closer/farther inside Special Evening.
+        if self._application is None or self._session is None:
+            self._emit({"kind": "home_unavailable"})
+            return
+
+        if self._turn_in_flight:
+            return
+
+        current = self._session.home_proximity
+
+        if current is HomeProximity.WIDE:
+            target = HomeProximity.CLOSE
+        elif current is HomeProximity.CLOSE:
+            target = HomeProximity.NEAR
+        else:
+            target = HomeProximity.CLOSE
+
+        snapshot = self._session_snapshot(
+            "set_special_proximity",
+            proximity=target,
+        )
+
+        if snapshot is None:
+            self._emit({"kind": "special_evening_unavailable"})
             return
 
         self._emit({

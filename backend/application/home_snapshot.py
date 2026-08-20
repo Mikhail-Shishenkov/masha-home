@@ -574,6 +574,11 @@ class HomePresentationSession:
         return self._runtime.model.home_moment
 
     @property
+    def home_proximity(self) -> HomeProximity:
+        # UI-only authored closeness; never persisted as domain memory.
+        return self._runtime.model.home_proximity
+
+    @property
     def active_model_display_name(self) -> str:
         return self._active_model.display_name
 

@@ -12,6 +12,8 @@ const input = document.getElementById("message-input");
 const sendButton = document.getElementById("send-button");
 const newConversationButton = document.getElementById("new-conversation");
 const specialEveningToggle = document.getElementById("special-evening-toggle");
+const specialProximityToggle =
+  document.getElementById("special-proximity-toggle");
 const recentToggle = document.getElementById("recent-conversations-toggle");
 const recentPanel = document.getElementById("recent-conversations");
 const recentList = document.getElementById("recent-list");
@@ -512,6 +514,8 @@ function setComposerState({ enabled, waiting = false }) {
   newConversationButton.disabled = !enabled || waiting;
   recentToggle.disabled = !enabled || waiting;
   specialEveningToggle.disabled = !enabled || waiting;
+  specialProximityToggle.disabled =
+    !enabled || waiting || Boolean(pendingConfirmation);
   homeAttentionTrigger.disabled = !enabled || waiting;
   commitmentsTrigger.disabled = !enabled || waiting || Boolean(pendingConfirmation);
   activityTrigger.disabled = !enabled || waiting || Boolean(pendingConfirmation);
@@ -1677,8 +1681,27 @@ const specialEveningAvailable =
 document.documentElement.dataset.homeMoment =
   homeMoment;
 
+const homeProximity =
+  presentation.home_proximity || "wide";
+
+document.documentElement.dataset.homeProximity =
+  homeProximity;
+
 specialEveningToggle.hidden =
   !specialEveningAvailable;
+
+specialProximityToggle.hidden =
+  !specialEveningActive;
+
+specialProximityToggle.dataset.proximity =
+  homeProximity;
+
+specialProximityToggle.textContent =
+  homeProximity === "wide"
+    ? "Ближе"
+    : homeProximity === "close"
+    ? "Ещё ближе"
+    : "Чуть дальше";
 
 specialEveningToggle.setAttribute(
   "aria-pressed",
@@ -2200,6 +2223,19 @@ specialEveningToggle.addEventListener("click", () => {
     === "special_evening";
 
   bridge.setSpecialEvening(!active);
+});
+
+specialProximityToggle.addEventListener("click", () => {
+  if (
+    !ready
+    || inFlight
+    || pendingConfirmation
+    || specialProximityToggle.hidden
+  ) {
+    return;
+  }
+
+  bridge.advanceSpecialEveningProximity();
 });
 
 recentToggle.addEventListener("click", () => {

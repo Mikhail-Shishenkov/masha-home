@@ -1252,3 +1252,41 @@ html[data-home-moment="special_evening"] .thread-context-label {
 html[data-home-moment="special_evening"] .thread-context strong {
   color: rgba(249, 235, 214, .68);
 }
+
+/* Special Evening 2.0 - proximity */
+
+.special-proximity-toggle {
+  padding: 5px 11px;
+  border: 1px solid rgba(232, 184, 116, .24);
+  border-radius: 999px;
+  background: rgba(117, 69, 29, .11);
+  color: rgba(255, 222, 174, .78);
+  letter-spacing: .035em;
+  opacity: .9;
+  transition:
+    color 220ms ease,
+    border-color 220ms ease,
+    background 220ms ease,
+    box-shadow 280ms ease,
+    transform 220ms var(--ease-home);
+}
+
+.special-proximity-toggle:hover:not(:disabled) {
+  color: #fff0d3;
+  border-color: rgba(248, 205, 143, .6);
+  background: rgba(133, 78, 32, .24);
+  box-shadow: 0 0 18px rgba(205, 134, 61, .1);
+  transform: translateY(-1px);
+}
+
+.special-proximity-toggle[data-proximity="near"] {
+  color: #ffe7c1;
+  border-color: rgba(248, 205, 143, .48);
+  background: rgba(133, 78, 32, .28);
+}
+
+.special-proximity-toggle:disabled {
+  opacity: .38;
+  transform: none;
+  box-shadow: none;
+}

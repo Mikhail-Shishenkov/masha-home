@@ -112,34 +112,51 @@ specialThoughtful: scene(
   const specialEvening =
   period === "evening"
   && presentation.home_moment === "special_evening";
+  const specialProximity =
+    presentation.home_proximity || "wide";
 
 if (specialEvening) {
-  switch (activity) {
-    case "speaking":
-      return scenes.specialClose;
-
-    case "listening":
-      return chooseVariant(
-        presentation,
-        scenes.specialClose,
-        scenes.specialMug
-      );
-
-    case "waiting":
-      return scenes.specialClose;
-
-    case "processing":
-      return scenes.specialThoughtful;
-
-    case "idle":
-      if (presence.ambient === "quiet") {
-        return scenes.specialQuiet;
-      }
-      return scenes.specialEvening;
-
-    default:
-      break;
+  if (["skeptical", "serious"].includes(expression)) {
+    return scenes.firmDisagreement;
   }
+
+  if (specialProximity === "near") {
+    if (activity === "processing") {
+      return scenes.specialThoughtful;
+    }
+    if (activity === "idle" && presence.ambient === "quiet") {
+      return scenes.specialQuiet;
+    }
+    return chooseVariant(
+      presentation,
+      scenes.specialMug,
+      scenes.specialQuiet
+    );
+  }
+
+  if (specialProximity === "close") {
+    if (activity === "processing") {
+      return scenes.specialThoughtful;
+    }
+    if (activity === "idle" && presence.ambient === "quiet") {
+      return scenes.specialMug;
+    }
+    return chooseVariant(
+      presentation,
+      scenes.specialClose,
+      scenes.specialMug
+    );
+  }
+
+  if (activity === "processing") {
+    return scenes.specialThoughtful;
+  }
+
+  if (activity === "idle" && presence.ambient === "quiet") {
+    return scenes.specialQuiet;
+  }
+
+  return scenes.specialEvening;
 }
   if (
   activity === "idle"
