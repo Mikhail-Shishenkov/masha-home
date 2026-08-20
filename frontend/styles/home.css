@@ -93,6 +93,14 @@ html[data-home-attention="active"] .conversation-surface.is-surface-concealed { 
 .message-sources-label { color: rgba(236,223,207,.44); font: 500 10px/1.3 system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; }
 .message-source { padding: 0; border: 0; border-bottom: 1px solid rgba(226,188,126,.2); color: rgba(233,197,142,.72); background: none; font: 500 11px/1.45 system-ui, sans-serif; cursor: pointer; }
 .message-source:hover, .message-source:focus-visible { color: rgba(247,218,174,.94); border-bottom-color: rgba(233,197,142,.5); }
+.message-page { margin-top: 10px; padding-top: 9px; border-top: 1px solid rgba(226,188,126,.12); color: rgba(236,223,207,.62); font: 400 12px/1.45 system-ui, sans-serif; }
+.message-page > summary, .message-page-technical > summary { color: rgba(233,197,142,.74); cursor: pointer; list-style: none; }
+.message-page > summary::-webkit-details-marker, .message-page-technical > summary::-webkit-details-marker { display: none; }
+.message-page > summary::after { content: " ▾"; color: rgba(236,223,207,.44); }
+.message-page[open] > summary::after { content: " ▴"; }
+.message-page-body { display: grid; gap: 7px; margin-top: 9px; }
+.message-page-technical { color: rgba(236,223,207,.45); font-size: 11px; }
+.message-page-technical span { display: block; margin-top: 5px; }
 .composer { display: grid; flex: 0 0 auto; grid-template-columns: minmax(0, 1fr) auto; align-items: end; min-width: 0; gap: 14px; padding-top: 15px; border-top: 1px solid rgba(248,237,224,.14); }
 .recent-conversations { position: absolute; top: 52px; right: 0; bottom: 0; left: 0; z-index: 6; min-height: 0; padding: 23px 26px 28px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgba(222,181,116,.38) transparent; border: 0; border-top: 1px solid rgba(226,188,126,.25); border-bottom: 1px solid rgba(226,188,126,.2); background: linear-gradient(155deg, rgba(27,20,14,.99), rgba(14,13,12,.98)); box-shadow: 0 34px 76px rgba(0,0,0,.42); }
 .shelf-line { position: absolute; left: 22px; right: 22px; bottom: 18px; height: 1px; background: linear-gradient(90deg, transparent, rgba(216,170,105,.35) 14%, rgba(216,170,105,.16) 84%, transparent); box-shadow: 0 8px 18px rgba(0,0,0,.5); }

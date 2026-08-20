@@ -33,6 +33,7 @@ from .contracts import (
     ConversationView,
     ExternalObservationView,
     ExternalSourceView,
+    FetchedPageView,
     MessageView,
     ResponseExpressionCue,
     PendingConfirmationView,
@@ -592,7 +593,11 @@ class ConversationApplicationService:
         return None if latest is None else latest.id
 
     def _message(self, message: ConversationMessage) -> MessageView:
-        observation = self._conversation.external_observation_for_message(message.id)
+        observations = tuple(
+            item for item in self._conversation.external_observations_for_message(message.id)
+            if item.status.value == "completed"
+        )
+        views = tuple(self._external_observation(observation) for observation in observations)
         return MessageView(
             message_id=message.id,
             conversation_id=message.conversation_id,
@@ -600,27 +605,30 @@ class ConversationApplicationService:
             content=ConversationApplicationService._human_content(message.content),
             created_at=message.created_at,
             persisted=True,
-            external_observation=(
-                None
-                if observation is None or not observation.evidence
-                else ExternalObservationView(
-                    observation_id=observation.request.observation_id,
-                    sources=tuple(
-                        ExternalSourceView(
-                            source_id=item.source_id,
-                            title=item.title,
-                            domain=item.domain,
-                            retrieved_at=item.retrieved_at,
-                            source_time=(
-                                None
-                                if item.source_time.value is None
-                                else item.source_time.value.isoformat()
-                            ),
-                            freshness_status=item.freshness_status.value,
-                        )
-                        for item in observation.evidence
-                    ),
+            external_observation=(None if not views else views[-1]),
+            external_observations=views,
+        )
+
+    @staticmethod
+    def _external_observation(observation) -> ExternalObservationView:
+        page = observation.fetched_page
+        return ExternalObservationView(
+            observation_id=observation.request.observation_id,
+            kind=observation.request.kind.value,
+            sources=tuple(
+                ExternalSourceView(
+                    source_id=item.source_id,
+                    title=item.title,
+                    domain=item.domain,
+                    retrieved_at=item.retrieved_at,
+                    source_time=None if item.source_time.value is None else item.source_time.value.isoformat(),
+                    freshness_status=item.freshness_status.value,
                 )
+                for item in observation.evidence
+            ),
+            page=None if page is None else FetchedPageView(
+                title=page.title, domain=page.domain, content_type=page.content_type,
+                fetched_at=page.fetched_at, truncated=page.truncated, extractor=page.extractor_id,
             ),
         )
 

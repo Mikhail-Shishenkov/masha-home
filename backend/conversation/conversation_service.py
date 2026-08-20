@@ -34,6 +34,10 @@ _LENS_SPACE = re.compile(r"\s+")
 _LENS_PUNCTUATION = re.compile(r"[^\w\s'-]+", re.UNICODE)
 _MODEL_MARKDOWN_URL = re.compile(r"\[([^\]]+)\]\(https?://[^)\s]+\)", re.IGNORECASE)
 _MODEL_RAW_URL = re.compile(r"https?://\S+", re.IGNORECASE)
+_UNSUPPORTED_FETCH_CLAIM = re.compile(
+    r"\b(?:я\s+)?(?:прочитала|посмотрела|изучила)\s+(?:эту\s+|эту\s+веб-)?(?:страницу|сайт)\b",
+    re.IGNORECASE,
+)
 _SHARED_CONTINUITY_QUERY = re.compile(
     r"\b(?:между\s+нами|наш(?:а|ей|у)\s+истори(?:я|и|ю)|общ(?:ая|ей|ую)\s+истори(?:я|и|ю)|"
     r"открыт(?:ая|ые|ую)\s+нит(?:ь|и)|что\s+у\s+нас\s+продолжается)\b"
@@ -108,6 +112,11 @@ def remove_model_authored_urls(value: str) -> str:
     return _MODEL_RAW_URL.sub("", without_markdown_targets).strip()
 
 
+def remove_unsupported_fetch_claim(value: str) -> str:
+    """A page-read claim is application truth, never ungrounded model prose."""
+    return _UNSUPPORTED_FETCH_CLAIM.sub("Я не читала страницу", value)
+
+
 class ConversationService:
     def __init__(
         self,
@@ -151,6 +160,7 @@ class ConversationService:
         self.external_observation_service = external_observation_service
         self.last_recall_result = None
         self.last_external_observation = None
+        self.last_external_observations = ()
 
     def send(
         self,
@@ -163,6 +173,7 @@ class ConversationService:
         home_moment: str = "ordinary",
     ) -> tuple[str, str]:
         self.last_external_observation = None
+        self.last_external_observations = ()
         conversation = self.history.create() if conversation_id is None else self.history.get(conversation_id)
         last_interaction_at = self.history.last_interaction_at(conversation.id)
         temporal_context = self.temporal_engine.context(
@@ -204,38 +215,49 @@ class ConversationService:
                 )
                 return conversation.id, reflection_intent.response
 
-        external_observation = None
+        external_observations = ()
         if self.external_observation_service is not None:
+            conversation_messages = self.history.messages(conversation.id, limit=self.history_limit)
             recent_external_context = tuple(
                 message.content
-                for message in self.history.messages(conversation.id, limit=7)
+                for message in conversation_messages[-7:]
                 if message.id != user_history_message.id
             )
-            external_observation = self.external_observation_service.observe_explicit_request(
+            fetch_turn = self.external_observation_service.observe_fetch_request(
                 user_message,
                 origin_message_id=user_history_message.id,
+                conversation_message_ids=tuple(item.id for item in conversation_messages),
                 recent_messages=recent_external_context,
             )
-            self.last_external_observation = external_observation
-            if (
-                external_observation is not None
-                and external_observation.status is not ObservationStatus.COMPLETED
-            ):
-                failure = self.external_observation_service.human_failure(external_observation)
+            if fetch_turn is not None:
+                external_observations = fetch_turn
+            else:
+                search = self.external_observation_service.observe_explicit_request(
+                    user_message,
+                    origin_message_id=user_history_message.id,
+                    recent_messages=recent_external_context,
+                )
+                external_observations = () if search is None else (search,)
+            self.last_external_observations = external_observations
+            self.last_external_observation = external_observations[-1] if external_observations else None
+            failure_observation = next(
+                (item for item in reversed(external_observations) if item.status is not ObservationStatus.COMPLETED),
+                None,
+            )
+            if failure_observation is not None:
+                failure = self.external_observation_service.human_failure(failure_observation)
                 assistant = self.history.append(
                     conversation.id,
                     ConversationRole.ASSISTANT,
                     failure,
                     origin=ConversationMessageOrigin.APPLICATION,
                 )
-                self.external_observation_service.attach_assistant_message(
-                    external_observation.request.observation_id,
-                    assistant.id,
-                )
+                for observation in external_observations:
+                    self.external_observation_service.attach_assistant_message(observation.request.observation_id, assistant.id)
                 return conversation.id, failure
 
         if (
-            external_observation is None
+            not external_observations
             and allow_capability_routing
             and self.memory_intent_handler is not None
         ):
@@ -316,12 +338,14 @@ class ConversationService:
             home_moment=home_moment,
             active_continuity=active_continuity,
             external_information=(
-                None
-                if external_observation is None
-                else self.external_observation_service.model_context(external_observation)
+                None if not external_observations else [
+                    row
+                    for observation in external_observations
+                    for row in self.external_observation_service.model_context(observation)
+                ]
             ),
             external_information_contract=(
-                None if external_observation is None else EXTERNAL_INFORMATION_CONTRACT
+                None if not external_observations else EXTERNAL_INFORMATION_CONTRACT
             ),
         )
         try:
@@ -336,7 +360,14 @@ class ConversationService:
             user_message=user_message,
             context=temporal_context,
         )
-        if external_observation is not None:
+        completed_fetch = any(
+            item.request.kind.value == "web_fetch"
+            and item.status is ObservationStatus.COMPLETED
+            for item in external_observations
+        )
+        if not completed_fetch:
+            grounded_response = remove_unsupported_fetch_claim(grounded_response)
+        if external_observations:
             grounded_response = (
                 remove_model_authored_urls(grounded_response)
                 or "Проверила источники, но не смогла уверенно сформулировать ответ."
@@ -363,13 +394,17 @@ class ConversationService:
             ConversationRole.ASSISTANT,
             rendered,
         )
-        if external_observation is not None:
-            self.last_external_observation = self.external_observation_service.attach_assistant_message(
-                external_observation.request.observation_id,
-                assistant_history_message.id,
+        if external_observations:
+            attached = tuple(
+                self.external_observation_service.attach_assistant_message(
+                    observation.request.observation_id, assistant_history_message.id
+                )
+                for observation in external_observations
             )
+            self.last_external_observations = attached
+            self.last_external_observation = attached[-1]
         if (
-            external_observation is None
+            not external_observations
             and allow_capability_routing
             and self.passive_memory_service is not None
         ):
@@ -388,6 +423,11 @@ class ConversationService:
         if self.external_observation_service is None:
             return None
         return self.external_observation_service.observation_for_message(message_id)
+
+    def external_observations_for_message(self, message_id: str):
+        if self.external_observation_service is None:
+            return ()
+        return self.external_observation_service.observations_for_message(message_id)
 
     def open_external_source(self, observation_id: str, source_id: str) -> bool:
         if self.external_observation_service is None:

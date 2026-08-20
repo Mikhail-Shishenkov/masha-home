@@ -62,7 +62,18 @@ class ExternalSourceView(UiContract):
 
 class ExternalObservationView(UiContract):
     observation_id: str = Field(min_length=8, max_length=100)
+    kind: Literal["web_search", "web_fetch"] = "web_search"
     sources: tuple[ExternalSourceView, ...] = Field(default=(), max_length=5)
+    page: "FetchedPageView | None" = None
+
+
+class FetchedPageView(UiContract):
+    title: str | None = Field(default=None, max_length=300)
+    domain: str = Field(min_length=1, max_length=253)
+    content_type: str = Field(min_length=1, max_length=120)
+    fetched_at: datetime
+    truncated: bool
+    extractor: str = Field(min_length=1, max_length=80)
 
 
 class MessageView(UiContract):
@@ -73,6 +84,7 @@ class MessageView(UiContract):
     created_at: datetime | None
     persisted: bool
     external_observation: ExternalObservationView | None = None
+    external_observations: tuple[ExternalObservationView, ...] = Field(default=(), max_length=2)
 
 
 class ConversationView(UiContract):
@@ -426,6 +438,12 @@ class SkillWorkbenchView(UiContract):
     integrity: str = Field(min_length=1, max_length=80)
     capabilities: tuple[str, ...]
     runtime_supported: bool
+    summary: str | None = Field(default=None, max_length=300)
+    usage: str | None = Field(default=None, max_length=160)
+    can: tuple[str, ...] = Field(default=(), max_length=5)
+    cannot: tuple[str, ...] = Field(default=(), max_length=6)
+    scopes: tuple[str, ...] = ()
+    risk: str | None = Field(default=None, max_length=80)
 
 
 class PermissionGrantView(UiContract):

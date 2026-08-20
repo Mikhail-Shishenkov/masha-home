@@ -33,6 +33,7 @@ from backend.external_observation import (
     ExternalObservationStore,
     InternetAccessPolicyStore,
     LocalExternalQueryPlanner,
+    LocalSourceSelector,
 )
 from backend.skills.agent_loop import AgentRunStore
 from backend.skills.autonomy import ActionAutonomyPolicyStore, ActionAutonomyService
@@ -128,6 +129,11 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
         safety_store=safety.store,
         registry=registry,
         planner=LocalExternalQueryPlanner(
+            router=core.router,
+            identity_kernel=core.identity,
+            model_profiles=core.profiles,
+        ),
+        source_selector=LocalSourceSelector(
             router=core.router,
             identity_kernel=core.identity,
             model_profiles=core.profiles,

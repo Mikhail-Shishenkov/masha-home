@@ -677,10 +677,21 @@ function renderWorkbench(view) {
     const capabilityText = skill.capabilities.length
       ? skill.capabilities.map(humanCapability).join(", ")
       : "пока без доступных действий";
-    workbenchSkills.append(workbenchItem(
+    const item = workbenchItem(
       skill.name,
-      skill.runtime_supported ? `Могу использовать для: ${capabilityText}.` : "Пока просто хранится здесь и ничего не запускает.",
-    ));
+      skill.summary || (skill.runtime_supported ? `Могу использовать для: ${capabilityText}.` : "Пока просто хранится здесь и ничего не запускает."),
+    );
+    if (skill.usage) item.append(Object.assign(document.createElement("p"), { textContent: skill.usage }));
+    if (skill.can?.length) item.append(Object.assign(document.createElement("p"), { textContent: `Могу: ${skill.can.join(" · ")}` }));
+    if (skill.cannot?.length) item.append(Object.assign(document.createElement("p"), { textContent: `Не могу: ${skill.cannot.join(" · ")}` }));
+    const technical = document.createElement("details");
+    technical.className = "workbench-other-options";
+    technical.append(
+      Object.assign(document.createElement("summary"), { textContent: "Технически" }),
+      Object.assign(document.createElement("p"), { textContent: `${skill.integrity} · ${skill.risk || "—"} · ${skill.scopes?.join(", ") || "—"}` }),
+    );
+    item.append(technical);
+    workbenchSkills.append(item);
   }
   const skillNames = new Map((view?.skills || []).map((skill) => [skill.skill_id, skill.name]));
   for (const grant of view?.grants || []) {
@@ -1564,8 +1575,41 @@ function renderMessage(message, { provisional = false } = {}) {
   item.className = `message message-${message.role}${provisional ? " is-provisional" : ""}`;
   if (message.role === "assistant") {
     window.MashaSafeMarkdown.renderInto(item, message.content);
-    const observation = message.external_observation;
-    if (observation?.sources?.length) {
+    const observations = message.external_observations?.length
+      ? message.external_observations
+      : message.external_observation ? [message.external_observation] : [];
+    const search = observations.find((observation) => observation.kind === "web_search" && observation.sources?.length);
+    const fetched = observations.find((observation) => observation.kind === "web_fetch" && observation.page);
+    if (fetched?.page) {
+      const details = document.createElement("details");
+      details.className = "message-page";
+      const summary = document.createElement("summary");
+      summary.textContent = `Прочитала страницу · ${fetched.page.domain} · ${search?.sources?.length ? `Источники ${search.sources.length}` : "Источник"}`;
+      const body = document.createElement("div");
+      body.className = "message-page-body";
+      if (fetched.page.title) body.append(Object.assign(document.createElement("span"), { textContent: fetched.page.title }));
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "message-source";
+      open.textContent = "Открыть источник";
+      open.addEventListener("click", () => {
+        if (ready) bridge.openObservationSource(fetched.observation_id, "page");
+      });
+      body.append(open);
+      const technical = document.createElement("details");
+      technical.className = "message-page-technical";
+      technical.append(
+        Object.assign(document.createElement("summary"), { textContent: "Технически" }),
+        Object.assign(document.createElement("span"), {
+          textContent: `${fetched.page.content_type} · ${fetched.page.truncated ? "частично" : "полностью"} · ${fetched.page.extractor}`,
+        }),
+      );
+      body.append(technical);
+      details.append(summary, body);
+      item.append(details);
+    }
+    if (search?.sources?.length) {
+      const observation = search;
       const sources = document.createElement("div");
       sources.className = "message-sources";
       sources.append(Object.assign(document.createElement("span"), {

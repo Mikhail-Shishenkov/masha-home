@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "skill_id": "web_fetch",
+  "name": "Web Fetch",
+  "version": "1.0.0",
+  "description": "Читает одну публичную веб-страницу по явной просьбе человека.",
+  "entrypoint": null,
+  "instructions_file": "SKILL.md",
+  "capabilities": ["network_access"],
+  "requested_scopes": ["web.fetch"],
+  "risk_level": "consequential",
+  "maximum_autonomy_level": 1,
+  "supports_dry_run": true,
+  "supports_rollback": false,
+  "verification": "Показывает только ограниченное нормализованное evidence ранее проверенной публичной HTTPS-страницы."
+}

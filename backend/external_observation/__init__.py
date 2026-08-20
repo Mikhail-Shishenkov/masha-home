@@ -1,8 +1,9 @@
 """Read-only external observation foundation."""
 
-from .intent import ExplicitExternalIntentGate, ExternalIntentDecision
+from .intent import ExplicitExternalIntentGate, ExplicitWebFetchIntentGate, ExternalIntentDecision, FetchIntentDecision
 from .models import (
     ExternalObservation,
+    FetchedPageEvidence,
     FreshnessRequirement,
     FreshnessStatus,
     InvocationAuthority,
@@ -27,14 +28,19 @@ from .provider import (
     canonicalize_https_url,
 )
 from .service import EXTERNAL_INFORMATION_CONTRACT, ExternalObservationService
+from .safe_fetcher import SafeFetchError, SafeFetchResponse, SafePublicHttpsFetcher
 from .store import ExternalObservationStore
+from .source_selector import FakeSourceSelector, LocalSourceSelector, SelectableSource, SourceSelector
 
 __all__ = [
     "DDGSWebSearchProvider",
     "EXTERNAL_INFORMATION_CONTRACT",
     "ExplicitExternalIntentGate",
+    "ExplicitWebFetchIntentGate",
     "ExternalIntentDecision",
+    "FetchIntentDecision",
     "ExternalObservation",
+    "FetchedPageEvidence",
     "ExternalObservationService",
     "ExternalObservationStore",
     "ExternalQueryPlan",
@@ -47,11 +53,18 @@ __all__ = [
     "InternetAccessPolicyStore",
     "InvocationAuthority",
     "LocalExternalQueryPlanner",
+    "LocalSourceSelector",
     "ObservationKind",
     "ObservationRequest",
     "ObservationStatus",
     "ProviderSearchRequest",
     "SearchEvidence",
+    "SafeFetchError",
+    "SafeFetchResponse",
+    "SafePublicHttpsFetcher",
+    "SourceSelector",
+    "SelectableSource",
+    "FakeSourceSelector",
     "SourceTime",
     "SourceTimeKind",
     "SourceTimePrecision",

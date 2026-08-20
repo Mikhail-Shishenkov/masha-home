@@ -33,6 +33,9 @@ class WorkbenchApplicationService:
                 integrity=item.integrity.value,
                 capabilities=tuple(capability.value for capability in item.capabilities),
                 runtime_supported=item.runtime_supported,
+                **self._human_skill(item.skill_id),
+                scopes=item.scopes,
+                risk=None if item.risk is None else item.risk.value,
             )
             for item in snapshot.skills[:skill_limit]
         )
@@ -74,6 +77,30 @@ class WorkbenchApplicationService:
             action_autonomy_level=snapshot.action_autonomy.maximum_autonomy_level,
             active_agent_runs=snapshot.active_agent_runs,
         )
+
+    @staticmethod
+    def _human_skill(skill_id: str) -> dict:
+        cards = {
+            "project_observer": {
+                "summary": "Смотрит на разрешённую часть локального проекта.",
+                "usage": "Только по твоей просьбе",
+                "can": ("читать ограниченные локальные материалы",),
+                "cannot": ("менять файлы", "выходить в интернет"),
+            },
+            "web_search": {
+                "summary": "Ищет актуальную публичную информацию в интернете.",
+                "usage": "Только по твоей просьбе",
+                "can": ("искать сайты и свежую информацию", "возвращать проверяемые источники"),
+                "cannot": ("читать страницу целиком", "входить на сайты", "отправлять или менять данные"),
+            },
+            "web_fetch": {
+                "summary": "Читает одну публичную веб-страницу.",
+                "usage": "Только по твоей просьбе",
+                "can": ("читать HTML", "читать обычный текст", "читать JSON"),
+                "cannot": ("входить на сайты", "запускать JavaScript", "скачивать файлы", "читать PDF", "отправлять формы"),
+            },
+        }
+        return cards.get(skill_id, {})
 
     def propose_install(self, source_path: str) -> SkillInstallPreviewView:
         if self._installer is None:

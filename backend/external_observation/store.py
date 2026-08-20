@@ -30,9 +30,23 @@ class ExternalObservationStore:
         )
 
     def for_assistant_message(self, message_id: str) -> ExternalObservation | None:
-        return next(
-            (item for item in reversed(self._load().observations) if item.assistant_message_id == message_id),
-            None,
+        rows = self.for_assistant_message_all(message_id)
+        return rows[-1] if rows else None
+
+    def for_assistant_message_all(self, message_id: str) -> tuple[ExternalObservation, ...]:
+        return tuple(
+            item for item in self._load().observations if item.assistant_message_id == message_id
+        )
+
+    def latest_web_searches_for_origin_messages(
+        self,
+        message_ids: tuple[str, ...],
+    ) -> tuple[ExternalObservation, ...]:
+        allowed = set(message_ids)
+        return tuple(
+            item
+            for item in reversed(self._load().observations)
+            if item.request.origin_message_id in allowed
         )
 
     def attach_assistant_message(self, observation_id: str, message_id: str) -> ExternalObservation:
@@ -45,6 +59,8 @@ class ExternalObservationStore:
         selected = self.get(observation_id)
         if selected is None:
             raise KeyError(observation_id)
+        if selected.fetched_page is not None and source_id == "page":
+            return selected.fetched_page.final_url
         source = next((item for item in selected.evidence if item.source_id == source_id), None)
         if source is None:
             raise KeyError(source_id)
@@ -65,4 +81,3 @@ class ExternalObservationStore:
             encoding="utf-8",
         )
         temporary.replace(self.path)
-
