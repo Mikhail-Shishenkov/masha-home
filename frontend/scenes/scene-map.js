@@ -44,8 +44,22 @@
     specialClose: scene(
   "evening",
   "special_close",
-  "assets/presence/evening/special-cozy-close.png",
-  "Маша совсем рядом в тихом вечернем доме"
+  "assets/presence/evening/special-close.png",
+  "Маша рядом с тобой в тёплом вечернем доме"
+),
+
+specialNear: scene(
+  "evening",
+  "special_near",
+  "assets/presence/evening/special-near.png",
+  "Маша совсем рядом и внимательно смотрит на тебя"
+),
+
+specialQuietNear: scene(
+  "evening",
+  "special_quiet_near",
+  "assets/presence/evening/special-quiet-near.png",
+  "Маша расслабилась совсем рядом и просто остаётся с тобой"
 ),
 
 specialMug: scene(
@@ -121,39 +135,18 @@ if (specialEvening) {
   }
 
   if (specialProximity === "near") {
-    if (activity === "processing") {
-      return scenes.specialThoughtful;
+    if (
+      activity === "idle"
+      && presence.ambient === "quiet"
+    ) {
+      return scenes.specialQuietNear;
     }
-    if (activity === "idle" && presence.ambient === "quiet") {
-      return scenes.specialQuiet;
-    }
-    return chooseVariant(
-      presentation,
-      scenes.specialMug,
-      scenes.specialQuiet
-    );
+
+    return scenes.specialNear;
   }
 
   if (specialProximity === "close") {
-    if (activity === "processing") {
-      return scenes.specialThoughtful;
-    }
-    if (activity === "idle" && presence.ambient === "quiet") {
-      return scenes.specialMug;
-    }
-    return chooseVariant(
-      presentation,
-      scenes.specialClose,
-      scenes.specialMug
-    );
-  }
-
-  if (activity === "processing") {
-    return scenes.specialThoughtful;
-  }
-
-  if (activity === "idle" && presence.ambient === "quiet") {
-    return scenes.specialQuiet;
+    return scenes.specialClose;
   }
 
   return scenes.specialEvening;
