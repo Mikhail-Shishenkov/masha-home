@@ -38,6 +38,10 @@ _UNSUPPORTED_FETCH_CLAIM = re.compile(
     r"\b(?:я\s+)?(?:прочитала|посмотрела|изучила)\s+(?:эту\s+|эту\s+веб-)?(?:страницу|сайт)\b",
     re.IGNORECASE,
 )
+_UNSUPPORTED_DOCUMENT_CLAIM = re.compile(
+    r"\b(?:я\s+)?(?:прочитала|посмотрела|изучила)\s+(?:эт(?:от|у)\s+)?(?:pdf|пдф|документ)\b",
+    re.IGNORECASE,
+)
 _SHARED_CONTINUITY_QUERY = re.compile(
     r"\b(?:между\s+нами|наш(?:а|ей|у)\s+истори(?:я|и|ю)|общ(?:ая|ей|ую)\s+истори(?:я|и|ю)|"
     r"открыт(?:ая|ые|ую)\s+нит(?:ь|и)|что\s+у\s+нас\s+продолжается)\b"
@@ -115,6 +119,11 @@ def remove_model_authored_urls(value: str) -> str:
 def remove_unsupported_fetch_claim(value: str) -> str:
     """A page-read claim is application truth, never ungrounded model prose."""
     return _UNSUPPORTED_FETCH_CLAIM.sub("Я не читала страницу", value)
+
+
+def remove_unsupported_document_claim(value: str) -> str:
+    """A document-read claim requires the current turn's completed receipt."""
+    return _UNSUPPORTED_DOCUMENT_CLAIM.sub("Я не читала этот документ", value)
 
 
 class ConversationService:
@@ -374,6 +383,14 @@ class ConversationService:
         )
         if not completed_fetch:
             grounded_response = remove_unsupported_fetch_claim(grounded_response)
+        completed_document_read = any(
+            item.status is ObservationStatus.COMPLETED
+            and item.document_read_receipt_id is not None
+            and self.external_observation_service.document_receipt(item) is not None
+            for item in external_observations
+        )
+        if not completed_document_read:
+            grounded_response = remove_unsupported_document_claim(grounded_response)
         if external_observations:
             grounded_response = (
                 remove_model_authored_urls(grounded_response)

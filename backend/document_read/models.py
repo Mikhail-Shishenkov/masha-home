@@ -71,6 +71,7 @@ class DocumentReadReceipt(_DocumentModel):
     receipt_id: str = Field(min_length=8, max_length=100)
     source_kind: DocumentReadSourceKind
     source_reference: str = Field(min_length=1, max_length=200)
+    source_domain: str | None = Field(default=None, max_length=253)
     display_name: str | None = Field(default=None, max_length=300)
     evidence: DocumentEvidence
     completed_at: AwareDatetime

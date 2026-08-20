@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 from typing import Literal
-from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict
 
@@ -636,7 +635,7 @@ class ConversationApplicationService:
             ),
             document=None if document is None else DocumentReadView(
                 title=document.title,
-                domain=(urlsplit(observation.request.target_url or "").hostname or "unknown"),
+                domain=receipt.source_domain or "unknown",
                 page_count=document.page_count,
                 pages_read=document.pages_read,
                 extracted_chars=document.extracted_chars,

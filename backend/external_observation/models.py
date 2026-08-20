@@ -164,6 +164,7 @@ class ExternalObservation(StrictObservationModel):
     evidence: tuple[SearchEvidence, ...] = Field(default=(), max_length=5)
     fetched_page: FetchedPageEvidence | None = None
     document_read_receipt_id: str | None = Field(default=None, min_length=8, max_length=100)
+    final_source_url: str | None = Field(default=None, min_length=8, max_length=2_000)
     provider_calls: int = Field(default=0, ge=0, le=2)
     provider_id: str | None = Field(default=None, max_length=50)
     search_backend: str | None = Field(default=None, max_length=50)
@@ -185,11 +186,20 @@ class ExternalObservation(StrictObservationModel):
                 or (self.fetched_page is not None and self.document_read_receipt_id is not None)
             ):
                 raise ValueError("completed WEB_FETCH requires one bounded page or document receipt")
+            if self.document_read_receipt_id is not None and self.final_source_url is None:
+                raise ValueError("completed document read requires final source provenance")
         if self.status is not ObservationStatus.COMPLETED and (
             self.evidence or self.fetched_page is not None or self.document_read_receipt_id is not None
         ):
             raise ValueError("non-completed observation cannot expose evidence")
         return self
+
+    @field_validator("final_source_url")
+    @classmethod
+    def final_source_url_is_https(cls, value: str | None) -> str | None:
+        if value is not None and not value.casefold().startswith("https://"):
+            raise ValueError("final document source must use HTTPS")
+        return value
 
 
 class ExternalObservationState(StrictObservationModel):

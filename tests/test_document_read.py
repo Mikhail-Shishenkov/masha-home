@@ -1,18 +1,23 @@
 from __future__ import annotations
 
 from io import BytesIO
+from types import SimpleNamespace
 
 import pytest
 from pypdf import PdfWriter
+from pypdf import filters as pypdf_filters
+from pypdf.errors import LimitReachedError
 from pypdf.generic import DictionaryObject, NameObject, DecodedStreamObject, TextStringObject
 
 from backend.document_read import DocumentInput, DocumentReadError, DocumentReadSourceKind, DocumentReader
 from backend.document_read.reader import (
+    MAX_DECODED_CONTENT_STREAM_BYTES,
     MAX_DOCUMENT_TEXT_CHARS,
     MAX_PAGE_TEXT_CHARS,
     MAX_PDF_PAGES,
     MAX_RAW_PDF_BYTES,
 )
+import backend.document_read.reader as reader_module
 
 
 def _pdf(
@@ -134,3 +139,32 @@ def test_active_pdf_uri_is_neither_followed_nor_extracted_as_evidence():
     assert evidence.pages[0].text == "Only this visible text is evidence."
     assert "never-follow" not in evidence.pages[0].text
     assert "never extract" not in evidence.pages[0].text
+
+
+def test_pypdf_decoded_stream_limit_is_scoped_restored_and_reader_is_closed(monkeypatch):
+    previous_limit = pypdf_filters.ZLIB_MAX_OUTPUT_LENGTH
+    calls = {}
+
+    class _Page:
+        def extract_text(self):
+            assert pypdf_filters.ZLIB_MAX_OUTPUT_LENGTH == MAX_DECODED_CONTENT_STREAM_BYTES
+            raise LimitReachedError("fixture decoded stream limit")
+
+    class _Reader:
+        is_encrypted = False
+        pages = [_Page()]
+        metadata = SimpleNamespace(title=None)
+
+        def close(self):
+            calls["closed"] = True
+
+    def factory(stream, *, strict, root_object_recovery_limit):
+        calls.update(strict=strict, root_object_recovery_limit=root_object_recovery_limit)
+        return _Reader()
+
+    monkeypatch.setattr(reader_module, "PdfReader", factory)
+    with pytest.raises(DocumentReadError, match="pdf_resource_limit_exceeded"):
+        DocumentReader().read(_input(b"%PDF-fixture"))
+
+    assert calls == {"strict": False, "root_object_recovery_limit": 1_000, "closed": True}
+    assert pypdf_filters.ZLIB_MAX_OUTPUT_LENGTH == previous_limit

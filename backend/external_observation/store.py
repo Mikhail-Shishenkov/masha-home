@@ -61,8 +61,8 @@ class ExternalObservationStore:
             raise KeyError(observation_id)
         if selected.fetched_page is not None and source_id == "page":
             return selected.fetched_page.final_url
-        if selected.document_read_receipt_id is not None and source_id == "page" and selected.request.target_url is not None:
-            return selected.request.target_url
+        if selected.document_read_receipt_id is not None and source_id == "page" and selected.final_source_url is not None:
+            return selected.final_source_url
         source = next((item for item in selected.evidence if item.source_id == source_id), None)
         if source is None:
             raise KeyError(source_id)

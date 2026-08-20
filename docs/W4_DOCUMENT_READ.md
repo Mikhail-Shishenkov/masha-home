@@ -36,6 +36,18 @@ OCR or rendering extras.
 - Web Fetch keeps its ordinary 2 MiB cap for non-PDF content, with a separate
   10 MiB bounded PDF transport budget.
 
+Before `extract_text`, W4 additionally applies an 8 MiB decoded/content-stream
+limit to the documented pypdf stream controls and passes
+`root_object_recovery_limit=1000` explicitly (never `None`). pypdf exposes
+these stream controls as process-level constants rather than per-reader
+options, so W4 serializes Document Reader calls with a lock, lowers them only
+for that call, and restores their prior values in `finally`. It does not relax
+or permanently change any pypdf security limit. The same scoped boundary
+disables pypdf's optional external `jbig2dec` helper, because W4 does not read
+images. A pypdf limit hit becomes
+`pdf_resource_limit_exceeded`. `PdfReader.close()` and the in-memory input
+stream are always closed/cleared in `finally`.
+
 Extraction is page-by-page. Reaching either text limit marks the affected page
 and document `truncated`; blank pages are skipped but do not stop later pages.
 The content hash is SHA-256 of the exact raw PDF byte representation supplied
@@ -49,12 +61,22 @@ truncation, safe metadata, extractor ID and the raw-representation hash.
 completion provenance. Raw PDF bytes, headers, cookies and credentials are
 never persisted. The web adapter links its receipt to the existing Web Fetch
 observation; that link lets the application attach it to the assistant turn
-and open the original source safely.
+and open the final validated source safely.
+
+For web receipts, the adapter retains only bounded final-source provenance: the
+validated final HTTPS URL remains application-owned for source opening and the
+final domain is used in the UI. It is not handed to the renderer as arbitrary
+URL authority. Document receipts retain the same 200-item window as External
+Observations, so a normally retained PDF observation does not lose its receipt
+after restart.
 
 Document pages enter the main local model only as a separate
 `external_information` item with the existing untrusted-evidence contract.
 They never enter Identity, Personal Memory, Continuity or passive-memory
 candidate detection. The main request remains `LOCAL_ONLY` and `tools=False`.
+Model prose may say it read a PDF/document only when the current turn has a
+completed Web Fetch observation with a valid Document Read receipt. A normal
+page fetch or search receipt is not enough.
 
 ## Safety and failures
 
@@ -66,6 +88,7 @@ Controlled failures include:
 
 - `pdf_input_too_large`;
 - `pdf_page_limit_exceeded`;
+- `pdf_resource_limit_exceeded`;
 - `pdf_encrypted_unsupported`;
 - `pdf_unreadable`;
 - `pdf_text_unavailable` for scanned/image-only or otherwise textless PDFs.

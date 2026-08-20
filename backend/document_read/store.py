@@ -9,7 +9,7 @@ from .models import DocumentReadReceipt, DocumentReadState
 
 
 class DocumentReadStore:
-    def __init__(self, path: Path, *, limit: int = 100):
+    def __init__(self, path: Path, *, limit: int = 200):
         self.path = Path(path)
         self.limit = limit
 

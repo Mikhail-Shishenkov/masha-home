@@ -492,8 +492,8 @@ def _service(root, *, provider=None, fetcher=None, selector=None):
     )
 
 
-def _application(root, service):
-    application = build_masha_application(project_root=root, router=ModelRouter([LocalProfileProvider(response_text="Я прочитала страницу и отвечаю только по её тексту.")]))
+def _application(root, service, *, response_text="Я прочитала страницу и отвечаю только по её тексту."):
+    application = build_masha_application(project_root=root, router=ModelRouter([LocalProfileProvider(response_text=response_text)]))
     application._conversation._conversation.external_observation_service = service
     return application
 
@@ -548,6 +548,86 @@ def test_direct_pdf_fetch_reads_bounded_document_without_persisting_raw_bytes(tm
     ))
     assert raw_pdf.decode("latin-1") not in serialized
     assert "PDF evidence says" in serialized
+
+
+@pytest.mark.parametrize("kind", ["ordinary", "search", "html"])
+def test_document_claim_requires_current_completed_document_receipt(tmp_path, kind):
+    root = _isolated_root(tmp_path / kind)
+    response_text = "Я прочитала документ и могу рассказать главное."
+    if kind == "ordinary":
+        application = _application(root, _service(root), response_text=response_text)
+        turn = application.send_message("Давай просто поговорим", project_id=PROJECT_ID)
+    elif kind == "search":
+        application = _application(root, _service(root), response_text=response_text)
+        turn = application.send_message("Поищи в интернете Ollama", project_id=PROJECT_ID)
+    else:
+        application = _application(root, _service(root), response_text="Я прочитала PDF и могу рассказать главное.")
+        turn = application.send_message("прочитай https://public.example/page", project_id=PROJECT_ID)
+
+    assert "прочитала документ" not in turn.assistant_message.content.casefold()
+    assert "прочитала pdf" not in turn.assistant_message.content.casefold()
+
+
+def test_completed_pdf_receipt_allows_document_claim(tmp_path):
+    root = _isolated_root(tmp_path)
+    application = _application(
+        root,
+        _service(root, fetcher=_FakeFetcher(SafeFetchResponse(
+            requested_url="https://public.example/document.pdf", final_url="https://public.example/document.pdf",
+            headers={"content-type": "application/pdf"}, body=_text_pdf(), redirects=0,
+        ))),
+        response_text="Я прочитала PDF и могу рассказать главное.",
+    )
+
+    turn = application.send_message("прочитай https://public.example/document.pdf", project_id=PROJECT_ID)
+
+    assert "прочитала pdf" in turn.assistant_message.content.casefold()
+
+
+def test_pdf_uses_final_redirect_domain_and_final_application_owned_source(tmp_path):
+    root = _isolated_root(tmp_path)
+    requested = "https://example.test/start"
+    final = "https://cdn.example.test/document.pdf"
+    opened = []
+    service = _service(root, fetcher=_FakeFetcher(SafeFetchResponse(
+        requested_url=requested, final_url=final,
+        headers={"content-type": "application/pdf"}, body=_text_pdf(), redirects=1,
+    )))
+    service._url_opener = lambda url: not opened.append(url)
+    application = _application(root, service)
+
+    turn = application.send_message(f"прочитай {requested}", project_id=PROJECT_ID)
+    observation = application._conversation._conversation.last_external_observation
+    document = turn.assistant_message.external_observations[-1].document
+
+    assert observation.final_source_url == final
+    assert document is not None and document.domain == "cdn.example.test"
+    assert application._conversation._conversation.open_external_source(observation.request.observation_id, "page") is True
+    assert opened == [final]
+
+
+def test_retained_pdf_observation_keeps_document_view_after_restart(tmp_path):
+    root = _isolated_root(tmp_path)
+    application = _application(root, _service(root, fetcher=_FakeFetcher(SafeFetchResponse(
+        requested_url="https://public.example/document.pdf", final_url="https://public.example/document.pdf",
+        headers={"content-type": "application/pdf"}, body=_text_pdf(), redirects=0,
+    ))))
+    turn = application.send_message("прочитай https://public.example/document.pdf", project_id=PROJECT_ID)
+    observation = application._conversation._conversation.last_external_observation
+    receipt = application._conversation._conversation.external_observation_service.document_receipt(observation)
+    assert receipt is not None
+
+    store = DocumentReadStore(root / "local-data" / "runtime" / "document-read-receipts.json")
+    for index in range(199):
+        store.save(receipt.model_copy(update={"receipt_id": f"doc_retained_{index:03d}", "assistant_message_id": None}))
+
+    restarted = _application(root, _service(root))
+    view = restarted.conversation(turn.conversation_id)
+    assistant = next(message for message in view.messages if message.role == "assistant")
+
+    assert store.get(receipt.receipt_id) is not None
+    assert assistant.external_observation is not None
+    assert assistant.external_observation.document is not None
 
 
 def test_pdf_content_type_routes_independently_of_url_suffix_and_html_pdf_url_stays_w2(tmp_path):
