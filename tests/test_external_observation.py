@@ -369,7 +369,7 @@ def _fake_ddgs_modules(monkeypatch):
     _CapturedDDGS.instances.clear()
 
 
-def test_ddgs_adapter_pins_duckduckgo_and_uses_one_text_or_news_call(monkeypatch):
+def test_ddgs_adapter_uses_auto_and_one_text_or_news_call(monkeypatch):
     _fake_ddgs_modules(monkeypatch)
     provider = DDGSWebSearchProvider(timeout_seconds=4, clock=lambda: NOW)
 
@@ -380,11 +380,11 @@ def test_ddgs_adapter_pins_duckduckgo_and_uses_one_text_or_news_call(monkeypatch
         freshness=FreshnessRequirement.CURRENT,
     ))
     first = _CapturedDDGS.instances[-1]
-    assert first.text_calls[0]["backend"] == "duckduckgo"
+    assert first.text_calls[0]["backend"] == "auto"
     assert first.text_calls[0]["max_results"] == 5
     assert first.news_calls == []
     assert text[0].provider_id == "ddgs"
-    assert text[0].search_backend == "duckduckgo"
+    assert text[0].search_backend == "auto"
 
     news = provider.search(ProviderSearchRequest(
         query="Ollama breaking news",
@@ -393,7 +393,7 @@ def test_ddgs_adapter_pins_duckduckgo_and_uses_one_text_or_news_call(monkeypatch
         freshness=FreshnessRequirement.BREAKING,
     ))
     second = _CapturedDDGS.instances[-1]
-    assert second.news_calls[0]["backend"] == "duckduckgo"
+    assert second.news_calls[0]["backend"] == "auto"
     assert second.text_calls == []
     assert news[0].source_time.value == datetime(2026, 8, 20, 10, 0, tzinfo=timezone.utc)
 

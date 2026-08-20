@@ -455,7 +455,9 @@ def test_conversation_integration_creates_candidate_only_after_ordinary_model_tu
     assert len(candidates) == 1
     assert candidates[0].candidate_type == "fact"
     assert "чай" in candidates[0].summary
-    assert provider.calls == 1
+    # One call writes the conversation response; the approved Presence layer
+    # makes one additional local-only call to classify its expression cue.
+    assert provider.calls == 2
 
     application.send_message(
         "Сейчас хочу бутерброд.",
@@ -467,7 +469,7 @@ def test_conversation_integration_creates_candidate_only_after_ordinary_model_tu
     assert candidates[0].candidate_id not in application.conversation(
         turn.conversation_id
     ).model_dump_json()
-    assert provider.calls == 2
+    assert provider.calls == 4
 
     application.send_message(
         "Маша, запомни, что я люблю какао",
@@ -475,7 +477,8 @@ def test_conversation_integration_creates_candidate_only_after_ordinary_model_tu
         conversation_id=turn.conversation_id,
     )
     assert len(application.list_pending_memory_candidates()) == 1
-    assert provider.calls == 2
+    # The explicit memory capability is application-owned and adds no model call.
+    assert provider.calls == 4
 
 
 def test_application_review_and_provenance_boundary(tmp_path):

@@ -153,10 +153,10 @@ class FakeWebSearchProvider:
 
 
 class DDGSWebSearchProvider:
-    """Lazy community DDGS adapter pinned to the explicit DuckDuckGo backend."""
+    """Lazy community DDGS adapter using its bounded metasearch transport."""
 
     provider_id = "ddgs"
-    search_backend = "duckduckgo"
+    search_backend = "auto"
 
     def __init__(
         self,

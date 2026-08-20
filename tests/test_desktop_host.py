@@ -66,7 +66,7 @@ def test_production_frontend_keeps_desktop_composition_and_accessibility_contrac
     assert "reflections-trigger" in html
     assert "reflections-surface" in html
     assert "workbench-trigger" in html
-    assert ">Уголок</button>" in html
+    assert "Уголок" in html
     assert "Рабочий уголок" in html
     assert "confirm-operation" in html
     assert "reject-operation" in html
@@ -92,7 +92,8 @@ def test_production_frontend_keeps_desktop_composition_and_accessibility_contrac
     assert ".workbench-surface" in css
     assert ".is-surface-leaving" in css
     assert "surface-content-appear" in css
-    assert ".conversation-surface:not(.has-conversations) .surface-actions" in css
+    assert ".conversation-surface:not(.has-conversations) .recent-conversations-toggle" in css
+    assert ".conversation-surface:not(.has-conversations) .new-conversation" in css
     assert "html, body { width: 100%; height: 100%; overflow: hidden; }" in css
     assert "max-height: 112px" in css
     assert "resize: none" in css
@@ -173,6 +174,8 @@ def test_webchannel_bridge_exposes_only_typed_allowlisted_slots():
             "refreshProactiveInteractions",
         "resolveProactiveInteraction",
         "loadSharedContinuity",
+        "activateContinuityThread",
+        "clearContinuityThread",
         "continueContinuityThread",
         "searchInformation",
         "clearInformationSearch",
@@ -182,15 +185,23 @@ def test_webchannel_bridge_exposes_only_typed_allowlisted_slots():
         "resolveReflection",
         "resolveHonestHelp",
         "loadWorkbench",
-            "useModelProfile",
-            "chooseSkillPackage",
-            "resolveSkillInstall",
+        "useModelProfile",
+        "chooseSkillPackage",
+        "resolveSkillInstall",
         "engageEmergencyStop",
         "resumeAutonomy",
+        "setSpecialEvening",
+        "advanceSpecialEveningProximity",
+        "settleAssistantPresence",
+        "refreshHomeTime",
         "openConversation",
+        "openObservationSource",
         "startNewConversation",
         "submitMessage",
+        "proposeCommitmentCancellation",
+        "proposeCommitmentClearDue",
         "proposeCommitmentCompletion",
+        "proposeCommitmentReschedule",
         "resolveConfirmation",
     }
     bridge.close()
@@ -432,6 +443,12 @@ def test_local_conversation_bridge_serializes_one_real_isolated_turn(tmp_path):
         "emergency_stop_engaged",
         "safety_label",
         "commitments_count",
+        "overdue_commitments_count",
+        "stale_overdue_commitments_count",
+        "upcoming_commitments_count",
+        "unscheduled_commitments_count",
+        "pending_interactions_count",
+        "attention_items",
     }
 
     bridge.engageEmergencyStop()

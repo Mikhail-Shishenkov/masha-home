@@ -8,7 +8,7 @@ bounded, normalized, untrusted evidence.
 
 - default policy: `explicit`;
 - default provider: `DDGSWebSearchProvider`;
-- provider backend: exactly `duckduckgo`, never `auto`;
+- provider backend: DDGS metasearch transport `auto`;
 - no API key, paid provider, background traffic or startup availability call;
 - no Web Fetch, images, videos, extraction, MCP/API server or retry loop;
 - maximum one DDGS call in W1, five sources and 5000 external-context characters;
@@ -34,5 +34,5 @@ $env:MASHA_RUN_DDGS_SMOKE = "1"
 .\.venv\Scripts\python.exe -m pytest -s tests\test_ddgs_live_smoke.py
 ```
 
-It performs one bounded `Ollama latest release` query against the explicit
-DuckDuckGo backend and prints only normalized evidence.
+It performs three bounded English/Russian queries against the `auto` backend,
+requires at least one real result set and prints only normalized evidence.
