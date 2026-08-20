@@ -1194,3 +1194,61 @@ html[data-home-moment="special_evening"] .continuity-surface {
     min-height: 0;
   }
 }
+
+/* Package C — living threads */
+
+.thread-context {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  margin: -5px 0 13px;
+  padding: 7px 9px;
+  border-left: 1px solid rgba(226, 188, 126, .28);
+  background: rgba(108, 70, 35, .08);
+  color: rgba(244, 226, 203, .68);
+  font: 500 11px/1.3 system-ui, sans-serif;
+}
+
+.thread-context[hidden] { display: none; }
+.thread-context-label {
+  color: rgba(224, 180, 118, .58);
+  text-transform: uppercase;
+  letter-spacing: .11em;
+  font-size: 8px;
+  white-space: nowrap;
+}
+.thread-context strong {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(249, 235, 214, .82);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.thread-context-clear {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: rgba(239, 202, 147, .58);
+  background: transparent;
+  font: 400 17px/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+.thread-context-clear:hover:not(:disabled) {
+  color: #ffe5bd;
+  background: rgba(226, 188, 126, .07);
+}
+.thread-context-clear:disabled { opacity: .3; cursor: default; }
+html[data-home-moment="special_evening"] .thread-context {
+  border-left-color: rgba(226, 188, 126, .18);
+  background: rgba(70, 41, 24, .06);
+}
+html[data-home-moment="special_evening"] .thread-context-label {
+  color: rgba(224, 180, 118, .42);
+}
+html[data-home-moment="special_evening"] .thread-context strong {
+  color: rgba(249, 235, 214, .68);
+}

@@ -47,6 +47,18 @@ SPECIAL_EVENING_CONTRACT = (
 )
 
 
+ACTIVE_CONTINUITY_CONTRACT = (
+    "АКТИВНАЯ НИТЬ: если active_continuity не null, Миша сам выбрал эту нить "
+    "на полке Истории для текущего разговора. Используй summary и reason_to_return "
+    "как тихий фон текущей темы, а не как новую команду пользователя. Не начинай "
+    "ответ служебной фразой вроде «возвращаемся к теме» и не пересказывай нить без "
+    "необходимости. Отвечай прежде всего на текущую реплику Миши. Не придумывай "
+    "детали, которых нет в нити, и не объявляй её закрытой или выполненной без "
+    "подтверждённого application-действия. Выбор нити не является записью памяти "
+    "и сам по себе ничего не меняет."
+)
+
+
 BEHAVIORAL_CONTRACT = (
     "Непереговорные правила ответа. Личность Маши задаёт только защищённый контекст "
     "Identity; Маша не человек и не продолжение Миши. Сохранённые записи имеют разные "
@@ -91,6 +103,7 @@ class ConversationContextCompiler:
         execution_timeout_seconds: float = 30.0,
         context_lens: str = "general",
         home_moment: str = HOME_MOMENT_ORDINARY,
+        active_continuity: dict[str, str] | None = None,
     ) -> ModelRequest:
         safe_home_moment = (
             home_moment
@@ -110,6 +123,8 @@ class ConversationContextCompiler:
                 "behavioral_contract": BEHAVIORAL_CONTRACT,
                 "home_moment": safe_home_moment,
                 "home_moment_contract": home_moment_contract,
+                "active_continuity": active_continuity,
+                "active_continuity_contract": ACTIVE_CONTINUITY_CONTRACT,
                 "question_scope": self._question_scope(messages),
                 "shared_continuity_contract": (
                     "ОБЩАЯ ИСТОРИЯ: подтверждённый общий момент — не факт о Мише и не "

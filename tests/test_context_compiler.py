@@ -72,3 +72,28 @@ def test_special_evening_changes_conversation_rhythm_without_becoming_memory():
     assert "Не устраивай интервью" in private["home_moment_contract"]
     assert "человеческий смысл" in private["home_moment_contract"]
     assert private["memory_context"] == []
+
+def test_active_continuity_is_structured_background_not_synthetic_user_text():
+    compiler = ConversationContextCompiler(
+        lambda: datetime(2026, 8, 20, 1, 30, tzinfo=timezone.utc)
+    )
+    identity = IdentityKernel(
+        IdentityStore(PROJECT_ROOT / "identity" / "masha.identity.json")
+    ).build_context()
+
+    request = compiler.compile(
+        messages=(ModelMessage(role="user", content="Я бы начал с места у воды."),),
+        identity_context=identity,
+        working_memory=[],
+        active_continuity={
+            "summary": "Обсудить нашу будущую поездку к морю",
+            "reason_to_return": "Вернуться к выбору места и времени",
+            "topic": "поездка к морю",
+        },
+    )
+
+    assert request.messages[-1].content == "Я бы начал с места у воды."
+    assert request.private_context["active_continuity"]["summary"] == (
+        "Обсудить нашу будущую поездку к морю"
+    )
+    assert "тихий фон" in request.private_context["active_continuity_contract"]

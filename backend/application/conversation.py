@@ -180,6 +180,26 @@ class ConversationApplicationService:
         if handler is not None:
             handler.discard_presented_entity_set(conversation_id)
 
+    def activate_continuity_thread(
+        self,
+        thread_id: str,
+        *,
+        conversation_id: str,
+    ) -> None:
+        """Select a thread for the live conversation without sending a turn."""
+        self._conversation.history.get(conversation_id)
+        self._active_continuity_by_conversation[conversation_id] = thread_id
+
+    def clear_continuity_thread(self, *, conversation_id: str) -> None:
+        self._active_continuity_by_conversation.pop(conversation_id, None)
+
+    def active_continuity_thread_id(
+        self,
+        *,
+        conversation_id: str,
+    ) -> str | None:
+        return self._active_continuity_by_conversation.get(conversation_id)
+
     def _confirmation_copy(self, proposal):
         payload = proposal.record_payload
         if proposal.operation == "forget":

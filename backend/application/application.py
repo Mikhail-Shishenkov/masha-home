@@ -9,6 +9,7 @@ from backend.conversation.human_reference import PresentedEntitySet
 from .contracts import (
     AgentRunListView,
     ConversationTurnResult,
+    ContinuityFollowUpView,
     ConversationPageView,
     CommitmentView,
     CommitmentListView,
@@ -132,6 +133,51 @@ class MashaApplication:
 
     def shared_continuity(self) -> SharedContinuityView:
         return self._continuity.view()
+
+    def continuity_thread(self, thread_id: str) -> ContinuityFollowUpView:
+        return self._continuity.thread(thread_id)
+
+    def activate_continuity_thread(
+        self,
+        thread_id: str,
+        *,
+        conversation_id: str | None,
+    ) -> ContinuityFollowUpView:
+        if conversation_id is None:
+            raise ValueError("continuity thread needs an active conversation")
+        thread = self._continuity.thread(thread_id)
+        self._conversation.activate_continuity_thread(
+            thread_id,
+            conversation_id=conversation_id,
+        )
+        return thread
+
+    def clear_continuity_thread(
+        self,
+        *,
+        conversation_id: str | None,
+    ) -> None:
+        if conversation_id is None:
+            return
+        self._conversation.clear_continuity_thread(conversation_id=conversation_id)
+
+    def active_continuity_thread(
+        self,
+        *,
+        conversation_id: str | None,
+    ) -> ContinuityFollowUpView | None:
+        if conversation_id is None:
+            return None
+        thread_id = self._conversation.active_continuity_thread_id(
+            conversation_id=conversation_id,
+        )
+        if thread_id is None:
+            return None
+        try:
+            return self._continuity.thread(thread_id)
+        except KeyError:
+            self._conversation.clear_continuity_thread(conversation_id=conversation_id)
+            return None
 
     def continue_continuity_thread(
         self,

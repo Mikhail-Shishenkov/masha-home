@@ -154,6 +154,16 @@
       </header>
       <h1 id="conversation-title">Я здесь.</h1>
       <p class="surface-status" id="surface-status">Подключаю локальный разговор…</p>
+      <div class="thread-context" id="thread-context" hidden>
+        <span class="thread-context-label">нить рядом</span>
+        <strong id="thread-context-title"></strong>
+        <button
+          class="thread-context-clear"
+          id="thread-context-clear"
+          type="button"
+          aria-label="Убрать выбранную нить из текущего разговора"
+        >×</button>
+      </div>
       <ol class="transcript" id="transcript" aria-live="polite"></ol>
       <form class="composer" id="composer">
         <label class="sr-only" for="message-input">Сообщение Маше</label>

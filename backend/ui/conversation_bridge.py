@@ -106,6 +106,7 @@ class LocalConversationBridge(QObject):
                 ),
                 "proactive_interactions_count": len(proactive.items),
                 "continuity_count": self._continuity_count(),
+                "active_continuity_thread": self._active_continuity_payload(),
                 "reflection_items_count": self._reflection_count(),
                 "pending_confirmation": (
                     None
@@ -558,6 +559,47 @@ class LocalConversationBridge(QObject):
         })
 
     @Slot(str)
+    def activateContinuityThread(self, thread_id: str):  # noqa: N802
+        """Select one History thread as context; do not call the model."""
+        if self._application is None or self._turn_in_flight:
+            self._emit({"kind": "continuity_context_unavailable"})
+            return
+        if self._conversation_id is None:
+            self._emit({
+                "kind": "continuity_context_unavailable",
+                "message": "Сначала начнём разговор — и тогда нить сможет быть рядом.",
+            })
+            return
+        try:
+            thread = self._application.activate_continuity_thread(
+                thread_id,
+                conversation_id=self._conversation_id,
+            )
+        except (KeyError, ValueError):
+            self._emit({"kind": "continuity_context_unavailable"})
+            return
+
+        snapshot = self._session_snapshot("conversation_focused")
+        self._emit({
+            "kind": "continuity_thread_activated",
+            "thread": thread.model_dump(mode="json"),
+            "snapshot": snapshot.model_dump(mode="json"),
+        })
+
+    @Slot()
+    def clearContinuityThread(self):  # noqa: N802
+        if self._application is None or self._turn_in_flight:
+            return
+        self._application.clear_continuity_thread(
+            conversation_id=self._conversation_id,
+        )
+        snapshot = self._session_snapshot("conversation_focused")
+        self._emit({
+            "kind": "continuity_thread_cleared",
+            "snapshot": snapshot.model_dump(mode="json"),
+        })
+
+    @Slot(str)
     def continueContinuityThread(self, thread_id: str):  # noqa: N802
         if self._application is None or self._turn_in_flight:
             self._emit({"kind": "continuity_unavailable"})
@@ -808,6 +850,7 @@ class LocalConversationBridge(QObject):
                 "snapshot": snapshot.model_dump(mode="json"),
                 "conversation": conversation.model_dump(mode="json"),
                 "recent": self._reset_conversation_page_payload(),
+                "active_continuity_thread": self._active_continuity_payload(),
                 "pending_confirmation": None if pending is None else pending.model_dump(mode="json"),
             }
         )
@@ -1258,6 +1301,7 @@ class LocalConversationBridge(QObject):
                     if self._application is None
                     else self._continuity_count()
                 ),
+                "active_continuity_thread": self._active_continuity_payload(),
                 "commitments_count": (
                     0
                     if self._application is None
@@ -1348,6 +1392,14 @@ class LocalConversationBridge(QObject):
             if self._session is None:
                 return "ordinary"
             return self._session.home_moment.value
+
+    def _active_continuity_payload(self) -> dict | None:
+        if self._application is None or self._conversation_id is None:
+            return None
+        thread = self._application.active_continuity_thread(
+            conversation_id=self._conversation_id,
+        )
+        return None if thread is None else thread.model_dump(mode="json")
 
     def _recent_payload(self) -> dict:
         return self._reset_conversation_page_payload()

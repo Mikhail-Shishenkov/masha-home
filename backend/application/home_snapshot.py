@@ -155,6 +155,15 @@ class HomePresentationSession:
     def opened(self) -> HomeSnapshotView:
         return self._dispatch(UserOpenedApplication(occurred_at=self._now()))
 
+    def conversation_focused(self) -> HomeSnapshotView:
+        """Return Presentation focus to conversation without a model turn."""
+        return self._dispatch(
+            SurfaceFocused(
+                occurred_at=self._now(),
+                surface_id="home.conversation",
+            )
+        )
+
     def enter_special_evening(self) -> HomeSnapshotView | None:
         """Enter the explicit shared evening moment only during evening hours."""
         now = self._now()

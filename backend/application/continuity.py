@@ -54,6 +54,18 @@ class ContinuityApplicationService:
         )
 
 
+    def thread(self, thread_id: str) -> ContinuityFollowUpView:
+        """Return one still-open UI-safe thread or fail closed."""
+        matches = [
+            item
+            for item in self.view().open_threads
+            if item.thread_id == thread_id
+        ]
+        if len(matches) != 1:
+            raise KeyError("continuity thread not found")
+        return matches[0]
+
+
     def thread_prompt(self, thread_id: str) -> str:
         matches = [item for item in self.view().open_threads if item.thread_id == thread_id]
         if len(matches) != 1:

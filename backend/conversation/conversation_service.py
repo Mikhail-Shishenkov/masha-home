@@ -252,6 +252,9 @@ class ConversationService:
         else:
             self.last_recall_result = None
             self.working_memory.load(memories)
+        active_continuity = self._active_continuity_context(
+            active_continuity_thread_id
+        )
         active_profile = None if self.model_profiles is None else self.model_profiles.get_active_profile()
         request = self.context_compiler.compile(
             messages=self._model_history(conversation.id),
@@ -263,6 +266,7 @@ class ConversationService:
             execution_timeout_seconds=30.0 if active_profile is None else active_profile.timeout_seconds,
             context_lens=context_lens.value,
             home_moment=home_moment,
+            active_continuity=active_continuity,
         )
         try:
             response = self.router.generate(request)
@@ -305,6 +309,28 @@ class ConversationService:
                 )
             )
         return conversation.id, rendered
+
+    def _active_continuity_context(
+        self,
+        thread_id: str | None,
+    ) -> dict[str, str] | None:
+        if thread_id is None or self.shared_continuity is None:
+            return None
+
+        matches = [
+            follow_up
+            for _, follow_up in self.shared_continuity.open_follow_ups()
+            if follow_up.id == thread_id
+        ]
+        if len(matches) != 1:
+            return None
+
+        thread = matches[0]
+        return {
+            "summary": thread.summary,
+            "reason_to_return": thread.reason_to_return,
+            "topic": thread.topic,
+        }
 
     def resolve_memory_proposal(
         self,

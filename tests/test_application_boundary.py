@@ -1673,3 +1673,60 @@ def test_special_evening_personal_sentence_reaches_model_instead_of_shelf_router
     assert "РЕЖИМ «ВДВОЁМ»" in (
         conversation_request.private_context["home_moment_contract"]
     )
+
+def test_selected_continuity_thread_is_context_not_synthetic_turn(tmp_path):
+    _, provider, application = _application(tmp_path)
+
+    first = application.send_message("Привет, Маш.", project_id=PROJECT_ID)
+    conversation_id = first.conversation_id
+
+    handler = application._conversation._conversation.memory_intent_handler
+    assert handler is not None
+    continuity = handler.shared_continuity
+    assert continuity is not None
+
+    proposal = continuity.propose_open_thread(
+        handler.proposal_store,
+        text="Обсудить нашу будущую поездку к морю",
+        conversation_id=conversation_id,
+        reason_to_return="Вернуться к выбору места и времени",
+    )
+    continuity.confirm_proposal(proposal, handler.proposal_store)
+
+    thread = next(
+        item
+        for item in application.shared_continuity().open_threads
+        if item.summary == "Обсудить нашу будущую поездку к морю"
+    )
+
+    requests_before = len(provider.requests)
+    messages_before = len(application.conversation(conversation_id).messages)
+
+    selected = application.activate_continuity_thread(
+        thread.thread_id,
+        conversation_id=conversation_id,
+    )
+
+    assert selected.thread_id == thread.thread_id
+    assert len(provider.requests) == requests_before
+    assert len(application.conversation(conversation_id).messages) == messages_before
+
+    result = application.send_message(
+        "Я бы начал с места, где вечером можно просто гулять у воды.",
+        project_id=PROJECT_ID,
+        conversation_id=conversation_id,
+    )
+    assert result.status is ConversationTurnStatus.COMPLETED
+
+    conversation_requests = [
+        request
+        for request in provider.requests
+        if request.private_context.get("active_continuity")
+    ]
+    assert conversation_requests
+    active = conversation_requests[-1].private_context["active_continuity"]
+    assert active["summary"] == "Обсудить нашу будущую поездку к морю"
+    assert active["reason_to_return"] == "Вернуться к выбору места и времени"
+
+    application.clear_continuity_thread(conversation_id=conversation_id)
+    assert application.active_continuity_thread(conversation_id=conversation_id) is None

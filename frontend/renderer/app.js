@@ -65,6 +65,9 @@ const historyInboxSummary = document.getElementById("history-inbox-summary");
 const historyInboxNote = document.getElementById("history-inbox-note");
 const historyInboxApprove = document.getElementById("history-inbox-approve");
 const historyInboxReject = document.getElementById("history-inbox-reject");
+const threadContext = document.getElementById("thread-context");
+const threadContextTitle = document.getElementById("thread-context-title");
+const threadContextClear = document.getElementById("thread-context-clear");
 const relationshipMoments = document.getElementById("relationship-moments");
 const continuityThreads = document.getElementById("continuity-threads");
 const closeContinuity = document.getElementById("close-continuity");
@@ -142,6 +145,7 @@ let activeSceneChangedAt = performance.now();
 let pendingConfirmation = null;
 let pendingMemoryCandidate = null;
 let continuityItemCount = 0;
+let activeContinuityThread = null;
 let historySearchScope = "all";
 let historySearchForgotten = false;
 let historySearchTimer = null;
@@ -692,6 +696,13 @@ function renderWorkbench(view) {
   if (!workbenchPermissions.children.length) workbenchPermissions.append(objectEmpty("Постоянных разрешений и ожидающих решений нет."));
 }
 
+function renderActiveContinuityThread(thread) {
+  activeContinuityThread = thread || null;
+  threadContext.hidden = !activeContinuityThread;
+  threadContextTitle.textContent = activeContinuityThread?.summary || "";
+  threadContextClear.disabled = inFlight || !activeContinuityThread;
+}
+
 function renderContinuity(view) {
   const moments = view?.moments || [];
   const threads = view?.open_threads || [];
@@ -721,11 +732,17 @@ function renderContinuity(view) {
 
     const action = document.createElement("button");
     action.type = "button";
-    action.textContent = "Вернуться к этой теме";
+    action.textContent = (
+      activeContinuityThread?.thread_id === thread.thread_id
+        ? "Эта нить уже рядом"
+        : "Взять эту нить с собой"
+    );
+    action.disabled =
+      inFlight
+      || activeContinuityThread?.thread_id === thread.thread_id;
     action.addEventListener("click", () => {
-      if (!ready || inFlight) return;
-      setComposerState({ enabled: true, waiting: true });
-      bridge.continueContinuityThread(thread.thread_id);
+      if (!ready || inFlight || action.disabled) return;
+      bridge.activateContinuityThread(thread.thread_id);
     });
 
     item.append(context, title, reason, action);
@@ -1730,6 +1747,7 @@ function handleBridgeEvent(encoded) {
     setComposerState({ enabled: true });
     renderPendingConfirmation(payload.pending_confirmation);
     renderMemoryCandidate(payload.memory_candidate);
+    renderActiveContinuityThread(payload.active_continuity_thread);
     return;
   }
   if (payload.kind === "workbench_loaded") {
@@ -1877,6 +1895,22 @@ function handleBridgeEvent(encoded) {
     continuityTrigger.setAttribute("aria-expanded", "true");
     return;
   }
+  if (payload.kind === "continuity_thread_activated") {
+    applySnapshot(payload.snapshot);
+    renderActiveContinuityThread(payload.thread);
+    returnToConversation();
+    surfaceStatus.textContent = "Нить рядом. Продолжай своими словами.";
+    input.focus();
+    return;
+  }
+
+  if (payload.kind === "continuity_thread_cleared") {
+    applySnapshot(payload.snapshot);
+    renderActiveContinuityThread(null);
+    surfaceStatus.textContent = "";
+    input.focus();
+    return;
+  }
   if (payload.kind === "human_search_loaded") {
     renderHumanSearch(payload.items || [], payload.query || "");
     return;
@@ -1937,7 +1971,7 @@ function handleBridgeEvent(encoded) {
     setComposerState({ enabled: ready });
     return;
   }
-  if (["activities_unavailable", "proactive_unavailable", "proactive_resolution_rejected", "continuity_unavailable", "reflections_unavailable", "reflection_resolution_rejected", "honest_help_rejected", "workbench_unavailable"].includes(payload.kind)) {
+  if (["activities_unavailable", "proactive_unavailable", "proactive_resolution_rejected", "continuity_unavailable", "continuity_context_unavailable", "reflections_unavailable", "reflection_resolution_rejected", "honest_help_rejected", "workbench_unavailable"].includes(payload.kind)) {
     showLocalFailure("Локальное состояние сейчас не удалось открыть.");
     return;
   }
@@ -1958,6 +1992,7 @@ function handleBridgeEvent(encoded) {
     renderConversation(null);
     clearLocalFailure();
     activeConversationId = null;
+    renderActiveContinuityThread(null);
     bridge.loadRecentConversations();
     setComposerState({ enabled: ready });
     input.focus();
@@ -2012,6 +2047,7 @@ function handleBridgeEvent(encoded) {
     clearLocalFailure();
     setComposerState({ enabled: ready });
     renderPendingConfirmation(payload.pending_confirmation);
+    renderActiveContinuityThread(payload.active_continuity_thread);
     return;
   }
   if (payload.kind === "turn_started") {
@@ -2085,6 +2121,7 @@ function handleBridgeEvent(encoded) {
     if (result?.assistant_message) renderMessage(result.assistant_message);
     renderConfirmationResult(result);
     commitmentsCount.textContent = String(payload.commitments_count || 0);
+    renderActiveContinuityThread(payload.active_continuity_thread);
     if (payload.continuity_count !== undefined) {
       continuityItemCount = Number(payload.continuity_count || 0);
       updateHistoryShelfState();
@@ -2397,6 +2434,12 @@ rejectMemoryCandidate.addEventListener("click", () => {
   approveMemoryCandidate.disabled = true;
   rejectMemoryCandidate.disabled = true;
   bridge.resolveMemoryCandidate(pendingMemoryCandidate.candidate_id, "reject");
+});
+
+threadContextClear.addEventListener("click", () => {
+  if (!ready || inFlight || !activeContinuityThread) return;
+  threadContextClear.disabled = true;
+  bridge.clearContinuityThread();
 });
 
 historyInboxApprove.addEventListener("click", () => {
