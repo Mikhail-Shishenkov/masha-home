@@ -168,3 +168,41 @@ def test_pypdf_decoded_stream_limit_is_scoped_restored_and_reader_is_closed(monk
 
     assert calls == {"strict": False, "root_object_recovery_limit": 1_000, "closed": True}
     assert pypdf_filters.ZLIB_MAX_OUTPUT_LENGTH == previous_limit
+
+
+def test_pypdf_limit_setup_failure_restores_globals_and_releases_lock(monkeypatch):
+    previous_limit = pypdf_filters.ZLIB_MAX_OUTPUT_LENGTH
+
+    class _TrackingLock:
+        def __init__(self):
+            self.acquires = 0
+            self.releases = 0
+            self.locked = False
+
+        def acquire(self):
+            assert not self.locked
+            self.locked = True
+            self.acquires += 1
+
+        def release(self):
+            assert self.locked
+            self.locked = False
+            self.releases += 1
+
+    lock = _TrackingLock()
+    with monkeypatch.context() as setup_failure:
+        setup_failure.setattr(reader_module, "_PYPDF_LIMIT_LOCK", lock)
+        setup_failure.setattr(
+            reader_module,
+            "_PYPDF_BYTE_LIMITS",
+            ("ZLIB_MAX_OUTPUT_LENGTH", "MISSING_PYPDF_LIMIT"),
+        )
+        with pytest.raises(DocumentReadError, match="pdf_unreadable"):
+            DocumentReader().read(_input(b"%PDF-fixture"))
+
+        assert pypdf_filters.ZLIB_MAX_OUTPUT_LENGTH == previous_limit
+        assert lock.locked is False
+        assert (lock.acquires, lock.releases) == (1, 1)
+
+    evidence = DocumentReader().read(_input(_pdf("The next reader invocation succeeds.")))
+    assert evidence.pages[0].text == "The next reader invocation succeeds."

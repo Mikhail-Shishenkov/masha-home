@@ -376,12 +376,13 @@ class ConversationService:
             user_message=user_message,
             context=temporal_context,
         )
-        completed_fetch = any(
+        completed_page_read = any(
             item.request.kind.value == "web_fetch"
             and item.status is ObservationStatus.COMPLETED
+            and item.fetched_page is not None
             for item in external_observations
         )
-        if not completed_fetch:
+        if not completed_page_read:
             grounded_response = remove_unsupported_fetch_claim(grounded_response)
         completed_document_read = any(
             item.status is ObservationStatus.COMPLETED

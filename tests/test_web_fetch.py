@@ -584,6 +584,40 @@ def test_completed_pdf_receipt_allows_document_claim(tmp_path):
     assert "прочитала pdf" in turn.assistant_message.content.casefold()
 
 
+def test_completed_pdf_receipt_does_not_support_webpage_or_site_claim(tmp_path):
+    root = _isolated_root(tmp_path)
+    application = _application(
+        root,
+        _service(root, fetcher=_FakeFetcher(SafeFetchResponse(
+            requested_url="https://public.example/document.pdf", final_url="https://public.example/document.pdf",
+            headers={"content-type": "application/pdf"}, body=_text_pdf(), redirects=0,
+        ))),
+        response_text="Я прочитала сайт и могу рассказать главное.",
+    )
+
+    turn = application.send_message("прочитай https://public.example/document.pdf", project_id=PROJECT_ID)
+
+    assert "прочитала сайт" not in turn.assistant_message.content.casefold()
+    assert "не читала страницу" in turn.assistant_message.content.casefold()
+
+
+def test_completed_pdf_receipt_keeps_truthful_document_page_reference(tmp_path):
+    root = _isolated_root(tmp_path)
+    response_text = "На второй странице документа есть важный вывод."
+    application = _application(
+        root,
+        _service(root, fetcher=_FakeFetcher(SafeFetchResponse(
+            requested_url="https://public.example/document.pdf", final_url="https://public.example/document.pdf",
+            headers={"content-type": "application/pdf"}, body=_text_pdf(), redirects=0,
+        ))),
+        response_text=response_text,
+    )
+
+    turn = application.send_message("прочитай https://public.example/document.pdf", project_id=PROJECT_ID)
+
+    assert turn.assistant_message.content == response_text
+
+
 def test_pdf_uses_final_redirect_domain_and_final_application_owned_source(tmp_path):
     root = _isolated_root(tmp_path)
     requested = "https://example.test/start"

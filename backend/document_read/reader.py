@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from hashlib import sha256
 from io import BytesIO
 from threading import RLock
@@ -116,26 +117,33 @@ class DocumentReader:
             stream.close()
 
     @staticmethod
+    @contextmanager
     def _bounded_pypdf_limits():
-        class _Limits:
-            def __enter__(self):
-                _PYPDF_LIMIT_LOCK.acquire()
-                self.previous = {name: getattr(pypdf_filters, name) for name in _PYPDF_BYTE_LIMITS}
-                self.previous.update({name: getattr(pypdf_filters, name) for name in _PYPDF_DISABLED_HELPERS})
-                for name, value in self.previous.items():
-                    if name in _PYPDF_BYTE_LIMITS:
-                        setattr(pypdf_filters, name, min(value, MAX_DECODED_CONTENT_STREAM_BYTES))
-                    else:
-                        setattr(pypdf_filters, name, None)
+        """Temporarily scope pypdf's process-global decoding limits.
 
-            def __exit__(self, exc_type, exc, traceback):
-                try:
-                    for name, value in self.previous.items():
-                        setattr(pypdf_filters, name, value)
-                finally:
-                    _PYPDF_LIMIT_LOCK.release()
-
-        return _Limits()
+        ``contextmanager`` keeps setup failures inside a try/finally boundary:
+        no successful lock acquisition can escape without restoration and release.
+        """
+        _PYPDF_LIMIT_LOCK.acquire()
+        previous: dict[str, object] = {}
+        try:
+            for name in _PYPDF_BYTE_LIMITS:
+                previous[name] = getattr(pypdf_filters, name)
+                setattr(
+                    pypdf_filters,
+                    name,
+                    min(previous[name], MAX_DECODED_CONTENT_STREAM_BYTES),
+                )
+            for name in _PYPDF_DISABLED_HELPERS:
+                previous[name] = getattr(pypdf_filters, name)
+                setattr(pypdf_filters, name, None)
+            yield
+        finally:
+            try:
+                for name, value in reversed(tuple(previous.items())):
+                    setattr(pypdf_filters, name, value)
+            finally:
+                _PYPDF_LIMIT_LOCK.release()
 
     @staticmethod
     def _normalize_text(value: str) -> str:
