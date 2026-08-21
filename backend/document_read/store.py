@@ -29,6 +29,11 @@ class DocumentReadStore:
             raise KeyError(receipt_id)
         return self.save(receipt.model_copy(update={"assistant_message_id": message_id}))
 
+    def for_assistant_message(self, message_id: str) -> tuple[DocumentReadReceipt, ...]:
+        return tuple(
+            item for item in self._load().receipts if item.assistant_message_id == message_id
+        )
+
     def _load(self) -> DocumentReadState:
         if not self.path.exists():
             return DocumentReadState()

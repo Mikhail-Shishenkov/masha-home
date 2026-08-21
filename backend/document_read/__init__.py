@@ -10,6 +10,7 @@ from .models import (
     DocumentReadSourceKind,
 )
 from .reader import DocumentReader
+from .local_input import LocalDocumentInputError, LocalDocumentInputService, LocalDocumentSelection
 from .store import DocumentReadStore
 
 __all__ = [
@@ -22,4 +23,7 @@ __all__ = [
     "DocumentReadSourceKind",
     "DocumentReader",
     "DocumentReadStore",
+    "LocalDocumentInputError",
+    "LocalDocumentInputService",
+    "LocalDocumentSelection",
 ]

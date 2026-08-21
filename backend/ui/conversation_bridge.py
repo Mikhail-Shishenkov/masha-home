@@ -10,6 +10,7 @@ from PySide6.QtCore import QObject, Signal, Slot
 from PySide6.QtWidgets import QFileDialog
 
 from backend.application import ConversationTurnStatus, MashaApplication
+from backend.document_read import DocumentReadError, LocalDocumentInputError
 from backend.application.human_information import (
     HumanSearchRequest,
     HumanSearchScope,
@@ -878,6 +879,7 @@ class LocalConversationBridge(QObject):
             self._emit({"kind": "conversation_unavailable"})
             return
         self._clear_human_search_context()
+        self._application.clear_local_document()
         self._conversation_id = conversation.conversation_id
         self._application.discard_presented_information(self._conversation_id)
         self._session = self._application.open_home_session()
@@ -910,6 +912,7 @@ class LocalConversationBridge(QObject):
             self._emit({"kind": "turn_rejected", "reason": "turn_in_flight"})
             return
         self._clear_human_search_context()
+        self._application.clear_local_document()
         self._conversation_id = None
         self._session = self._application.open_home_session()
         self._emit(
@@ -952,6 +955,68 @@ class LocalConversationBridge(QObject):
             self._send_turn,
             normalized,
         )
+        future.add_done_callback(self._finish_turn)
+
+    @Slot()
+    def chooseLocalDocument(self):  # noqa: N802 - trusted native picker only
+        if self._application is None or self._session is None:
+            self._emit({"kind": "local_document_rejected", "reason": "local_document_unavailable"})
+            return
+        if self._turn_in_flight:
+            self._emit({"kind": "local_document_rejected", "reason": "turn_in_flight"})
+            return
+        source, _ = QFileDialog.getOpenFileName(
+            None,
+            "Выбрать PDF",
+            "",
+            "PDF (*.pdf)",
+        )
+        if not source:
+            self._emit({"kind": "local_document_cancelled"})
+            return
+        try:
+            selection = self._application.stage_local_document(source)
+        except LocalDocumentInputError as error:
+            self._emit({"kind": "local_document_rejected", "reason": error.code})
+            return
+        except Exception:
+            self._emit({"kind": "local_document_rejected", "reason": "local_document_unavailable"})
+            return
+        self._emit({"kind": "local_document_selected", "document": selection.model_dump(mode="json")})
+
+    @Slot(str)
+    def clearLocalDocument(self, token: str):  # noqa: N802 - opaque composer token only
+        if self._application is None or self._turn_in_flight:
+            self._emit({"kind": "local_document_rejected", "reason": "turn_in_flight"})
+            return
+        if self._application.clear_local_document(token):
+            self._emit({"kind": "local_document_cleared"})
+        else:
+            self._emit({"kind": "local_document_rejected", "reason": "local_document_token_invalid"})
+
+    @Slot(str, str)
+    def submitMessageWithDocument(self, content: str, token: str):  # noqa: N802
+        normalized = content.strip()
+        if not normalized:
+            self._emit({"kind": "input_rejected", "reason": "empty"})
+            return
+        if len(normalized) > MAX_MESSAGE_CHARACTERS:
+            self._emit({"kind": "input_rejected", "reason": "too_long"})
+            return
+        if self._application is None or self._session is None:
+            self._emit({"kind": "home_unavailable"})
+            return
+        if self._turn_in_flight:
+            self._emit({"kind": "turn_rejected", "reason": "turn_in_flight"})
+            return
+        self._invalidate_human_search_tokens()
+        self._turn_in_flight = True
+        self._emit({
+            "kind": "turn_started",
+            "content": normalized,
+            "snapshot": self._session_snapshot("user_sent").model_dump(mode="json"),
+        })
+        future = self._executor.submit(self._send_turn_with_document, normalized, token)
         future.add_done_callback(self._finish_turn)
 
     @Slot(str)
@@ -1249,9 +1314,33 @@ class LocalConversationBridge(QObject):
             home_moment=self._current_home_moment(),
         )
 
+    def _send_turn_with_document(self, content: str, token: str):
+        if self._application.status().model_available:
+            self._emit(
+                {
+                    "kind": "turn_thinking",
+                    "snapshot": self._session_snapshot("assistant_thinking").model_dump(mode="json"),
+                }
+            )
+        return self._application.send_message_with_document(
+            content,
+            token=token,
+            project_id=HOME_PROJECT_ID,
+            conversation_id=self._conversation_id,
+            home_moment=self._current_home_moment(),
+        )
+
     def _finish_turn(self, future) -> None:
         try:
             result = future.result()
+        except (LocalDocumentInputError, DocumentReadError) as error:
+            self._turn_in_flight = False
+            self._emit({
+                "kind": "local_document_failed",
+                "reason": error.code,
+                "snapshot": self._session_snapshot("assistant_responded").model_dump(mode="json"),
+            })
+            return
         except Exception:
             # Application code normally returns a controlled result.  The bridge
             # still must not leak an exception into the renderer if that invariant
@@ -1415,6 +1504,8 @@ class LocalConversationBridge(QObject):
 
     def close(self) -> None:
         self._clear_human_search_context()
+        if self._application is not None:
+            self._application.clear_local_document()
         self._executor.shutdown(wait=False, cancel_futures=True)
 
     def _invalidate_human_search_tokens(self) -> None:

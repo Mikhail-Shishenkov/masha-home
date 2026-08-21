@@ -80,7 +80,9 @@ class FetchedPageView(UiContract):
 class DocumentReadView(UiContract):
     format: Literal["pdf"] = "pdf"
     title: str | None = Field(default=None, max_length=300)
-    domain: str = Field(min_length=1, max_length=253)
+    source_kind: Literal["web", "local", "connector"] = "web"
+    display_name: str | None = Field(default=None, max_length=300)
+    domain: str | None = Field(default=None, min_length=1, max_length=253)
     page_count: int = Field(ge=1, le=100)
     pages_read: int = Field(ge=1, le=100)
     extracted_chars: int = Field(ge=1, le=16_000)
@@ -97,6 +99,7 @@ class MessageView(UiContract):
     persisted: bool
     external_observation: ExternalObservationView | None = None
     external_observations: tuple[ExternalObservationView, ...] = Field(default=(), max_length=2)
+    local_documents: tuple[DocumentReadView, ...] = Field(default=(), max_length=1)
 
 
 class ConversationView(UiContract):

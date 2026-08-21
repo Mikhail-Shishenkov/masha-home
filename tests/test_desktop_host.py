@@ -2,6 +2,7 @@ import json
 import time
 from pathlib import Path
 
+import pytest
 from PySide6.QtCore import QCoreApplication, QMetaMethod, QUrl
 from PySide6.QtWebEngineCore import QWebEngineUrlScheme
 
@@ -198,6 +199,9 @@ def test_webchannel_bridge_exposes_only_typed_allowlisted_slots():
         "openObservationSource",
         "startNewConversation",
         "submitMessage",
+        "chooseLocalDocument",
+        "clearLocalDocument",
+        "submitMessageWithDocument",
         "proposeCommitmentCancellation",
         "proposeCommitmentClearDue",
         "proposeCommitmentCompletion",
@@ -1389,6 +1393,54 @@ def test_desktop_bridge_installs_a_valid_local_skill_and_restart_sees_it(tmp_pat
         router=ModelRouter([LocalProfileProvider()]),
     )
     assert any(item.skill_id == "project_observer" for item in restarted.workbench().skills)
+
+
+def test_desktop_bridge_local_pdf_picker_projects_no_path_and_can_clear(tmp_path, monkeypatch):
+    from backend.application import build_masha_application
+    from backend.document_read import LocalDocumentInputError
+    from backend.llm.model_router import ModelRouter
+    from backend.ui.conversation_bridge import LocalConversationBridge, QFileDialog
+    from tests.test_application_boundary import LocalProfileProvider, _isolated_root
+    from tests.test_local_document_input import _write_pdf
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    root = _isolated_root(tmp_path)
+    selected = _write_pdf(tmp_path, "bridge-report.pdf")
+    application = build_masha_application(
+        project_root=root,
+        router=ModelRouter([LocalProfileProvider(response_text="Я рядом.")]),
+    )
+    bridge = LocalConversationBridge(application)
+    emitted: list[dict] = []
+    bridge.event.connect(lambda encoded: emitted.append(json.loads(encoded)))
+    bridge.loadInitialState()
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *args, **kwargs: (str(selected), ""))
+
+    bridge.chooseLocalDocument()
+
+    selected_event = next(item for item in emitted if item["kind"] == "local_document_selected")
+    document = selected_event["document"]
+    assert set(document) == {"token", "display_name", "byte_size"}
+    assert document["display_name"] == "bridge-report.pdf"
+    assert str(selected) not in json.dumps(selected_event)
+    assert str(selected.parent) not in json.dumps(selected_event)
+
+    bridge.clearLocalDocument(document["token"])
+    assert emitted[-1]["kind"] == "local_document_cleared"
+    bridge._turn_in_flight = True
+    bridge.chooseLocalDocument()
+    assert emitted[-1] == {"kind": "local_document_rejected", "reason": "turn_in_flight"}
+    bridge._turn_in_flight = False
+    bridge.chooseLocalDocument()
+    replacement = [item for item in emitted if item["kind"] == "local_document_selected"][-1]["document"]
+    bridge.startNewConversation()
+    with pytest.raises(LocalDocumentInputError, match="local_document_token_invalid"):
+        application.send_message_with_document(
+            "Прочитай PDF",
+            token=replacement["token"],
+            project_id="project_masha_home",
+        )
+    bridge.close()
 
 
 def test_production_bridge_natural_commitment_flow_persists_and_reloads(tmp_path):

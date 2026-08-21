@@ -10,6 +10,10 @@ const transcript = document.getElementById("transcript");
 const composer = document.getElementById("composer");
 const input = document.getElementById("message-input");
 const sendButton = document.getElementById("send-button");
+const addLocalDocument = document.getElementById("add-local-document");
+const localDocumentChip = document.getElementById("local-document-chip");
+const localDocumentLabel = document.getElementById("local-document-label");
+const clearLocalDocument = document.getElementById("clear-local-document");
 const newConversationButton = document.getElementById("new-conversation");
 const specialEveningToggle = document.getElementById("special-evening-toggle");
 const specialProximityToggle =
@@ -154,6 +158,7 @@ let historySearchTimer = null;
 let pendingSkillInstall = null;
 let continuityCreateKind = null;
 let pendingCommitmentReschedule = null;
+let stagedLocalDocument = null;
 const attentionMagicState = {
   commitments: 0,
   freshOverdueCommitments: 0,
@@ -511,6 +516,8 @@ function setComposerState({ enabled, waiting = false }) {
   inFlight = waiting;
   input.disabled = !enabled || waiting;
   sendButton.disabled = !enabled || waiting || !input.value.trim();
+  addLocalDocument.disabled = !enabled || waiting;
+  clearLocalDocument.disabled = !enabled || waiting;
   newConversationButton.disabled = !enabled || waiting;
   recentToggle.disabled = !enabled || waiting;
   specialEveningToggle.disabled = !enabled || waiting;
@@ -524,6 +531,19 @@ function setComposerState({ enabled, waiting = false }) {
   reflectionsTrigger.disabled = !enabled || waiting || Boolean(pendingConfirmation);
   workbenchTrigger.disabled = !enabled || waiting || Boolean(pendingConfirmation);
   safetyTrigger.disabled = !enabled;
+}
+
+function formatLocalByteSize(value) {
+  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} МБ`;
+  return `${Math.max(1, Math.ceil(value / 1024))} КБ`;
+}
+
+function renderLocalDocumentChip(document) {
+  stagedLocalDocument = document || null;
+  localDocumentChip.hidden = !stagedLocalDocument;
+  localDocumentLabel.textContent = stagedLocalDocument
+    ? `${stagedLocalDocument.display_name} · ${formatLocalByteSize(stagedLocalDocument.byte_size)}`
+    : "";
 }
 
 function closeTemporarySurfaces() {
@@ -1588,21 +1608,23 @@ function renderMessage(message, { provisional = false } = {}) {
       details.className = "message-page";
       const summary = document.createElement("summary");
       const scope = pdf.truncated ? "Прочитала часть PDF" : "Прочитала PDF";
-      summary.textContent = `${scope} · ${pdf.page_count} стр. · ${pdf.domain}`;
+      summary.textContent = `${scope} · ${pdf.page_count} стр. · ${pdf.display_name || pdf.domain}`;
       const body = document.createElement("div");
       body.className = "message-page-body";
       if (pdf.title) body.append(Object.assign(document.createElement("span"), { textContent: pdf.title }));
       body.append(Object.assign(document.createElement("span"), {
         textContent: `Прочитано страниц: ${pdf.pages_read}`,
       }));
-      const open = document.createElement("button");
-      open.type = "button";
-      open.className = "message-source";
-      open.textContent = "Открыть источник";
-      open.addEventListener("click", () => {
-        if (ready) bridge.openObservationSource(documentRead.observation_id, "page");
-      });
-      body.append(open);
+      if (pdf.source_kind === "web") {
+        const open = document.createElement("button");
+        open.type = "button";
+        open.className = "message-source";
+        open.textContent = "Открыть источник";
+        open.addEventListener("click", () => {
+          if (ready) bridge.openObservationSource(documentRead.observation_id, "page");
+        });
+        body.append(open);
+      }
       const technical = document.createElement("details");
       technical.className = "message-page-technical";
       technical.append(
@@ -1610,6 +1632,26 @@ function renderMessage(message, { provisional = false } = {}) {
         Object.assign(document.createElement("span"), {
           textContent: `PDF · ${pdf.truncated ? "частично" : "полностью"} · ${pdf.extractor}`,
         }),
+      );
+      body.append(technical);
+      details.append(summary, body);
+      item.append(details);
+    }
+    for (const pdf of message.local_documents || []) {
+      const details = document.createElement("details");
+      details.className = "message-page";
+      const summary = document.createElement("summary");
+      const scope = pdf.truncated ? "Прочитала часть PDF" : "Прочитала PDF";
+      summary.textContent = `${scope} · ${pdf.page_count} стр. · ${pdf.display_name || "локальный файл"}`;
+      const body = document.createElement("div");
+      body.className = "message-page-body";
+      if (pdf.title) body.append(Object.assign(document.createElement("span"), { textContent: pdf.title }));
+      body.append(Object.assign(document.createElement("span"), { textContent: `Прочитано страниц: ${pdf.pages_read}` }));
+      const technical = document.createElement("details");
+      technical.className = "message-page-technical";
+      technical.append(
+        Object.assign(document.createElement("summary"), { textContent: "Технически" }),
+        Object.assign(document.createElement("span"), { textContent: `PDF · локальный файл · ${pdf.truncated ? "частично" : "полностью"} · ${pdf.extractor}` }),
       );
       body.append(technical);
       details.append(summary, body);
@@ -2107,6 +2149,28 @@ function handleBridgeEvent(encoded) {
     showLocalFailure("Этот источник сейчас не удалось открыть.");
     return;
   }
+  if (payload.kind === "local_document_selected") {
+    renderLocalDocumentChip(payload.document);
+    if (!input.value.trim()) {
+      input.value = "Прочитай этот PDF и расскажи, о чём он.";
+      fitComposer();
+    }
+    setComposerState({ enabled: ready });
+    return;
+  }
+  if (payload.kind === "local_document_cleared" || payload.kind === "local_document_cancelled") {
+    renderLocalDocumentChip(null);
+    setComposerState({ enabled: ready });
+    return;
+  }
+  if (payload.kind === "local_document_failed" || payload.kind === "local_document_rejected") {
+    if (provisionalUser) provisionalUser.remove();
+    provisionalUser = null;
+    renderLocalDocumentChip(null);
+    setComposerState({ enabled: ready });
+    showLocalFailure("Этот PDF сейчас не получилось безопасно прочитать.");
+    return;
+  }
   if (payload.kind === "commitment_operation_rejected" || payload.kind === "commitments_unavailable") {
     showLocalFailure("Не получилось открыть это действие. Обнови список дел и попробуй ещё раз.");
     commitmentsSurface.hidden = true;
@@ -2309,7 +2373,23 @@ composer.addEventListener("submit", (event) => {
   input.value = "";
   fitComposer();
   setComposerState({ enabled: true, waiting: true });
-  bridge.submitMessage(content);
+  if (stagedLocalDocument) {
+    const token = stagedLocalDocument.token;
+    renderLocalDocumentChip(null);
+    bridge.submitMessageWithDocument(content, token);
+  } else {
+    bridge.submitMessage(content);
+  }
+});
+
+addLocalDocument.addEventListener("click", () => {
+  if (ready && !inFlight) bridge.chooseLocalDocument();
+});
+
+clearLocalDocument.addEventListener("click", () => {
+  if (ready && !inFlight && stagedLocalDocument) {
+    bridge.clearLocalDocument(stagedLocalDocument.token);
+  }
 });
 
 newConversationButton.addEventListener("click", () => {

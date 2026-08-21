@@ -114,3 +114,5 @@ The optional live smoke is:
 
 It uses W3C's small public `dummy.pdf`, asserts actual successful text read and
 checks that the receipt journal contains no raw PDF marker.
+W4's source-neutral `DocumentReader` is also reused by the W4.1 local
+user-selected PDF adapter; see [W4.1 Local Document Input](W4_1_LOCAL_DOCUMENT_INPUT.md).

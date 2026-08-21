@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "skill_id": "local_document_read",
+  "name": "Local Document Read",
+  "version": "1.0.0",
+  "description": "Читает один PDF, который Миша сам выбрал в нативном диалоге, без доступа к папкам или сети.",
+  "entrypoint": null,
+  "instructions_file": "SKILL.md",
+  "capabilities": ["local_read"],
+  "requested_scopes": ["user-selected single PDF only"],
+  "risk_level": "observe",
+  "maximum_autonomy_level": 0,
+  "supports_dry_run": false,
+  "supports_rollback": false,
+  "verification": "Показывает только ограниченное evidence выбранного PDF без пути, других файлов, сети или изменений."
+}

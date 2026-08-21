@@ -101,7 +101,14 @@ html[data-home-attention="active"] .conversation-surface.is-surface-concealed { 
 .message-page-body { display: grid; gap: 7px; margin-top: 9px; }
 .message-page-technical { color: rgba(236,223,207,.45); font-size: 11px; }
 .message-page-technical span { display: block; margin-top: 5px; }
-.composer { display: grid; flex: 0 0 auto; grid-template-columns: minmax(0, 1fr) auto; align-items: end; min-width: 0; gap: 14px; padding-top: 15px; border-top: 1px solid rgba(248,237,224,.14); }
+.composer { display: grid; flex: 0 0 auto; grid-template-columns: minmax(0, 1fr) auto auto; align-items: end; min-width: 0; gap: 10px; padding-top: 15px; border-top: 1px solid rgba(248,237,224,.14); }
+.composer-input { min-width: 0; }
+.local-document-add { min-height: 34px; padding: 7px 9px; color: rgba(233,197,142,.76); border: 1px solid rgba(226,188,126,.24); background: rgba(54,36,18,.25); font: 600 10px/1 system-ui, sans-serif; letter-spacing: .05em; cursor: pointer; }
+.local-document-add:hover:not(:disabled), .local-document-add:focus-visible { color: #fff0d3; border-color: rgba(248,205,143,.62); }
+.local-document-add:disabled { opacity: .45; cursor: not-allowed; }
+.local-document-chip { display: flex; align-items: center; min-width: 0; gap: 7px; margin: 0 0 3px; color: rgba(236,223,207,.7); font: 500 11px/1.3 system-ui, sans-serif; }
+.local-document-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.local-document-chip button { width: 18px; height: 18px; padding: 0; color: rgba(236,223,207,.72); border: 0; background: transparent; font-size: 18px; line-height: 1; cursor: pointer; }
 .recent-conversations { position: absolute; top: 52px; right: 0; bottom: 0; left: 0; z-index: 6; min-height: 0; padding: 23px 26px 28px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgba(222,181,116,.38) transparent; border: 0; border-top: 1px solid rgba(226,188,126,.25); border-bottom: 1px solid rgba(226,188,126,.2); background: linear-gradient(155deg, rgba(27,20,14,.99), rgba(14,13,12,.98)); box-shadow: 0 34px 76px rgba(0,0,0,.42); }
 .shelf-line { position: absolute; left: 22px; right: 22px; bottom: 18px; height: 1px; background: linear-gradient(90deg, transparent, rgba(216,170,105,.35) 14%, rgba(216,170,105,.16) 84%, transparent); box-shadow: 0 8px 18px rgba(0,0,0,.5); }
 .recent-heading { margin: 0 0 12px; color: #d6ad70; text-transform: uppercase; letter-spacing: .14em; font: 600 10px/1.2 system-ui, sans-serif; }

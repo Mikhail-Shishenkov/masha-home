@@ -35,7 +35,7 @@ from backend.external_observation import (
     LocalExternalQueryPlanner,
     LocalSourceSelector,
 )
-from backend.document_read import DocumentReadStore
+from backend.document_read import DocumentReadStore, DocumentReader, LocalDocumentInputService
 from backend.skills.agent_loop import AgentRunStore
 from backend.skills.autonomy import ActionAutonomyPolicyStore, ActionAutonomyService
 from backend.skills.installer import SkillInstallProposalStore, SkillInstallerService
@@ -59,6 +59,7 @@ from .home_snapshot import HomeSnapshotService
 from .human_information import HumanInformationService
 from .external_context import LocalExternalContextHintProvider
 from .model_settings import ModelSettingsService
+from .local_documents import LocalDocumentTurnService
 from .memory_candidates import MemoryCandidateApplicationService
 from .proactive import ProactiveApplicationService
 from .reflections import ReflectionApplicationService
@@ -88,15 +89,6 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
     """Build the public local facade without importing or invoking CLI code."""
     core = _build_core(Path(project_root), router=router)
     models = ModelSettingsService(profiles=core.profiles, router=core.router)
-    application_conversation = ConversationApplicationService(
-        conversation=core.conversation,
-        models=models,
-        expression_classifier=ResponseExpressionClassifier(
-            router=core.router,
-            identity_kernel=core.identity,
-            model_profiles=core.profiles,
-        ),
-    )
     config = core.project_root / "local-data" / "config"
     runtime = core.project_root / "local-data" / "runtime"
     proactive_policy = ProactivePolicyStore(config / "proactive-policy.json")
@@ -123,6 +115,7 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
         runtime_root=runtime / "skill-installs",
     )
     internet_policy = InternetAccessPolicyStore(config / "internet-access.json")
+    document_store = DocumentReadStore(runtime / "document-read-receipts.json")
     core.conversation.external_observation_service = ExternalObservationService(
         provider=DDGSWebSearchProvider(
             timeout_seconds=internet_policy.load().provider_timeout_seconds,
@@ -146,8 +139,24 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
             reflections=core.reflection,
         ),
         store=ExternalObservationStore(runtime / "external-observations.json"),
-        document_store=DocumentReadStore(runtime / "document-read-receipts.json"),
+        document_store=document_store,
         clock=core.conversation.temporal_engine.clock.now_utc,
+    )
+    application_conversation = ConversationApplicationService(
+        conversation=core.conversation,
+        models=models,
+        expression_classifier=ResponseExpressionClassifier(
+            router=core.router,
+            identity_kernel=core.identity,
+            model_profiles=core.profiles,
+        ),
+        local_documents=LocalDocumentTurnService(
+            inputs=LocalDocumentInputService(),
+            reader=DocumentReader(),
+            store=document_store,
+            registry=registry,
+            clock=core.conversation.temporal_engine.clock.now_utc,
+        ),
     )
 
     def permissions_snapshot() -> PermissionsSnapshot:

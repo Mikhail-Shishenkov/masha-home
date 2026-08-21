@@ -53,15 +53,18 @@ class WorkbenchApplicationService:
                             mode="self" if item.effective else "forbidden",
                         ))
                 else:
-                    explicit_web = (
+                    explicit_user_selected = (
                         skill.skill_id in {"web_search", "web_fetch"}
                         and capability.value == "network_access"
+                    ) or (
+                        skill.skill_id == "local_document_read"
+                        and capability.value == "local_read"
                     )
                     grant_rows.append(PermissionGrantView(
                         skill_id=skill.skill_id, capability=capability.value,
                         scope=skill.scopes[0] if skill.scopes else "без разрешённой области",
                         effective=False,
-                        label="Только по твоей просьбе" if explicit_web else "Сначала спрошу",
+                        label="Только по твоей просьбе" if explicit_user_selected else "Сначала спрошу",
                         mode="ask",
                     ))
         grants = tuple(grant_rows[:grant_limit])
@@ -104,6 +107,12 @@ class WorkbenchApplicationService:
                 "usage": "Только по твоей просьбе",
                 "can": ("читать HTML", "читать обычный текст", "читать JSON"),
                 "cannot": ("входить на сайты", "запускать JavaScript", "скачивать файлы", "читать PDF", "отправлять формы"),
+            },
+            "local_document_read": {
+                "summary": "Читает один PDF, который ты сам выбрал.",
+                "usage": "Только по твоей просьбе",
+                "can": ("читать выбранный PDF",),
+                "cannot": ("просматривать папки", "читать другие файлы", "изменять файлы", "следить за файлами", "выходить в интернет", "делать OCR"),
             },
         }
         return cards.get(skill_id, {})

@@ -19,6 +19,7 @@ from backend.conversation.response_expression import (
 )
 from backend.conversation.conversation_service import ConversationService, ConversationUnavailableError
 from backend.llm.model_provider import ModelProviderUnavailableError, ModelTimeoutError
+from backend.document_read import DocumentReadReceipt
 
 from .catalogs import error_label
 from .contracts import (
@@ -40,6 +41,7 @@ from .contracts import (
     PendingConfirmationView,
 )
 from .model_settings import ModelSettingsService
+from .local_documents import LocalDocumentTurnService
 
 
 class LastApplicationAction(BaseModel):
@@ -70,13 +72,15 @@ class ConversationApplicationService:
     )
 
     def __init__(self,*,
-    conversation: ConversationService,
-    models: ModelSettingsService,
-    expression_classifier: ResponseExpressionClassifier | None = None,
+        conversation: ConversationService,
+        models: ModelSettingsService,
+        expression_classifier: ResponseExpressionClassifier | None = None,
+        local_documents: LocalDocumentTurnService | None = None,
     ):
         self._conversation = conversation
         self._models = models
         self._expression_classifier = expression_classifier
+        self._local_documents = local_documents
         # Session-scoped typed context; SharedContinuityService remains the
         # owner of the actual thread and its lifecycle.
         self._active_continuity_by_conversation: dict[str, str] = {}
@@ -325,10 +329,11 @@ class ConversationApplicationService:
         allow_capability_routing: bool = True,
         active_continuity_thread_id: str | None = None,
         home_moment: str = "ordinary",
+        document_receipt: DocumentReadReceipt | None = None,
     ) -> ConversationTurnResult:
         active_profile_id = self._models.current().profile_id
         resolved_id = conversation_id
-        action_follow_up = self._action_follow_up(
+        action_follow_up = None if document_receipt is not None else self._action_follow_up(
             content,
             conversation_id=conversation_id,
             profile_id=active_profile_id,
@@ -348,6 +353,7 @@ class ConversationApplicationService:
                 allow_capability_routing=allow_capability_routing,
                 active_continuity_thread_id=active_thread_id,
                 home_moment=home_moment,
+                document_receipt=document_receipt,
             )
         except ConversationUnavailableError as error:
             resolved_id = self._resolved_conversation_id(resolved_id)
@@ -400,6 +406,13 @@ class ConversationApplicationService:
             self._active_continuity_by_conversation[resolved_id] = (
                 active_continuity_thread_id
             )
+        if document_receipt is not None and resolved_id is not None and self._local_documents is not None:
+            messages = self._conversation.history.messages(resolved_id, limit=1)
+            if messages and messages[-1].role is ConversationRole.ASSISTANT:
+                self._local_documents.store.attach_assistant_message(
+                    document_receipt.receipt_id,
+                    messages[-1].id,
+                )
 
         expression_cue: ResponseExpressionCue = "warm"
 
@@ -441,6 +454,26 @@ class ConversationApplicationService:
             status=ConversationTurnStatus.COMPLETED,
             profile_id=active_profile_id,
             expression_cue=expression_cue,
+        )
+
+    def send_message_with_document(
+        self,
+        content: str,
+        *,
+        token: str,
+        project_id: str,
+        conversation_id: str | None = None,
+        home_moment: str = "ordinary",
+    ) -> ConversationTurnResult:
+        if self._local_documents is None:
+            raise RuntimeError("local_document_unavailable")
+        receipt = self._local_documents.consume_for_turn(token)
+        return self.send_message(
+            content,
+            project_id=project_id,
+            conversation_id=conversation_id,
+            home_moment=home_moment,
+            document_receipt=receipt,
         )
 
     def _action_follow_up(
@@ -599,6 +632,13 @@ class ConversationApplicationService:
             if item.status.value == "completed"
         )
         views = tuple(self._external_observation(observation) for observation in observations)
+        local_documents = ()
+        if self._local_documents is not None:
+            local_documents = tuple(
+                self._document_view(receipt)
+                for receipt in self._local_documents.store.for_assistant_message(message.id)
+                if receipt.source_kind.value == "local"
+            )
         return MessageView(
             message_id=message.id,
             conversation_id=message.conversation_id,
@@ -608,6 +648,22 @@ class ConversationApplicationService:
             persisted=True,
             external_observation=(None if not views else views[-1]),
             external_observations=views,
+            local_documents=local_documents,
+        )
+
+    @staticmethod
+    def _document_view(receipt: DocumentReadReceipt) -> DocumentReadView:
+        document = receipt.evidence
+        return DocumentReadView(
+            title=document.title,
+            source_kind=receipt.source_kind.value,
+            display_name=receipt.display_name,
+            domain=receipt.source_domain,
+            page_count=document.page_count,
+            pages_read=document.pages_read,
+            extracted_chars=document.extracted_chars,
+            truncated=document.truncated,
+            extractor=document.extractor_id,
         )
 
     def _external_observation(self, observation) -> ExternalObservationView:
@@ -635,6 +691,8 @@ class ConversationApplicationService:
             ),
             document=None if document is None else DocumentReadView(
                 title=document.title,
+                source_kind=receipt.source_kind.value,
+                display_name=receipt.display_name,
                 domain=receipt.source_domain or "unknown",
                 page_count=document.page_count,
                 pages_read=document.pages_read,

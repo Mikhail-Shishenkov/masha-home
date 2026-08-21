@@ -99,6 +99,33 @@ class MashaApplication:
             home_moment=home_moment,
         )
 
+    def send_message_with_document(
+        self,
+        content: str,
+        *,
+        token: str,
+        project_id: str,
+        conversation_id: str | None = None,
+        home_moment: str = "ordinary",
+    ) -> ConversationTurnResult:
+        return self._conversation.send_message_with_document(
+            content,
+            token=token,
+            project_id=project_id,
+            conversation_id=conversation_id,
+            home_moment=home_moment,
+        )
+
+    def stage_local_document(self, selected_path: str):
+        service = self._conversation._local_documents
+        if service is None:
+            raise RuntimeError("local_document_unavailable")
+        return service.stage_selected_path(selected_path)
+
+    def clear_local_document(self, token: str | None = None) -> bool:
+        service = self._conversation._local_documents
+        return False if service is None else service.clear(token)
+
     def conversation(self, conversation_id: str, *, limit: int | None = None) -> ConversationView:
         return self._conversation.conversation(conversation_id, limit=limit)
 

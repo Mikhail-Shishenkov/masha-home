@@ -168,7 +168,7 @@ class SkillInstallerService:
         autonomy: ActionAutonomyService,
         proposal_store: SkillInstallProposalStore,
         runtime_root: Path,
-        supported_skill_ids: frozenset[str] = frozenset({"project_observer", "web_search", "web_fetch"}),
+        supported_skill_ids: frozenset[str] = frozenset({"project_observer", "web_search", "web_fetch", "local_document_read"}),
         clock: Callable[[], datetime] = utc_now,
     ):
         self.registry = registry

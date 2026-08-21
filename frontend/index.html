@@ -174,8 +174,15 @@
       </div>
       <ol class="transcript" id="transcript" aria-live="polite"></ol>
       <form class="composer" id="composer">
-        <label class="sr-only" for="message-input">Сообщение Маше</label>
-        <textarea id="message-input" rows="2" maxlength="4000" placeholder="Напиши Маше…" aria-describedby="composer-hint" disabled></textarea>
+        <div class="composer-input">
+          <div class="local-document-chip" id="local-document-chip" hidden>
+            <span id="local-document-label"></span>
+            <button id="clear-local-document" type="button" aria-label="Убрать выбранный PDF">×</button>
+          </div>
+          <label class="sr-only" for="message-input">Сообщение Маше</label>
+          <textarea id="message-input" rows="2" maxlength="4000" placeholder="Напиши Маше…" aria-describedby="composer-hint" disabled></textarea>
+        </div>
+        <button class="local-document-add" id="add-local-document" type="button" aria-label="Добавить PDF" title="Добавить PDF" disabled>PDF</button>
         <button class="send" id="send-button" type="submit" disabled>Отправить</button>
         <span class="sr-only" id="composer-hint">Enter — отправить, Shift+Enter — новая строка</span>
       </form>
