@@ -16,6 +16,7 @@ from backend.backup.service import _MAX_ARCHIVE_MEMBERS
 from backend.memory.memory_models import MemoryDocument
 from backend.memory.sqlite_repository import MemorySqliteRepository
 from backend.skills.registry import SkillRegistry
+from backend.secrets import InMemorySecretStore, SecretRef
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -162,6 +163,9 @@ def _component(manifest: dict, component_id: str) -> dict:
 
 
 def test_create_verify_inventory_and_explicit_exclusions(home: Path, tmp_path: Path):
+    secret_value = "credential-value-never-in-backup"
+    secret_store = InMemorySecretStore()
+    secret_store.put(SecretRef(value="google-calendar-primary"), secret_value)
     bundle = _backup(home, tmp_path)
     manifest, paths = _archive_paths(bundle, tmp_path)
 
@@ -175,6 +179,11 @@ def test_create_verify_inventory_and_explicit_exclusions(home: Path, tmp_path: P
     assert manifest["recovery_hold_required"] is True
     assert manifest["snapshot_requires_quiescence"] is True
     assert manifest["secrets_included"] is False
+    assert secret_value.encode("utf-8") not in bundle.read_bytes()
+    inspected_tar = tmp_path / "secret-inspection.tar"
+    decrypt_file(bundle, inspected_tar, PASSPHRASE)
+    assert secret_value.encode("utf-8") not in inspected_tar.read_bytes()
+    assert secret_value not in json.dumps(manifest)
     assert all(item["format_version"] is None for item in manifest["components"])
     checked = verify_backup(bundle, PASSPHRASE)
     assert checked.components_verified == len(manifest["components"])

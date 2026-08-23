@@ -46,3 +46,6 @@ local-data/config/
 local-data/runtime/
 local-data/skills/
 local-data/skill-install/
+
+*.sqlite3-wal
+*.sqlite3-shm
