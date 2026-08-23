@@ -18,30 +18,50 @@ from .errors import BackupError
 from .models import BackupComponent
 
 
-_REQUIRED = (
-    ("identity", "identity/masha.identity.json", "payload/identity/masha.identity.json"),
-    ("memory_database", "local-data/memory/masha.sqlite3", "payload/memory/masha.sqlite3"),
-    ("conversation_history", "local-data/conversations/history.json", "payload/conversations/history.json"),
-)
-_OPTIONAL = (
-    ("config_home_timezone", "local-data/config/home-timezone.json", "payload/config/home-timezone.json"),
-    ("config_models", "local-data/config/models.json", "payload/config/models.json"),
-    ("config_proactive_policy", "local-data/config/proactive-policy.json", "payload/config/proactive-policy.json"),
-    ("config_autonomy_safety", "local-data/config/autonomy-safety.json", "payload/config/autonomy-safety.json"),
-    ("config_internet_access", "local-data/config/internet-access.json", "payload/config/internet-access.json"),
-    ("config_action_autonomy", "local-data/config/action-autonomy.json", "payload/config/action-autonomy.json"),
-    ("config_skills", "local-data/config/skills.json", "payload/config/skills.json"),
-    ("runtime_external_observations", "local-data/runtime/external-observations.json", "payload/runtime/external-observations.json"),
-    ("runtime_document_receipts", "local-data/runtime/document-read-receipts.json", "payload/runtime/document-read-receipts.json"),
-    ("runtime_daily_receipts", "local-data/runtime/daily-runtime-receipts.json", "payload/runtime/daily-runtime-receipts.json"),
-    ("runtime_agent_runs", "local-data/runtime/agent-runs.json", "payload/runtime/agent-runs.json"),
-)
-
-
 @dataclass(frozen=True)
 class StagedComponent:
     manifest: BackupComponent
     staged_path: Path
+
+
+@dataclass(frozen=True)
+class StaticInventoryComponent:
+    """One canonical v1 component mapping shared by writer and verifier."""
+
+    component_id: str
+    source_relative_path: str
+    archive_path: str
+    required: bool
+
+
+V1_STATIC_INVENTORY = (
+    StaticInventoryComponent("identity", "identity/masha.identity.json", "payload/identity/masha.identity.json", True),
+    StaticInventoryComponent("memory_database", "local-data/memory/masha.sqlite3", "payload/memory/masha.sqlite3", True),
+    StaticInventoryComponent("conversation_history", "local-data/conversations/history.json", "payload/conversations/history.json", True),
+    StaticInventoryComponent("config_home_timezone", "local-data/config/home-timezone.json", "payload/config/home-timezone.json", False),
+    StaticInventoryComponent("config_models", "local-data/config/models.json", "payload/config/models.json", False),
+    StaticInventoryComponent("config_proactive_policy", "local-data/config/proactive-policy.json", "payload/config/proactive-policy.json", False),
+    StaticInventoryComponent("config_autonomy_safety", "local-data/config/autonomy-safety.json", "payload/config/autonomy-safety.json", False),
+    StaticInventoryComponent("config_internet_access", "local-data/config/internet-access.json", "payload/config/internet-access.json", False),
+    StaticInventoryComponent("config_action_autonomy", "local-data/config/action-autonomy.json", "payload/config/action-autonomy.json", False),
+    StaticInventoryComponent("config_skills", "local-data/config/skills.json", "payload/config/skills.json", False),
+    StaticInventoryComponent("runtime_external_observations", "local-data/runtime/external-observations.json", "payload/runtime/external-observations.json", False),
+    StaticInventoryComponent("runtime_document_receipts", "local-data/runtime/document-read-receipts.json", "payload/runtime/document-read-receipts.json", False),
+    StaticInventoryComponent("runtime_daily_receipts", "local-data/runtime/daily-runtime-receipts.json", "payload/runtime/daily-runtime-receipts.json", False),
+    StaticInventoryComponent("runtime_agent_runs", "local-data/runtime/agent-runs.json", "payload/runtime/agent-runs.json", False),
+)
+V1_STATIC_COMPONENTS_BY_ID = {item.component_id: item for item in V1_STATIC_INVENTORY}
+V1_REQUIRED_COMPONENT_IDS = frozenset(item.component_id for item in V1_STATIC_INVENTORY if item.required)
+
+
+def static_component_matches_v1(component: BackupComponent) -> bool:
+    """Return true only for an exact component-id/path/required v1 binding."""
+    expected = V1_STATIC_COMPONENTS_BY_ID.get(component.component_id)
+    return bool(
+        expected
+        and component.archive_path == expected.archive_path
+        and component.required is expected.required
+    )
 
 
 class BackupInventory:
@@ -54,18 +74,20 @@ class BackupInventory:
     def stage(self) -> tuple[StagedComponent, ...]:
         rows: list[StagedComponent] = []
         staged_skill_registry: StagedComponent | None = None
-        for component_id, relative, archive_path in _REQUIRED:
-            source = self.root / relative
-            if component_id == "memory_database":
-                rows.append(self._stage_sqlite(component_id, source, archive_path))
-            else:
-                rows.append(self._stage_file(component_id, source, archive_path, required=True))
-        for component_id, relative, archive_path in _OPTIONAL:
-            source = self.root / relative
-            if source.exists():
-                staged = self._stage_file(component_id, source, archive_path, required=False)
+        for contract in V1_STATIC_INVENTORY:
+            source = self.root / contract.source_relative_path
+            if contract.component_id == "memory_database":
+                rows.append(self._stage_sqlite(contract.component_id, source, contract.archive_path))
+            elif contract.required:
+                rows.append(self._stage_file(
+                    contract.component_id, source, contract.archive_path, required=True,
+                ))
+            elif source.exists():
+                staged = self._stage_file(
+                    contract.component_id, source, contract.archive_path, required=False,
+                )
                 rows.append(staged)
-                if component_id == "config_skills":
+                if contract.component_id == "config_skills":
                     staged_skill_registry = staged
         rows.extend(self._stage_installed_skills(staged_skill_registry))
         return tuple(rows)

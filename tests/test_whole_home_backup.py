@@ -132,6 +132,35 @@ def _rewrite_component(bundle: Path, tmp_path: Path, archive_path: str, transfor
     return output
 
 
+def _rewrite_manifest(bundle: Path, tmp_path: Path, mutate) -> Path:
+    original = tmp_path / "original.tar"
+    rewritten = tmp_path / "rewritten.tar"
+    decrypt_file(bundle, original, PASSPHRASE)
+    with tarfile.open(original) as source:
+        manifest = json.loads(source.extractfile("manifest.json").read())
+        content_by_name = {
+            item.name: source.extractfile(item).read()
+            for item in source.getmembers() if item.isfile() and item.name != "manifest.json"
+        }
+    mutate(manifest, content_by_name)
+    with tarfile.open(rewritten, "w") as target:
+        manifest_bytes = json.dumps(manifest, separators=(",", ":")).encode("utf-8")
+        manifest_info = tarfile.TarInfo("manifest.json")
+        manifest_info.size = len(manifest_bytes)
+        target.addfile(manifest_info, io.BytesIO(manifest_bytes))
+        for name, content in content_by_name.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(content)
+            target.addfile(info, io.BytesIO(content))
+    output = tmp_path / "rewritten.mashabackup"
+    encrypt_file(rewritten, output, PASSPHRASE)
+    return output
+
+
+def _component(manifest: dict, component_id: str) -> dict:
+    return next(item for item in manifest["components"] if item["component_id"] == component_id)
+
+
 def test_create_verify_inventory_and_explicit_exclusions(home: Path, tmp_path: Path):
     bundle = _backup(home, tmp_path)
     manifest, paths = _archive_paths(bundle, tmp_path)
@@ -360,6 +389,90 @@ def test_malformed_or_orphaned_conversation_history_is_not_verified(home: Path, 
     )
     with pytest.raises(BackupError, match="invalid_backup"):
         verify_backup(changed, PASSPHRASE)
+
+
+def test_manifest_missing_required_identity_is_invalid_without_key_error(home: Path, tmp_path: Path):
+    bundle = _backup(home, tmp_path)
+
+    def remove_identity(manifest, content):
+        identity = _component(manifest, "identity")
+        manifest["components"].remove(identity)
+        content.pop(identity["archive_path"])
+
+    changed = _rewrite_manifest(bundle, tmp_path, remove_identity)
+    with pytest.raises(BackupError, match="invalid_backup"):
+        verify_backup(changed, PASSPHRASE)
+
+
+def test_manifest_required_identity_cannot_be_marked_optional(home: Path, tmp_path: Path):
+    bundle = _backup(home, tmp_path)
+    changed = _rewrite_manifest(
+        bundle, tmp_path, lambda manifest, _: _component(manifest, "identity").update(required=False),
+    )
+    with pytest.raises(BackupError, match="invalid_backup"):
+        verify_backup(changed, PASSPHRASE)
+
+
+def test_manifest_identity_cannot_be_remapped_to_another_allowed_path(home: Path, tmp_path: Path):
+    bundle = _backup(home, tmp_path)
+
+    def remap_identity(manifest, content):
+        identity = _component(manifest, "identity")
+        models = _component(manifest, "config_models")
+        identity_bytes = content.pop(identity["archive_path"])
+        content.pop(models["archive_path"])
+        content[models["archive_path"]] = identity_bytes
+        manifest["components"].remove(models)
+        identity["archive_path"] = "payload/config/models.json"
+        identity["byte_size"] = len(identity_bytes)
+        identity["sha256"] = hashlib.sha256(identity_bytes).hexdigest()
+
+    changed = _rewrite_manifest(bundle, tmp_path, remap_identity)
+    with pytest.raises(BackupError, match="invalid_backup"):
+        verify_backup(changed, PASSPHRASE)
+
+
+@pytest.mark.parametrize(("component_id", "archive_path"), [
+    ("random_component", "payload/random.json"),
+    ("secrets_token", "payload/secrets/token.json"),
+])
+def test_manifest_cannot_authorize_unknown_or_secret_component(
+    home: Path, tmp_path: Path, component_id: str, archive_path: str,
+):
+    bundle = _backup(home, tmp_path)
+
+    def add_unknown(manifest, content):
+        payload = b"untrusted manifest inventory"
+        manifest["components"].append({
+            "component_id": component_id,
+            "archive_path": archive_path,
+            "required": False,
+            "byte_size": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "format_version": None,
+        })
+        content[archive_path] = payload
+
+    changed = _rewrite_manifest(bundle, tmp_path, add_unknown)
+    with pytest.raises(BackupError, match="invalid_backup"):
+        verify_backup(changed, PASSPHRASE)
+
+
+def test_manifest_cannot_map_two_component_ids_to_one_archive_path(home: Path, tmp_path: Path):
+    bundle = _backup(home, tmp_path)
+
+    def duplicate_path(manifest, _):
+        _component(manifest, "config_home_timezone")["archive_path"] = _component(
+            manifest, "config_models",
+        )["archive_path"]
+
+    changed = _rewrite_manifest(bundle, tmp_path, duplicate_path)
+    with pytest.raises(BackupError, match="invalid_backup"):
+        verify_backup(changed, PASSPHRASE)
+
+
+def test_valid_archived_installed_skill_family_still_verifies(home: Path, tmp_path: Path):
+    assert verify_backup(_backup(home, tmp_path), PASSPHRASE).verified
 
 
 def test_installed_skill_symlink_escape_is_rejected(home: Path, tmp_path: Path, monkeypatch):

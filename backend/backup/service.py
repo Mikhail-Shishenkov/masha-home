@@ -24,7 +24,13 @@ from backend.skills.registry import SkillRegistry, SkillRegistryError
 
 from .crypto import decrypt_file, encrypt_file, ensure_bundle_size
 from .errors import BackupError
-from .inventory import BackupInventory, StagedComponent
+from .inventory import (
+    BackupInventory,
+    StagedComponent,
+    V1_REQUIRED_COMPONENT_IDS,
+    V1_STATIC_COMPONENTS_BY_ID,
+    static_component_matches_v1,
+)
 from .models import BackupManifest, BackupVerification
 
 
@@ -136,13 +142,11 @@ def _verify_tar(path: Path, temporary_root: Path) -> BackupVerification:
         if manifest_member is None:
             raise BackupError("invalid_backup")
         manifest = _read_manifest(archive, manifest_member)
+        _validate_manifest_inventory(manifest)
         expected = {"manifest.json"} | {component.archive_path for component in manifest.components}
         if set(by_name) != expected:
             raise BackupError("invalid_backup")
         if len(expected) != len(members):
-            raise BackupError("invalid_backup")
-        component_ids = {component.component_id for component in manifest.components}
-        if len(component_ids) != len(manifest.components):
             raise BackupError("invalid_backup")
         for component in manifest.components:
             member = by_name[component.archive_path]
@@ -158,6 +162,27 @@ def _verify_tar(path: Path, temporary_root: Path) -> BackupVerification:
             created_at=manifest.created_at,
             components_verified=len(manifest.components),
         )
+
+
+def _validate_manifest_inventory(manifest: BackupManifest) -> None:
+    """Manifest declarations never extend the v1 durable-state allowlist."""
+    component_ids = {component.component_id for component in manifest.components}
+    archive_paths = {component.archive_path for component in manifest.components}
+    if (
+        len(component_ids) != len(manifest.components)
+        or len(archive_paths) != len(manifest.components)
+        or not V1_REQUIRED_COMPONENT_IDS.issubset(component_ids)
+    ):
+        raise BackupError("invalid_backup")
+    for component in manifest.components:
+        if component.component_id in V1_STATIC_COMPONENTS_BY_ID:
+            if not static_component_matches_v1(component):
+                raise BackupError("invalid_backup")
+            continue
+        if not component.component_id.startswith("installed_skill:"):
+            raise BackupError("invalid_backup")
+        if component.required or not component.archive_path.startswith("payload/skills/"):
+            raise BackupError("invalid_backup")
 
 
 def _read_members_bounded(archive: tarfile.TarFile) -> list[tarfile.TarInfo]:
@@ -322,6 +347,10 @@ def _verify_archived_skills(
             raise BackupError("invalid_backup")
         skill_id = parts[2]
         if skill_id not in expected_ids:
+            raise BackupError("invalid_backup")
+        relative_path = "/".join(parts[3:])
+        expected_component_id = f"installed_skill:{skill_id}:{hashlib.sha256(relative_path.encode('utf-8')).hexdigest()}"
+        if component.component_id != expected_component_id:
             raise BackupError("invalid_backup")
         observed_ids.add(skill_id)
         destination = staged_root.joinpath(*parts[2:])
