@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Callable
 
 from backend.runtime.daily_runtime import DailyCycleReceipt, DailyRuntime, DailyRuntimeJournal
-from backend.runtime.process_liveness import ProcessLiveness, default_process_probe, liveness_from_pid_file
+from backend.runtime.process_liveness import ProcessLiveness, default_process_probe
+from backend.runtime.runtime_lease import PidLease, RuntimeLeaseError
 from backend.runtime.safety import AutonomySafetyStore
 from backend.backup.recovery_journal import RecoveryJournal
 
@@ -30,6 +31,7 @@ class ProactiveDaemon:
         self.runtime_dir = self.project_root / "local-data" / "runtime"
         self.runtime_dir.mkdir(parents=True, exist_ok=True)
         self.lock_path = self.runtime_dir / "proactive-daemon.lock"
+        self._lease = PidLease(self.lock_path, process_probe=process_probe or default_process_probe)
         self.stop_path = self.runtime_dir / "proactive-daemon.stop"
         self.status_path = self.runtime_dir / "proactive-daemon-status.json"
         self.journal = DailyRuntimeJournal(self.runtime_dir / "daily-runtime-receipts.json")
@@ -42,12 +44,18 @@ class ProactiveDaemon:
     def run(self, *, max_cycles: int | None = None):
         descriptor = None
         try:
-            descriptor = self._acquire_lock()
-            os.write(descriptor, str(os.getpid()).encode("ascii"))
+            self._lease.set_process_probe(self._process_probe)
+            try:
+                self._lease.acquire()
+            except RuntimeLeaseError as error:
+                raise FileExistsError(self.lock_path) from error
+            descriptor = self._lease.descriptor
             cycles = 0
             while not self.stop_path.exists() and (max_cycles is None or cycles < max_cycles):
-                if RecoveryJournal(self.project_root).is_hold():
-                    self._status("stopped", result="suppress", reason="recovery_hold_active", error=None, interval=None)
+                journal = RecoveryJournal(self.project_root)
+                if not journal.background_activity_allowed():
+                    reason = "recovery_hold_active" if journal.is_hold() else "recovery_active"
+                    self._status("stopped", result="suppress", reason=reason, error=None, interval=None)
                     break
                 if self.safety_store.is_engaged():
                     self._status("stopped", result="suppress", reason="emergency_stop_engaged", error=None, interval=None)
@@ -73,8 +81,7 @@ class ProactiveDaemon:
                     self._wait(interval)
         finally:
             if descriptor is not None:
-                os.close(descriptor)
-                self.lock_path.unlink(missing_ok=True)
+                self._lease.release()
             self.stop_path.unlink(missing_ok=True)
             previous = self.status()
             previous["daemon"] = "stopped"
@@ -97,18 +104,14 @@ class ProactiveDaemon:
             return False
 
     def liveness(self) -> ProcessLiveness:
-        return liveness_from_pid_file(self.lock_path, process_probe=self._process_probe)
+        # Tests and host adapters may replace the probe after construction;
+        # keep the shared lease as the single liveness implementation.
+        self._lease.set_process_probe(self._process_probe)
+        return self._lease.liveness()
 
     def _acquire_lock(self):
-        try:
-            return os.open(self.lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            # Unknown includes access-denied and unexpected adapter failures.
-            # Never reclaim a lock unless the process is positively stale.
-            if self.liveness().state != "stopped":
-                raise
-            self.lock_path.unlink(missing_ok=True)
-            return os.open(self.lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        self._lease.acquire()
+        return self._lease.descriptor
 
     def _wait(self, seconds):
         remaining = seconds

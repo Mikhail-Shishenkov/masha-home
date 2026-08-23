@@ -46,14 +46,22 @@ class RecoveryJournal:
 
     def assert_start_allowed(self) -> None:
         state = self.load()
-        if state is not None and state.phase in {
-            RecoveryPhase.APPLYING,
-            RecoveryPhase.VERIFYING,
-            RecoveryPhase.ROLLING_BACK,
-            RecoveryPhase.BLOCKED,
-        }:
-            raise RecoveryError("recovery_blocked")
+        if state is not None and state.phase not in {RecoveryPhase.RELEASED, RecoveryPhase.ROLLED_BACK}:
+            raise RecoveryError("recovery_in_progress")
 
     def is_hold(self) -> bool:
         state = self.load()
         return state is not None and state.phase is RecoveryPhase.HOLD
+
+    def assert_runtime_start_allowed(self) -> None:
+        """Normal conversation boot may inspect a held, fully validated Home."""
+        state = self.load()
+        if state is not None and state.phase not in {
+            RecoveryPhase.HOLD, RecoveryPhase.RELEASED, RecoveryPhase.ROLLED_BACK,
+        }:
+            raise RecoveryError("recovery_blocked")
+
+    def background_activity_allowed(self) -> bool:
+        """Crash-safe daemon gate: incomplete recovery always suppresses work."""
+        state = self.load()
+        return state is None or state.phase in {RecoveryPhase.RELEASED, RecoveryPhase.ROLLED_BACK}

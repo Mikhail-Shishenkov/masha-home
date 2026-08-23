@@ -5,13 +5,15 @@ merge. It is an offline operation: it does not use Conversation, an LLM, rendere
 the active `MashaApplication`.
 
 Before mutation recovery requires both the desktop Home runtime lease and ProactiveDaemon to be
-positively stopped. Running or unknown PID liveness fails closed; recovery never kills a process.
-The desktop host owns `local-data/runtime/home-runtime.lock` for its lifetime. A stale lease is
-reclaimed only after the PID is known dead.
+positively stopped, then acquires and holds both PID leases through checkpoint, apply,
+verification and the terminal journal transition. Running, unknown, malformed or empty locks fail
+closed; only a valid PID proven dead is reclaimed. Recovery never kills a process. The desktop host
+owns `local-data/runtime/home-runtime.lock` for its lifetime.
 
 `preview_restore` authenticates and validates the backup, returning only safe metadata. Apply
 requires the previewed `backup_id` again and re-verifies/materializes the encrypted bundle before
-mutation. Only W5.1 format `1.0` and application-data version `0.1` are supported.
+mutation. Verification and materialization use the same authenticated decrypted TAR. Only W5.1
+format `1.0` and application-data version `0.1` are supported.
 
 `REPLACE` first produces and verifies an encrypted safety checkpoint in
 `local-data/recovery/checkpoints/`. `FRESH` is only allowed where no prior Memory, conversation
@@ -25,6 +27,13 @@ composition refuses to boot through dangerous incomplete states. If apply fails 
 verified checkpoint is materialized and applied as compensating rollback. A failed rollback leaves
 `BLOCKED`; no second destructive action is attempted automatically.
 
+Only no journal, `RELEASED`, or `ROLLED_BACK` permits a new restore. An interrupted REPLACE can be
+repaired offline with `recover-interrupted`: it re-verifies only its own retained encrypted
+checkpoint, restores the allowlisted Home targets, restores deterministic quarantine entries and
+ends at `ROLLED_BACK`. An interrupted FRESH needs the same backup path and expected backup ID; its
+retry resets only targets which the original FRESH preflight proved absent, then reapplies that
+same verified backup. Recovery refuses symlinked owned parent paths before any mutation.
+
 Excluded actionable files (proposal/install/local-document and daemon transient state) are moved to
 the recovery quarantine before apply where present. Rollback restores them. A successful restore
 enters **Recovery Hold**: normal local Home inspection/conversation remains possible, but proactive
@@ -35,6 +44,8 @@ Secrets remain excluded. No passphrase, encryption key, raw backup body, or secr
 journal. The minimal offline CLI reads the passphrase only with `getpass`:
 
 `python -m backend.backup.recovery_cli --project-root <home> preview <backup>`
+
+`python -m backend.backup.recovery_cli --project-root <home> recover-interrupted [<backup> --expected-backup-id <id>]`
 
 The destructive recovery drill is isolated under pytest `tmp_path`: it creates state A, backs it up,
 mutates to state B, restores A, verifies removal of B-owned data, and confirms Recovery Hold.

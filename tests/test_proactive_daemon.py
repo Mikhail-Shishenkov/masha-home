@@ -11,6 +11,8 @@ from backend.runtime.daily_runtime import DailyCycleReceipt
 from backend.temporal.proactive import ProactivePolicy, ProactivePolicyStore
 from backend.temporal.proactive_daemon import ProactiveDaemon
 from backend.runtime.safety import AutonomySafetyService
+from backend.backup.recovery_journal import RecoveryJournal
+from backend.backup.recovery_models import RecoveryPhase, RecoveryState, RestoreMode
 
 
 def test_background_and_manual_modes_are_persistent_and_deterministic(tmp_path, monkeypatch):
@@ -78,7 +80,7 @@ def test_malformed_lock_and_unexpected_probe_failure_are_safe(tmp_path):
     )
     daemon.lock_path.write_text("not-a-pid", encoding="ascii")
     assert daemon.is_running() is False
-    assert daemon.liveness().state == "stopped"
+    assert daemon.liveness().state == "unknown"
 
     daemon.lock_path.write_text(str(os.getpid() + 100_000), encoding="ascii")
     assert daemon.is_running() is False
@@ -106,6 +108,21 @@ def test_emergency_stop_prevents_daemon_service_build_and_exits(tmp_path, monkey
     assert daemon.status()["last_reason"] == "emergency_stop_engaged"
 
 
+@pytest.mark.parametrize("phase", [RecoveryPhase.APPLYING, RecoveryPhase.BLOCKED, RecoveryPhase.CHECKPOINTED])
+def test_incomplete_recovery_suppresses_daemon_before_service_build(tmp_path, monkeypatch, phase):
+    now = datetime.now(timezone.utc)
+    RecoveryJournal(tmp_path).save(RecoveryState(
+        recovery_id="recovery-active", backup_id="backup-active", restore_mode=RestoreMode.REPLACE,
+        phase=phase, created_at=now, updated_at=now,
+    ))
+    builds = []
+    monkeypatch.setattr("backend.conversation.cli.build_service", lambda *_: builds.append(True))
+    daemon = ProactiveDaemon(tmp_path, sleep=lambda _: None)
+    daemon.run(max_cycles=1)
+    assert builds == []
+    assert daemon.status()["last_reason"] == "recovery_active"
+
+
 def test_stale_lock_is_recovered_and_cycle_failure_is_recorded(tmp_path, monkeypatch):
     profiles = ModelProfileStore(tmp_path / "local-data" / "config" / "models.json")
     ProactivePolicyStore(profiles.path.parent / "proactive-policy.json").save(
@@ -127,7 +144,7 @@ def test_stale_lock_is_recovered_and_cycle_failure_is_recorded(tmp_path, monkeyp
 
     monkeypatch.setattr("backend.temporal.proactive_daemon.DailyRuntime", FailingRuntime)
     daemon = ProactiveDaemon(tmp_path)
-    daemon.lock_path.write_text("stale", encoding="utf-8")
+    daemon.lock_path.write_text("999999999", encoding="utf-8")
     daemon.run(max_cycles=1)
 
     assert not daemon.lock_path.exists()

@@ -24,9 +24,12 @@ def liveness_from_pid_file(path, *, process_probe: Callable[[int], bool] = defau
     try:
         pid = int(path.read_text(encoding="ascii"))
     except (ValueError, OSError, UnicodeError):
-        return ProcessLiveness("stopped", "lock file is malformed")
+        # O_EXCL creates the file before its owner has written the PID.  An
+        # empty/corrupt file is therefore an in-progress or unreadable owner,
+        # not a stale one.  Only a positively dead *valid* PID is reclaimable.
+        return ProcessLiveness("unknown", "lock file is malformed or unreadable")
     if pid <= 0:
-        return ProcessLiveness("stopped", "lock PID is invalid")
+        return ProcessLiveness("unknown", "lock PID is invalid")
     if pid == os.getpid():
         return ProcessLiveness("running", f"process {pid} is current")
     try:

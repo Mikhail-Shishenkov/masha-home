@@ -14,6 +14,7 @@ from backend.conversation.conversation_store import ConversationStore
 from backend.memory.memory_models import MemoryDocument
 from backend.memory.sqlite_repository import MemorySqliteRepository
 from backend.runtime.runtime_lease import RuntimeLease
+from backend.runtime.runtime_lease import RuntimeLeaseError
 from backend.skills.registry import SkillRegistry
 from backend.temporal.proactive_daemon import ProactiveDaemon
 
@@ -100,7 +101,7 @@ def test_fresh_restore_and_nonempty_fresh_rejection(tmp_path: Path):
     assert result.phase is RecoveryPhase.HOLD
     assert (fresh / "local-data/memory/masha.sqlite3").exists()
     (fresh / "local-data/random.json").write_text("unowned", encoding="utf-8")
-    with pytest.raises(RecoveryError, match="fresh_target_not_empty"):
+    with pytest.raises(RecoveryError, match="recovery_in_progress"):
         WholeHomeRecoveryService(fresh).restore(backup, PASSPHRASE, expected_backup_id=preview.backup_id, restore_mode=RestoreMode.FRESH)
 
 
@@ -142,7 +143,7 @@ def test_apply_failure_rolls_back_and_interrupted_journal_blocks_startup(tmp_pat
     assert state is not None and state.phase is RecoveryPhase.ROLLED_BACK
     applying = state.model_copy(update={"phase": RecoveryPhase.APPLYING})
     RecoveryJournal(root).save(applying)
-    with pytest.raises(RecoveryError, match="recovery_blocked"):
+    with pytest.raises(RecoveryError, match="recovery_in_progress"):
         RecoveryJournal(root).assert_start_allowed()
 
 
@@ -226,3 +227,145 @@ def test_rollback_failure_enters_blocked_and_journal_never_contains_passphrase(t
     state = RecoveryJournal(root).load()
     assert state is not None and state.phase is RecoveryPhase.BLOCKED
     assert PASSPHRASE not in (root / "local-data/recovery/state.json").read_text(encoding="utf-8")
+
+
+def test_held_recovery_guards_exclude_desktop_and_daemon(tmp_path: Path):
+    root = _home(tmp_path / "home")
+    service = WholeHomeRecoveryService(root)
+    with service._held_writer_guards():
+        with pytest.raises(Exception):
+            RuntimeLease(root).acquire()
+        with pytest.raises(Exception):
+            ProactiveDaemon(root)._lease.acquire()
+        assert not (root / "local-data/runtime/home-runtime.lock").is_symlink()
+        assert not (root / "local-data/runtime/proactive-daemon.lock").is_symlink()
+    assert not (root / "local-data/runtime/home-runtime.lock").exists()
+    assert not (root / "local-data/runtime/proactive-daemon.lock").exists()
+
+
+def test_race_before_either_guard_leaves_home_unmodified(tmp_path: Path, monkeypatch):
+    root = _home(tmp_path / "home")
+    backup = _backup(root, tmp_path)
+    preview = WholeHomeRecoveryService(root).preview_restore(backup, PASSPHRASE)
+    before = (root / "local-data/memory/masha.sqlite3").read_bytes()
+    service = WholeHomeRecoveryService(root)
+    rival = RuntimeLease(root)
+
+    def lose_home_race():
+        rival.acquire()
+        raise RuntimeLeaseError("lost")
+
+    monkeypatch.setattr(service.home_lease, "acquire", lose_home_race)
+    with pytest.raises(RecoveryError, match="home_not_quiescent"):
+        service.restore(backup, PASSPHRASE, expected_backup_id=preview.backup_id, restore_mode=RestoreMode.REPLACE)
+    rival.release()
+    assert (root / "local-data/memory/masha.sqlite3").read_bytes() == before
+    assert RecoveryJournal(root).load() is None
+
+
+def test_daemon_race_before_guard_leaves_home_unmodified(tmp_path: Path, monkeypatch):
+    root = _home(tmp_path / "home")
+    backup = _backup(root, tmp_path)
+    preview = WholeHomeRecoveryService(root).preview_restore(backup, PASSPHRASE)
+    before = (root / "local-data/memory/masha.sqlite3").read_bytes()
+    service = WholeHomeRecoveryService(root)
+    rival = ProactiveDaemon(root)._lease
+
+    def lose_daemon_race():
+        rival.acquire()
+        raise RuntimeLeaseError("lost")
+
+    monkeypatch.setattr(service.daemon_lease, "acquire", lose_daemon_race)
+    with pytest.raises(RecoveryError, match="home_not_quiescent"):
+        service.restore(backup, PASSPHRASE, expected_backup_id=preview.backup_id, restore_mode=RestoreMode.REPLACE)
+    rival.release()
+    assert (root / "local-data/memory/masha.sqlite3").read_bytes() == before
+    assert RecoveryJournal(root).load() is None
+
+
+def test_hold_and_checkpointed_block_new_restore(tmp_path: Path):
+    root = _home(tmp_path / "home")
+    backup = _backup(root, tmp_path)
+    service = WholeHomeRecoveryService(root)
+    preview = service.preview_restore(backup, PASSPHRASE)
+    service.restore(backup, PASSPHRASE, expected_backup_id=preview.backup_id, restore_mode=RestoreMode.REPLACE)
+    with pytest.raises(RecoveryError, match="recovery_in_progress"):
+        service.restore(backup, PASSPHRASE, expected_backup_id=preview.backup_id, restore_mode=RestoreMode.REPLACE)
+    held = service.journal.load()
+    service.journal.save(held.model_copy(update={"phase": RecoveryPhase.CHECKPOINTED}))
+    with pytest.raises(RecoveryError, match="recovery_in_progress"):
+        service.restore(backup, PASSPHRASE, expected_backup_id=preview.backup_id, restore_mode=RestoreMode.REPLACE)
+
+
+def test_interrupted_replace_rolls_back_checkpoint_and_wrong_phrase_does_not_mutate(tmp_path: Path):
+    root = _home(tmp_path / "home")
+    backup = _backup(root, tmp_path)
+    service = WholeHomeRecoveryService(root)
+    preview = service.preview_restore(backup, PASSPHRASE)
+    result = service.restore(backup, PASSPHRASE, expected_backup_id=preview.backup_id, restore_mode=RestoreMode.REPLACE)
+    (root / "local-data/config/models.json").write_text('{"state":"interrupted"}', encoding="utf-8")
+    held = service.journal.load()
+    service.journal.save(held.model_copy(update={"phase": RecoveryPhase.APPLYING}))
+    before = (root / "local-data/config/models.json").read_bytes()
+    with pytest.raises(RecoveryError):
+        service.recover_interrupted("wrong")
+    assert (root / "local-data/config/models.json").read_bytes() == before
+    assert service.journal.load().phase is RecoveryPhase.BLOCKED
+    rolled = service.recover_interrupted(PASSPHRASE)
+    assert rolled.phase is RecoveryPhase.ROLLED_BACK
+    assert (root / "local-data/config/models.json").read_text(encoding="utf-8") == '{"profiles":[]}'
+
+
+def test_interrupted_fresh_retries_only_same_backup(tmp_path: Path):
+    source = _home(tmp_path / "source")
+    backup = _backup(source, tmp_path)
+    root = tmp_path / "fresh"
+    service = WholeHomeRecoveryService(root)
+    preview = service.preview_restore(backup, PASSPHRASE)
+    service.restore(backup, PASSPHRASE, expected_backup_id=preview.backup_id, restore_mode=RestoreMode.FRESH)
+    state = service.journal.load()
+    service.journal.save(state.model_copy(update={"phase": RecoveryPhase.BLOCKED}))
+    (root / "local-data/config/models.json").write_text('{"state":"partial"}', encoding="utf-8")
+    with pytest.raises(RecoveryError, match="restore_confirmation_stale"):
+        service.recover_interrupted(PASSPHRASE, backup_path=backup, expected_backup_id="other")
+    retried = service.recover_interrupted(PASSPHRASE, backup_path=backup, expected_backup_id=preview.backup_id)
+    assert retried.phase is RecoveryPhase.HOLD
+    assert (root / "local-data/config/models.json").read_text(encoding="utf-8") == '{"profiles":[]}'
+
+
+def test_symlinked_owned_parent_is_rejected_before_mutation(tmp_path: Path):
+    root = _home(tmp_path / "home")
+    backup = _backup(root, tmp_path)
+    preview = WholeHomeRecoveryService(root).preview_restore(backup, PASSPHRASE)
+    external = tmp_path / "external"
+    external.mkdir()
+    config = root / "local-data/config"
+    shutil.rmtree(config)
+    try:
+        config.symlink_to(external, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks are unavailable on this platform")
+    with pytest.raises(RecoveryError, match="recovery_target_unsafe"):
+        WholeHomeRecoveryService(root).restore(backup, PASSPHRASE, expected_backup_id=preview.backup_id, restore_mode=RestoreMode.REPLACE)
+
+
+def test_materialization_copies_the_same_authenticated_archive_it_verified(tmp_path: Path, monkeypatch):
+    import backend.backup.service as backup_service
+
+    source_a = _home(tmp_path / "a")
+    source_b = _home(tmp_path / "b")
+    (source_b / "local-data/config/models.json").write_text('{"profiles":["B"]}', encoding="utf-8")
+    bundle_a = _backup(source_a, tmp_path)
+    bundle_b = tmp_path / "state-b.mashabackup"
+    WholeHomeBackupService(source_b).create_backup(bundle_b, PASSPHRASE)
+    original_verify = backup_service._verify_tar
+
+    def replace_source_after_verification(archive, temporary):
+        result = original_verify(archive, temporary)
+        shutil.copyfile(bundle_b, bundle_a)
+        return result
+
+    monkeypatch.setattr(backup_service, "_verify_tar", replace_source_after_verification)
+    stage = tmp_path / "stage"
+    materialized = backup_service.materialize_verified_backup(bundle_a, PASSPHRASE, stage)
+    assert (materialized.payload_root / "config/models.json").read_text(encoding="utf-8") == '{"profiles":[]}'

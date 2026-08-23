@@ -122,17 +122,25 @@ def inspect_verified_backup(path: Path, passphrase: str) -> tuple[BackupVerifica
 
 
 def materialize_verified_backup(path: Path, passphrase: str, staging_root: Path) -> VerifiedBackupMaterialization:
-    """Copy only verifier-approved v1 components to caller-owned temporary staging."""
+    """Copy only verifier-approved components from one authenticated TAR.
+
+    The archive verified here is the exact archive subsequently copied.  Do not
+    split this into inspect/decrypt passes: a replaceable bundle path would
+    otherwise introduce a verification/materialization TOCTOU.
+    """
     bundle = Path(path)
+    if not bundle.is_file() or bundle.is_symlink():
+        raise BackupError("invalid_backup")
     staging = Path(staging_root)
     if staging.exists() and any(staging.iterdir()):
         raise BackupError("recovery_staging_not_empty")
     staging.mkdir(parents=True, exist_ok=True)
     archive_path = staging / "_verified-payload.tar"
-    verification, manifest = inspect_verified_backup(bundle, passphrase)
-    decrypt_file(bundle, archive_path, passphrase)
     payload_root = staging / "payload"
     try:
+        ensure_bundle_size(bundle)
+        decrypt_file(bundle, archive_path, passphrase)
+        verification, manifest = _verify_tar(archive_path, staging)
         with tarfile.open(archive_path, mode="r:") as archive:
             by_name = {member.name: member for member in _read_members_bounded(archive)}
             for component in manifest.components:

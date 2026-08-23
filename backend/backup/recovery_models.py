@@ -30,13 +30,13 @@ class _RecoveryModel(BaseModel):
 
 class RecoveryState(_RecoveryModel):
     schema_version: Literal["1.0"] = "1.0"
-    recovery_id: str = Field(min_length=12, max_length=100)
-    backup_id: str = Field(min_length=12, max_length=100)
+    recovery_id: str = Field(min_length=12, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
+    backup_id: str = Field(min_length=12, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
     restore_mode: RestoreMode
     phase: RecoveryPhase
     created_at: AwareDatetime
     updated_at: AwareDatetime
-    checkpoint_filename: str | None = Field(default=None, max_length=180)
+    checkpoint_filename: str | None = Field(default=None, max_length=180, pattern=r"^[A-Za-z0-9_.-]+$")
     error_code: str | None = Field(default=None, max_length=120)
 
 

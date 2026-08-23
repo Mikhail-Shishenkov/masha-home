@@ -22,6 +22,9 @@ def main(argv: list[str] | None = None) -> int:
     restore.add_argument("--expected-backup-id", required=True)
     commands.add_parser("status")
     commands.add_parser("release")
+    interrupted = commands.add_parser("recover-interrupted")
+    interrupted.add_argument("backup", type=Path, nargs="?")
+    interrupted.add_argument("--expected-backup-id")
     args = parser.parse_args(argv)
     service = WholeHomeRecoveryService(args.project_root)
     if args.command == "status":
@@ -34,6 +37,11 @@ def main(argv: list[str] | None = None) -> int:
     passphrase = getpass.getpass("Recovery passphrase: ")
     if args.command == "preview":
         print(service.preview_restore(args.backup, passphrase).model_dump_json())
+        return 0
+    if args.command == "recover-interrupted":
+        print(service.recover_interrupted(
+            passphrase, backup_path=args.backup, expected_backup_id=args.expected_backup_id,
+        ).model_dump_json())
         return 0
     print(service.restore(
         args.backup,

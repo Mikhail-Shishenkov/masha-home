@@ -241,7 +241,7 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
 
 def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
     root = Path(project_root)
-    RecoveryJournal(root).assert_start_allowed()
+    RecoveryJournal(root).assert_runtime_start_allowed()
     timezone_provider = HomeTimeZoneProvider.from_store(
         HomeTimeZoneStore(root / "local-data" / "config" / "home-timezone.json")
     )
