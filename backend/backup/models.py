@@ -24,6 +24,7 @@ class BackupManifest(_BackupModel):
     backup_id: str = Field(min_length=12, max_length=100)
     created_at: AwareDatetime
     recovery_hold_required: Literal[True] = True
+    snapshot_requires_quiescence: Literal[True] = True
     application_data_version: str = Field(default="0.1", max_length=40)
     secrets_included: Literal[False] = False
     components: tuple[BackupComponent, ...] = Field(min_length=3, max_length=512)

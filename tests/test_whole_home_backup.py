@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import shutil
 import sqlite3
@@ -9,7 +10,9 @@ from unittest.mock import patch
 import pytest
 
 from backend.backup import BackupError, WholeHomeBackupService, verify_backup
-from backend.backup.crypto import decrypt_file, encrypt_file, read_public_header
+from backend.backup.crypto import MAX_ENCRYPTED_BUNDLE_BYTES, decrypt_file, encrypt_file, read_public_header
+from backend.backup.inventory import BackupInventory
+from backend.backup.service import _MAX_ARCHIVE_MEMBERS
 from backend.memory.memory_models import MemoryDocument
 from backend.memory.sqlite_repository import MemorySqliteRepository
 from backend.skills.registry import SkillRegistry
@@ -23,7 +26,14 @@ def _home(root: Path) -> Path:
     shutil.copytree(PROJECT_ROOT / "identity", root / "identity")
     (root / "local-data/conversations").mkdir(parents=True)
     (root / "local-data/conversations/history.json").write_text(
-        json.dumps({"messages": ["private conversation marker"]}), encoding="utf-8"
+        json.dumps({
+            "conversations": [{"id": "conversation-fixture", "created_at": "2026-08-21T12:00:00+00:00"}],
+            "messages": [{
+                "id": "message-fixture", "role": "user", "content": "private conversation marker",
+                "created_at": "2026-08-21T12:00:01+00:00", "conversation_id": "conversation-fixture",
+                "origin": "user",
+            }],
+        }), encoding="utf-8"
     )
     repository = MemorySqliteRepository(root / "local-data/memory/masha.sqlite3")
     payload = json.loads((PROJECT_ROOT / "tests/fixtures/test_memory.json").read_text(encoding="utf-8"))
@@ -92,6 +102,36 @@ def _archive_paths(bundle: Path, tmp_path: Path) -> tuple[dict, set[str]]:
         return manifest, {item.name for item in archive.getmembers()}
 
 
+def _rewrite_component(bundle: Path, tmp_path: Path, archive_path: str, transform) -> Path:
+    original = tmp_path / "original.tar"
+    rewritten = tmp_path / "rewritten.tar"
+    decrypt_file(bundle, original, PASSPHRASE)
+    with tarfile.open(original) as source:
+        manifest = json.loads(source.extractfile("manifest.json").read())
+        content_by_name = {
+            item.name: source.extractfile(item).read()
+            for item in source.getmembers() if item.isfile() and item.name != "manifest.json"
+        }
+    content_by_name[archive_path] = transform(content_by_name[archive_path])
+    for component in manifest["components"]:
+        if component["archive_path"] == archive_path:
+            content = content_by_name[archive_path]
+            component["byte_size"] = len(content)
+            component["sha256"] = hashlib.sha256(content).hexdigest()
+    with tarfile.open(rewritten, "w") as target:
+        manifest_bytes = json.dumps(manifest, separators=(",", ":")).encode("utf-8")
+        manifest_info = tarfile.TarInfo("manifest.json")
+        manifest_info.size = len(manifest_bytes)
+        target.addfile(manifest_info, io.BytesIO(manifest_bytes))
+        for name, content in content_by_name.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(content)
+            target.addfile(info, io.BytesIO(content))
+    output = tmp_path / "rewritten.mashabackup"
+    encrypt_file(rewritten, output, PASSPHRASE)
+    return output
+
+
 def test_create_verify_inventory_and_explicit_exclusions(home: Path, tmp_path: Path):
     bundle = _backup(home, tmp_path)
     manifest, paths = _archive_paths(bundle, tmp_path)
@@ -104,7 +144,9 @@ def test_create_verify_inventory_and_explicit_exclusions(home: Path, tmp_path: P
     assert all("secrets" not in path and "random" not in path for path in paths)
     assert all("skill-install" not in path and "local-document" not in path for path in paths)
     assert manifest["recovery_hold_required"] is True
+    assert manifest["snapshot_requires_quiescence"] is True
     assert manifest["secrets_included"] is False
+    assert all(item["format_version"] is None for item in manifest["components"])
     checked = verify_backup(bundle, PASSPHRASE)
     assert checked.components_verified == len(manifest["components"])
 
@@ -221,6 +263,103 @@ def test_absurd_outer_header_length_is_rejected_before_payload_allocation(tmp_pa
     bundle.write_bytes(b"MSHBKUP1" + (999_999).to_bytes(4, "big"))
     with pytest.raises(BackupError, match="invalid_backup"):
         verify_backup(bundle, PASSPHRASE)
+
+
+def test_member_enumeration_stops_at_the_archive_member_bound(tmp_path: Path):
+    tar_path = tmp_path / "many-members.tar"
+    with tarfile.open(tar_path, "w") as archive:
+        for index in range(_MAX_ARCHIVE_MEMBERS + 1):
+            archive.addfile(tarfile.TarInfo(f"payload/member-{index}"))
+    bundle = tmp_path / "many-members.mashabackup"
+    encrypt_file(tar_path, bundle, PASSPHRASE)
+    with pytest.raises(BackupError, match="invalid_backup"):
+        verify_backup(bundle, PASSPHRASE)
+
+
+def test_oversized_envelope_is_rejected_before_plaintext_staging(tmp_path: Path):
+    bundle = tmp_path / "oversized.mashabackup"
+    bundle.write_bytes(b"small")
+    with patch("backend.backup.crypto._bundle_size", return_value=MAX_ENCRYPTED_BUNDLE_BYTES + 1):
+        with pytest.raises(BackupError, match="backup_too_large"):
+            verify_backup(bundle, PASSPHRASE)
+
+
+def test_creation_cannot_publish_when_the_v1_envelope_bound_is_exceeded(home: Path, tmp_path: Path):
+    destination = tmp_path / "too-large.mashabackup"
+    with patch("backend.backup.crypto.MAX_ENCRYPTED_BUNDLE_BYTES", 1):
+        with pytest.raises(BackupError, match="backup_too_large"):
+            WholeHomeBackupService(home).create_backup(destination, PASSPHRASE)
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize("name", ["payload//double", "payload/./dot", "payload/trailing/"])
+def test_noncanonical_tar_paths_are_rejected(tmp_path: Path, name: str):
+    tar_path = tmp_path / "noncanonical.tar"
+    with tarfile.open(tar_path, "w") as archive:
+        info = tarfile.TarInfo(name)
+        info.size = 1
+        archive.addfile(info, io.BytesIO(b"x"))
+    bundle = tmp_path / "noncanonical.mashabackup"
+    encrypt_file(tar_path, bundle, PASSPHRASE)
+    with pytest.raises(BackupError, match="invalid_backup"):
+        verify_backup(bundle, PASSPHRASE)
+
+
+def test_staged_skill_registry_remains_consistent_when_live_registry_changes(home: Path, tmp_path: Path, monkeypatch):
+    original_stage_file = BackupInventory._stage_file
+
+    def mutate_live_registry_after_staging(self, component_id, source, archive_path, *, required):
+        staged = original_stage_file(self, component_id, source, archive_path, required=required)
+        if component_id == "config_skills":
+            live = self.root / "local-data/config/skills.json"
+            raw = json.loads(live.read_text(encoding="utf-8"))
+            raw["skills"][0]["package_sha256"] = "0" * 64
+            live.write_text(json.dumps(raw), encoding="utf-8")
+        return staged
+
+    monkeypatch.setattr(BackupInventory, "_stage_file", mutate_live_registry_after_staging)
+    bundle = _backup(home, tmp_path)
+    manifest, _ = _archive_paths(bundle, tmp_path)
+    archived_registry = next(item for item in manifest["components"] if item["component_id"] == "config_skills")
+    assert archived_registry["archive_path"] == "payload/config/skills.json"
+    assert verify_backup(bundle, PASSPHRASE).verified
+
+
+def test_identity_memory_version_mismatch_is_not_verified(home: Path, tmp_path: Path):
+    bundle = _backup(home, tmp_path)
+
+    def mismatch(value: bytes) -> bytes:
+        database = tmp_path / "mismatch.sqlite3"
+        database.write_bytes(value)
+        connection = sqlite3.connect(database)
+        try:
+            connection.execute("UPDATE memory_metadata SET value = ? WHERE key = 'identity_version'", ("other-identity",))
+            connection.commit()
+        finally:
+            connection.close()
+        return database.read_bytes()
+
+    changed = _rewrite_component(bundle, tmp_path, "payload/memory/masha.sqlite3", mismatch)
+    with pytest.raises(BackupError, match="invalid_backup"):
+        verify_backup(changed, PASSPHRASE)
+
+
+def test_malformed_or_orphaned_conversation_history_is_not_verified(home: Path, tmp_path: Path):
+    bundle = _backup(home, tmp_path)
+    changed = _rewrite_component(
+        bundle,
+        tmp_path,
+        "payload/conversations/history.json",
+        lambda _: json.dumps({
+            "conversations": [],
+            "messages": [{
+                "id": "orphan", "role": "user", "content": "orphan",
+                "created_at": "2026-08-21T12:00:01+00:00", "conversation_id": "missing", "origin": "user",
+            }],
+        }).encode("utf-8"),
+    )
+    with pytest.raises(BackupError, match="invalid_backup"):
+        verify_backup(changed, PASSPHRASE)
 
 
 def test_installed_skill_symlink_escape_is_rejected(home: Path, tmp_path: Path, monkeypatch):

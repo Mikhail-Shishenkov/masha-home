@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
 import sqlite3
 import tarfile
@@ -14,9 +15,14 @@ from pathlib import Path, PurePosixPath
 
 from pydantic import ValidationError
 
+from backend.conversation.conversation_models import Conversation, ConversationMessage
 from backend.identity.identity_models import IdentityManifest
+from backend.memory.memory_models import MemoryDocument
+from backend.memory.sqlite_repository import MemorySqliteRepository, RECORD_COLLECTIONS
+from backend.skills.models import SkillRegistryState
+from backend.skills.registry import SkillRegistry, SkillRegistryError
 
-from .crypto import decrypt_file, encrypt_file
+from .crypto import decrypt_file, encrypt_file, ensure_bundle_size
 from .errors import BackupError
 from .inventory import BackupInventory, StagedComponent
 from .models import BackupManifest, BackupVerification
@@ -25,6 +31,9 @@ from .models import BackupManifest, BackupVerification
 _MAX_COMPONENT_BYTES = 512 * 1024 * 1024
 _MAX_ARCHIVE_MEMBERS = 513
 _CHUNK_BYTES = 1024 * 1024
+_MAX_IDENTITY_BYTES = 512 * 1024
+_MAX_SKILL_REGISTRY_BYTES = 512 * 1024
+_MAX_CONVERSATION_HISTORY_BYTES = 32 * 1024 * 1024
 
 
 class WholeHomeBackupService:
@@ -70,6 +79,7 @@ def verify_backup(path: Path, passphrase: str) -> BackupVerification:
     if not bundle.is_file() or bundle.is_symlink():
         raise BackupError("invalid_backup")
     try:
+        ensure_bundle_size(bundle)
         with tempfile.TemporaryDirectory(prefix="masha-backup-verify-") as temporary:
             archive_path = Path(temporary) / "payload.tar"
             decrypt_file(bundle, archive_path, passphrase)
@@ -116,10 +126,8 @@ def _add_file(archive: tarfile.TarFile, name: str, source: Path) -> None:
 
 
 def _verify_tar(path: Path, temporary_root: Path) -> BackupVerification:
-    with tarfile.open(path, mode="r") as archive:
-        members = archive.getmembers()
-        if not 1 <= len(members) <= _MAX_ARCHIVE_MEMBERS:
-            raise BackupError("invalid_backup")
+    with tarfile.open(path, mode="r:") as archive:
+        members = _read_members_bounded(archive)
         seen: set[str] = set()
         for member in members:
             _validate_member(member, seen)
@@ -139,13 +147,30 @@ def _verify_tar(path: Path, temporary_root: Path) -> BackupVerification:
         for component in manifest.components:
             member = by_name[component.archive_path]
             _verify_component(archive, member, component.byte_size, component.sha256)
-        _verify_identity(archive, by_name["payload/identity/masha.identity.json"])
-        _verify_memory_snapshot(archive, by_name["payload/memory/masha.sqlite3"], temporary_root)
+        identity = _verify_identity(archive, by_name["payload/identity/masha.identity.json"])
+        memory = _verify_memory_snapshot(archive, by_name["payload/memory/masha.sqlite3"], temporary_root)
+        if memory.identity_version != identity.identity_version:
+            raise BackupError("invalid_backup")
+        _verify_conversation_history(archive, by_name["payload/conversations/history.json"])
+        _verify_archived_skills(archive, by_name, manifest, temporary_root)
         return BackupVerification(
             backup_id=manifest.backup_id,
             created_at=manifest.created_at,
             components_verified=len(manifest.components),
         )
+
+
+def _read_members_bounded(archive: tarfile.TarFile) -> list[tarfile.TarInfo]:
+    members: list[tarfile.TarInfo] = []
+    seen: set[str] = set()
+    while (member := archive.next()) is not None:
+        if len(members) >= _MAX_ARCHIVE_MEMBERS:
+            raise BackupError("invalid_backup")
+        _validate_member(member, seen)
+        members.append(member)
+    if not members:
+        raise BackupError("invalid_backup")
+    return members
 
 
 def _validate_member(member: tarfile.TarInfo, seen: set[str]) -> None:
@@ -156,6 +181,7 @@ def _validate_member(member: tarfile.TarInfo, seen: set[str]) -> None:
         or name in seen
         or not name
         or posix.is_absolute()
+        or name != posix.as_posix()
         or ".." in posix.parts
         or "\\" in name
         or len(name) > 512
@@ -200,21 +226,15 @@ def _verify_component(archive: tarfile.TarFile, member: tarfile.TarInfo, expecte
         raise BackupError("invalid_backup")
 
 
-def _verify_identity(archive: tarfile.TarFile, member: tarfile.TarInfo) -> None:
-    incoming = archive.extractfile(member)
-    if incoming is None:
-        raise BackupError("invalid_backup")
-    with incoming:
-        payload = incoming.read(member.size + 1)
-    if len(payload) != member.size:
-        raise BackupError("invalid_backup")
+def _verify_identity(archive: tarfile.TarFile, member: tarfile.TarInfo) -> IdentityManifest:
+    payload = _read_member_bytes(archive, member, maximum=_MAX_IDENTITY_BYTES)
     try:
-        IdentityManifest.model_validate_json(payload)
+        return IdentityManifest.model_validate_json(payload)
     except ValidationError as error:
         raise BackupError("invalid_backup") from error
 
 
-def _verify_memory_snapshot(archive: tarfile.TarFile, member: tarfile.TarInfo, temporary_root: Path) -> None:
+def _verify_memory_snapshot(archive: tarfile.TarFile, member: tarfile.TarInfo, temporary_root: Path) -> MemoryDocument:
     snapshot = temporary_root / "memory.sqlite3"
     incoming = archive.extractfile(member)
     if incoming is None:
@@ -228,6 +248,122 @@ def _verify_memory_snapshot(archive: tarfile.TarFile, member: tarfile.TarInfo, t
             raise BackupError("invalid_backup")
     finally:
         connection.close()
+    try:
+        return _read_memory_document_read_only(snapshot)
+    except (KeyError, sqlite3.Error, ValidationError, ValueError) as error:
+        raise BackupError("invalid_backup") from error
+
+
+def _read_memory_document_read_only(snapshot: Path) -> MemoryDocument:
+    connection = sqlite3.connect(f"file:{snapshot.as_posix()}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    try:
+        metadata = dict(connection.execute("SELECT key, value FROM memory_metadata"))
+        document: dict[str, object] = {
+            "schema_version": metadata["schema_version"],
+            "identity_version": metadata["identity_version"],
+            "projects": MemorySqliteRepository._read_payloads(connection, "projects"),
+        }
+        for record_type, collection_name in RECORD_COLLECTIONS.items():
+            document[collection_name] = MemorySqliteRepository._read_payloads(
+                connection, "memory_records", "record_type = ?", (record_type,),
+            )
+        return MemoryDocument.model_validate(document)
+    finally:
+        connection.close()
+
+
+def _verify_conversation_history(archive: tarfile.TarFile, member: tarfile.TarInfo) -> None:
+    payload = _read_member_bytes(archive, member, maximum=_MAX_CONVERSATION_HISTORY_BYTES)
+    try:
+        raw = json.loads(payload)
+        if not isinstance(raw, dict) or set(raw) != {"conversations", "messages"}:
+            raise BackupError("invalid_backup")
+        conversations_raw = raw["conversations"]
+        messages_raw = raw["messages"]
+        if not isinstance(conversations_raw, list) or not isinstance(messages_raw, list):
+            raise BackupError("invalid_backup")
+        conversation_ids = {Conversation.model_validate(item).id for item in conversations_raw}
+        for item in messages_raw:
+            if ConversationMessage.model_validate(item).conversation_id not in conversation_ids:
+                raise BackupError("invalid_backup")
+    except BackupError:
+        raise
+    except (UnicodeDecodeError, ValueError, ValidationError) as error:
+        raise BackupError("invalid_backup") from error
+
+
+def _verify_archived_skills(
+    archive: tarfile.TarFile,
+    by_name: dict[str, tarfile.TarInfo],
+    manifest: BackupManifest,
+    temporary_root: Path,
+) -> None:
+    registry_component = next((item for item in manifest.components if item.component_id == "config_skills"), None)
+    skill_components = [item for item in manifest.components if item.archive_path.startswith("payload/skills/")]
+    if registry_component is None:
+        if skill_components:
+            raise BackupError("invalid_backup")
+        return
+    try:
+        registry = SkillRegistryState.model_validate_json(
+            _read_member_bytes(
+                archive, by_name[registry_component.archive_path], maximum=_MAX_SKILL_REGISTRY_BYTES,
+            )
+        )
+    except (ValidationError, UnicodeDecodeError, ValueError) as error:
+        raise BackupError("invalid_backup") from error
+    expected_ids = {item.skill_id for item in registry.skills}
+    staged_root = temporary_root / "verified-skills"
+    observed_ids: set[str] = set()
+    for component in skill_components:
+        parts = PurePosixPath(component.archive_path).parts
+        if len(parts) < 4:
+            raise BackupError("invalid_backup")
+        skill_id = parts[2]
+        if skill_id not in expected_ids:
+            raise BackupError("invalid_backup")
+        observed_ids.add(skill_id)
+        destination = staged_root.joinpath(*parts[2:])
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        _copy_member_to_file(archive, by_name[component.archive_path], destination)
+    if observed_ids != expected_ids:
+        raise BackupError("invalid_backup")
+    for registered in registry.skills:
+        try:
+            _, digest = SkillRegistry.inspect_package_path(staged_root / registered.skill_id)
+        except SkillRegistryError as error:
+            raise BackupError("invalid_backup") from error
+        if digest != registered.package_sha256:
+            raise BackupError("invalid_backup")
+
+
+def _read_member_bytes(archive: tarfile.TarFile, member: tarfile.TarInfo, *, maximum: int) -> bytes:
+    if member.size > maximum:
+        raise BackupError("invalid_backup")
+    incoming = archive.extractfile(member)
+    if incoming is None:
+        raise BackupError("invalid_backup")
+    with incoming:
+        payload = incoming.read(member.size + 1)
+    if len(payload) != member.size:
+        raise BackupError("invalid_backup")
+    return payload
+
+
+def _copy_member_to_file(archive: tarfile.TarFile, member: tarfile.TarInfo, destination: Path) -> None:
+    incoming = archive.extractfile(member)
+    if incoming is None:
+        raise BackupError("invalid_backup")
+    count = 0
+    with incoming, destination.open("xb") as outgoing:
+        for chunk in iter(lambda: incoming.read(_CHUNK_BYTES), b""):
+            count += len(chunk)
+            if count > member.size:
+                raise BackupError("invalid_backup")
+            outgoing.write(chunk)
+    if count != member.size:
+        raise BackupError("invalid_backup")
 
 
 def _remove_partial(path: Path) -> None:

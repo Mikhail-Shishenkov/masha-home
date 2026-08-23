@@ -25,6 +25,7 @@ _CHUNK_BYTES = 1024 * 1024
 _SCRYPT_N = 2**15
 _SCRYPT_R = 8
 _SCRYPT_P = 1
+MAX_ENCRYPTED_BUNDLE_BYTES = 2 * 1024 * 1024 * 1024
 
 
 def encrypt_file(source: Path, destination: Path, passphrase: str) -> None:
@@ -46,6 +47,12 @@ def encrypt_file(source: Path, destination: Path, passphrase: str) -> None:
         "cipher": {"name": "aes-256-gcm", "nonce": _b64(nonce)},
     }
     header_bytes = _encode_header(header)
+    try:
+        source_size = source.stat().st_size
+    except OSError as error:
+        raise BackupError("backup_write_failed") from error
+    if source_size + len(_MAGIC) + _HEADER_LENGTH_BYTES + len(header_bytes) + _TAG_BYTES > MAX_ENCRYPTED_BUNDLE_BYTES:
+        raise BackupError("backup_too_large")
     key = _derive_key(passphrase, salt, _SCRYPT_N, _SCRYPT_R, _SCRYPT_P)
     encryptor = Cipher(algorithms.AES(key), modes.GCM(nonce)).encryptor()
     encryptor.authenticate_additional_data(header_bytes)
@@ -67,6 +74,7 @@ def decrypt_file(source: Path, destination: Path, passphrase: str) -> None:
     if not isinstance(passphrase, str) or not passphrase:
         raise BackupError("passphrase_required")
     try:
+        _ensure_bundle_size(source)
         with source.open("rb") as incoming:
             header_bytes, header = _read_header(incoming)
             remaining = source.stat().st_size - incoming.tell()
@@ -108,6 +116,23 @@ def read_public_header(source: Path) -> dict[str, object]:
         raise
     except (OSError, UnicodeDecodeError, ValueError, TypeError, json.JSONDecodeError) as error:
         raise BackupError("invalid_backup") from error
+
+
+def ensure_bundle_size(source: Path) -> None:
+    """Apply the v1 encrypted-envelope bound before any plaintext staging."""
+    try:
+        _ensure_bundle_size(source)
+    except OSError as error:
+        raise BackupError("invalid_backup") from error
+
+
+def _ensure_bundle_size(source: Path) -> None:
+    if _bundle_size(source) > MAX_ENCRYPTED_BUNDLE_BYTES:
+        raise BackupError("backup_too_large")
+
+
+def _bundle_size(source: Path) -> int:
+    return source.stat().st_size
 
 
 def _read_header(incoming: BinaryIO) -> tuple[bytes, dict[str, object]]:

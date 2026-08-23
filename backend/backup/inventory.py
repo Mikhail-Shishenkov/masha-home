@@ -53,6 +53,7 @@ class BackupInventory:
 
     def stage(self) -> tuple[StagedComponent, ...]:
         rows: list[StagedComponent] = []
+        staged_skill_registry: StagedComponent | None = None
         for component_id, relative, archive_path in _REQUIRED:
             source = self.root / relative
             if component_id == "memory_database":
@@ -62,8 +63,11 @@ class BackupInventory:
         for component_id, relative, archive_path in _OPTIONAL:
             source = self.root / relative
             if source.exists():
-                rows.append(self._stage_file(component_id, source, archive_path, required=False))
-        rows.extend(self._stage_installed_skills())
+                staged = self._stage_file(component_id, source, archive_path, required=False)
+                rows.append(staged)
+                if component_id == "config_skills":
+                    staged_skill_registry = staged
+        rows.extend(self._stage_installed_skills(staged_skill_registry))
         return tuple(rows)
 
     def _stage_file(self, component_id: str, source: Path, archive_path: str, *, required: bool) -> StagedComponent:
@@ -107,13 +111,12 @@ class BackupInventory:
             raise BackupError("sqlite_snapshot_failed") from error
         return StagedComponent(self._component(component_id, archive_path, target, True), target)
 
-    def _stage_installed_skills(self) -> tuple[StagedComponent, ...]:
-        registry_file = self.root / "local-data/config/skills.json"
-        if not registry_file.exists():
+    def _stage_installed_skills(self, staged_registry: StagedComponent | None) -> tuple[StagedComponent, ...]:
+        if staged_registry is None:
             return ()
         try:
             registered = SkillRegistryState.model_validate(
-                json.loads(registry_file.read_text(encoding="utf-8"))
+                json.loads(staged_registry.staged_path.read_text(encoding="utf-8"))
             ).skills
         except (OSError, ValueError, ValidationError) as error:
             raise BackupError("skill_registry_invalid") from error
@@ -127,12 +130,6 @@ class BackupInventory:
             package = skill_root / skill_id
             if package.is_symlink() or not package.is_dir():
                 raise BackupError("installed_skill_unavailable")
-            try:
-                _, digest = SkillRegistry.inspect_package_path(package)
-            except SkillRegistryError as error:
-                raise BackupError("installed_skill_invalid") from error
-            if digest != expected:
-                raise BackupError("installed_skill_integrity_failed")
             for source in sorted(package.rglob("*")):
                 if source.is_symlink():
                     raise BackupError("installed_skill_symlink_unsupported")
@@ -144,6 +141,13 @@ class BackupInventory:
                 rows.append(self._stage_file(
                     component_id, source, archive_path, required=False,
                 ))
+            staged_package = self.staging_root / "payload" / "skills" / skill_id
+            try:
+                _, digest = SkillRegistry.inspect_package_path(staged_package)
+            except SkillRegistryError as error:
+                raise BackupError("installed_skill_invalid") from error
+            if digest != expected:
+                raise BackupError("installed_skill_integrity_failed")
         return tuple(rows)
 
     @staticmethod
@@ -160,5 +164,5 @@ class BackupInventory:
             required=required,
             byte_size=size,
             sha256=digest.hexdigest(),
-            format_version="1.0" if path.suffix == ".json" else None,
+            format_version=None,
         )
