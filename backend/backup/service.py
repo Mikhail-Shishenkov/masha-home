@@ -10,6 +10,7 @@ import sqlite3
 import tarfile
 import tempfile
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
@@ -40,6 +41,13 @@ _CHUNK_BYTES = 1024 * 1024
 _MAX_IDENTITY_BYTES = 512 * 1024
 _MAX_SKILL_REGISTRY_BYTES = 512 * 1024
 _MAX_CONVERSATION_HISTORY_BYTES = 32 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class VerifiedBackupMaterialization:
+    verification: BackupVerification
+    manifest: BackupManifest
+    payload_root: Path
 
 
 class WholeHomeBackupService:
@@ -89,11 +97,52 @@ def verify_backup(path: Path, passphrase: str) -> BackupVerification:
         with tempfile.TemporaryDirectory(prefix="masha-backup-verify-") as temporary:
             archive_path = Path(temporary) / "payload.tar"
             decrypt_file(bundle, archive_path, passphrase)
+            return _verify_tar(archive_path, Path(temporary))[0]
+    except BackupError:
+        raise
+    except (OSError, tarfile.TarError, sqlite3.Error, ValidationError, ValueError) as error:
+        raise BackupError("invalid_backup") from error
+
+
+def inspect_verified_backup(path: Path, passphrase: str) -> tuple[BackupVerification, BackupManifest]:
+    """Read authenticated manifest metadata without touching a live Home."""
+    bundle = Path(path)
+    if not bundle.is_file() or bundle.is_symlink():
+        raise BackupError("invalid_backup")
+    try:
+        ensure_bundle_size(bundle)
+        with tempfile.TemporaryDirectory(prefix="masha-backup-inspect-") as temporary:
+            archive_path = Path(temporary) / "payload.tar"
+            decrypt_file(bundle, archive_path, passphrase)
             return _verify_tar(archive_path, Path(temporary))
     except BackupError:
         raise
     except (OSError, tarfile.TarError, sqlite3.Error, ValidationError, ValueError) as error:
         raise BackupError("invalid_backup") from error
+
+
+def materialize_verified_backup(path: Path, passphrase: str, staging_root: Path) -> VerifiedBackupMaterialization:
+    """Copy only verifier-approved v1 components to caller-owned temporary staging."""
+    bundle = Path(path)
+    staging = Path(staging_root)
+    if staging.exists() and any(staging.iterdir()):
+        raise BackupError("recovery_staging_not_empty")
+    staging.mkdir(parents=True, exist_ok=True)
+    archive_path = staging / "_verified-payload.tar"
+    verification, manifest = inspect_verified_backup(bundle, passphrase)
+    decrypt_file(bundle, archive_path, passphrase)
+    payload_root = staging / "payload"
+    try:
+        with tarfile.open(archive_path, mode="r:") as archive:
+            by_name = {member.name: member for member in _read_members_bounded(archive)}
+            for component in manifest.components:
+                member = by_name[component.archive_path]
+                target = staging.joinpath(*PurePosixPath(component.archive_path).parts)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                _copy_member_to_file(archive, member, target)
+    finally:
+        archive_path.unlink(missing_ok=True)
+    return VerifiedBackupMaterialization(verification, manifest, payload_root)
 
 
 def _validate_destination(value: Path) -> Path:
@@ -131,7 +180,7 @@ def _add_file(archive: tarfile.TarFile, name: str, source: Path) -> None:
         archive.addfile(info, incoming)
 
 
-def _verify_tar(path: Path, temporary_root: Path) -> BackupVerification:
+def _verify_tar(path: Path, temporary_root: Path) -> tuple[BackupVerification, BackupManifest]:
     with tarfile.open(path, mode="r:") as archive:
         members = _read_members_bounded(archive)
         seen: set[str] = set()
@@ -157,10 +206,13 @@ def _verify_tar(path: Path, temporary_root: Path) -> BackupVerification:
             raise BackupError("invalid_backup")
         _verify_conversation_history(archive, by_name["payload/conversations/history.json"])
         _verify_archived_skills(archive, by_name, manifest, temporary_root)
-        return BackupVerification(
-            backup_id=manifest.backup_id,
-            created_at=manifest.created_at,
-            components_verified=len(manifest.components),
+        return (
+            BackupVerification(
+                backup_id=manifest.backup_id,
+                created_at=manifest.created_at,
+                components_verified=len(manifest.components),
+            ),
+            manifest,
         )
 
 

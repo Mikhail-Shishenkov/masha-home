@@ -30,6 +30,7 @@ from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWidgets import QApplication, QMainWindow
 
 from backend.application import build_masha_application
+from backend.runtime.runtime_lease import RuntimeLease
 
 from .conversation_bridge import LocalConversationBridge
 from .local_origin import HOME_HOST, MashaLocalResourceHandler, SCHEME_NAME, register_masha_scheme
@@ -131,11 +132,16 @@ class MashaHomeWindow(QMainWindow):
 
 
 def main(argv: list[str] | None = None) -> int:
-    register_masha_scheme()
-    app = QApplication(argv if argv is not None else sys.argv)
-    window = MashaHomeWindow()
-    window.show()
-    return app.exec()
+    lease = RuntimeLease(Path(__file__).resolve().parents[2])
+    lease.acquire()
+    try:
+        register_masha_scheme()
+        app = QApplication(argv if argv is not None else sys.argv)
+        window = MashaHomeWindow()
+        window.show()
+        return app.exec()
+    finally:
+        lease.release()
 
 
 if __name__ == "__main__":

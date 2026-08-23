@@ -2,12 +2,20 @@
 
 from .errors import BackupError
 from .models import BackupVerification
-from .service import WholeHomeBackupService, create_backup, verify_backup
+from .service import (
+    WholeHomeBackupService,
+    create_backup,
+    inspect_verified_backup,
+    materialize_verified_backup,
+    verify_backup,
+)
 
 __all__ = [
     "BackupError",
     "BackupVerification",
     "WholeHomeBackupService",
     "create_backup",
+    "inspect_verified_backup",
+    "materialize_verified_backup",
     "verify_backup",
 ]

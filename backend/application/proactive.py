@@ -10,19 +10,20 @@ from .contracts import ProactiveInteractionListView, ProactiveInteractionView
 class ProactiveApplicationService:
     """Expose only already-delivered local messages and their existing actions."""
 
-    def __init__(self, *, store: ProactiveInteractionStore, clock, runtime=None, policy_store=None, journal=None, daemon=None):
+    def __init__(self, *, store: ProactiveInteractionStore, clock, runtime=None, policy_store=None, journal=None, daemon=None, hold_checker=None):
         self._store = store
         self._clock = clock
         self._runtime = runtime
         self._policy_store = policy_store
         self._journal = journal
         self._daemon = daemon
+        self._hold_checker = hold_checker or (lambda: False)
         self._next_runtime_cycle_at = None
         self._runtime_interval_seconds = None
 
     def refresh(self, *, limit: int = 6) -> ProactiveInteractionListView:
         """Project deliveries; run the existing runtime only at policy cadence."""
-        if self._runtime is not None and self._policy_store is not None:
+        if not self._hold_checker() and self._runtime is not None and self._policy_store is not None:
             policy = self._policy_store.load()
             if policy.runtime_mode == "background" and (
                 self._daemon is None or not self._daemon.is_running()

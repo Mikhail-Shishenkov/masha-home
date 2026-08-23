@@ -27,6 +27,7 @@ from backend.memory.working_memory import WorkingMemory
 from backend.runtime.health import RuntimeHealthService
 from backend.runtime.daily_runtime import DailyRuntime, DailyRuntimeJournal
 from backend.runtime.safety import AutonomySafetyService, AutonomySafetyStore
+from backend.backup.recovery_journal import RecoveryJournal
 from backend.external_observation import (
     DDGSWebSearchProvider,
     ExternalObservationService,
@@ -207,6 +208,7 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
             policy_store=proactive_policy,
             journal=runtime_journal,
             daemon=daemon,
+            hold_checker=RecoveryJournal(core.project_root).is_hold,
             runtime=DailyRuntime(
                 history=core.conversation.history,
                 temporal_engine=core.conversation.temporal_engine,
@@ -239,6 +241,7 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
 
 def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
     root = Path(project_root)
+    RecoveryJournal(root).assert_start_allowed()
     timezone_provider = HomeTimeZoneProvider.from_store(
         HomeTimeZoneStore(root / "local-data" / "config" / "home-timezone.json")
     )
