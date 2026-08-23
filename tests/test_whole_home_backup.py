@@ -1,0 +1,245 @@
+import hashlib
+import json
+import shutil
+import sqlite3
+import tarfile
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
+from backend.backup import BackupError, WholeHomeBackupService, verify_backup
+from backend.backup.crypto import decrypt_file, encrypt_file, read_public_header
+from backend.memory.memory_models import MemoryDocument
+from backend.memory.sqlite_repository import MemorySqliteRepository
+from backend.skills.registry import SkillRegistry
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PASSPHRASE = "backup recovery phrase"
+
+
+def _home(root: Path) -> Path:
+    shutil.copytree(PROJECT_ROOT / "identity", root / "identity")
+    (root / "local-data/conversations").mkdir(parents=True)
+    (root / "local-data/conversations/history.json").write_text(
+        json.dumps({"messages": ["private conversation marker"]}), encoding="utf-8"
+    )
+    repository = MemorySqliteRepository(root / "local-data/memory/masha.sqlite3")
+    payload = json.loads((PROJECT_ROOT / "tests/fixtures/test_memory.json").read_text(encoding="utf-8"))
+    repository.replace_document(MemoryDocument.model_validate(payload), action="backup_fixture")
+    for name in (
+        "home-timezone.json", "models.json", "proactive-policy.json", "autonomy-safety.json",
+        "internet-access.json", "action-autonomy.json",
+    ):
+        file = root / "local-data/config" / name
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text('{"version":"fixture"}', encoding="utf-8")
+    for name in (
+        "external-observations.json", "document-read-receipts.json", "daily-runtime-receipts.json", "agent-runs.json",
+    ):
+        file = root / "local-data/runtime" / name
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text('{"receipt":"fixture"}', encoding="utf-8")
+    _registered_skill(root)
+    # Deliberately present but outside the inventory allowlist.
+    (root / ".env").write_text("SECRET=do-not-back-up", encoding="utf-8")
+    (root / "local-data/random.json").write_text('{"random":true}', encoding="utf-8")
+    (root / "local-data/secrets").mkdir(exist_ok=True)
+    (root / "local-data/secrets/token.json").write_text('{"token":"no"}', encoding="utf-8")
+    (root / "local-data/skill-install-staging").mkdir(exist_ok=True)
+    (root / "local-data/skill-install-staging/payload.bin").write_bytes(b"no")
+    (root / "local-data/config/skill-installs.json").write_text('{"proposals":[]}', encoding="utf-8")
+    (root / "local-data/runtime/local-document-inputs.json").write_text('{"token":"no"}', encoding="utf-8")
+    return root
+
+
+def _registered_skill(root: Path) -> None:
+    package = root / "local-data/skills/backup_skill"
+    package.mkdir(parents=True)
+    (package / "skill.json").write_text(json.dumps({
+        "schema_version": "1.0", "skill_id": "backup_skill", "name": "Backup Skill",
+        "version": "1.0.0", "description": "Fixture skill kept inert during backup.",
+        "entrypoint": "fixture_skill:run", "instructions_file": "SKILL.md",
+        "capabilities": ["local_read"], "requested_scopes": ["fixture:backup"],
+        "risk_level": "observe", "maximum_autonomy_level": 0,
+        "supports_dry_run": True, "supports_rollback": False,
+        "verification": "Inspect only immutable fixture files.",
+    }), encoding="utf-8")
+    (package / "SKILL.md").write_text("# Inert fixture skill\n", encoding="utf-8")
+    (package / "fixture_skill.py").write_text("raise RuntimeError('must not import')\n", encoding="utf-8")
+    registry = SkillRegistry(skills_root=root / "local-data/skills", state_path=root / "local-data/config/skills.json")
+    registry.register("backup_skill")
+
+
+@pytest.fixture
+def home(tmp_path: Path) -> Path:
+    return _home(tmp_path / "home")
+
+
+def _backup(home: Path, tmp_path: Path, name: str = "masha.mashabackup") -> Path:
+    output = tmp_path / name
+    result = WholeHomeBackupService(home).create_backup(output, PASSPHRASE)
+    assert result.verified is True
+    return output
+
+
+def _archive_paths(bundle: Path, tmp_path: Path) -> tuple[dict, set[str]]:
+    tar_path = tmp_path / "inspection.tar"
+    decrypt_file(bundle, tar_path, PASSPHRASE)
+    with tarfile.open(tar_path) as archive:
+        manifest = json.loads(archive.extractfile("manifest.json").read())
+        return manifest, {item.name for item in archive.getmembers()}
+
+
+def test_create_verify_inventory_and_explicit_exclusions(home: Path, tmp_path: Path):
+    bundle = _backup(home, tmp_path)
+    manifest, paths = _archive_paths(bundle, tmp_path)
+
+    assert {"identity", "memory_database", "conversation_history"}.issubset(
+        {item["component_id"] for item in manifest["components"]}
+    )
+    assert "payload/skills/backup_skill/skill.json" in paths
+    assert "payload/skills/backup_skill/fixture_skill.py" in paths
+    assert all("secrets" not in path and "random" not in path for path in paths)
+    assert all("skill-install" not in path and "local-document" not in path for path in paths)
+    assert manifest["recovery_hold_required"] is True
+    assert manifest["secrets_included"] is False
+    checked = verify_backup(bundle, PASSPHRASE)
+    assert checked.components_verified == len(manifest["components"])
+
+
+@pytest.mark.parametrize("relative", [
+    "identity/masha.identity.json", "local-data/memory/masha.sqlite3", "local-data/conversations/history.json",
+])
+def test_missing_required_component_fails(home: Path, tmp_path: Path, relative: str):
+    (home / relative).unlink()
+    with pytest.raises(BackupError, match="required_component_missing"):
+        WholeHomeBackupService(home).create_backup(tmp_path / "failed.mashabackup", PASSPHRASE)
+    assert not (tmp_path / "failed.mashabackup").exists()
+
+
+def test_optional_receipts_may_be_absent_and_sqlite_is_a_single_valid_snapshot(home: Path, tmp_path: Path):
+    shutil.rmtree(home / "local-data/runtime")
+    original = hashlib.sha256((home / "local-data/memory/masha.sqlite3").read_bytes()).hexdigest()
+    bundle = _backup(home, tmp_path)
+    _, paths = _archive_paths(bundle, tmp_path)
+    assert "payload/runtime/external-observations.json" not in paths
+    assert "payload/memory/masha.sqlite3-wal" not in paths
+    assert "payload/memory/masha.sqlite3-shm" not in paths
+    assert hashlib.sha256((home / "local-data/memory/masha.sqlite3").read_bytes()).hexdigest() == original
+    assert verify_backup(bundle, PASSPHRASE).verified
+
+
+def test_bundle_is_encrypted_and_nondeterministic(home: Path, tmp_path: Path):
+    first = _backup(home, tmp_path, "first.mashabackup")
+    second = _backup(home, tmp_path, "second.mashabackup")
+    marker = b"private conversation marker"
+    assert marker not in first.read_bytes()
+    assert first.read_bytes() != second.read_bytes()
+    first_header = read_public_header(first)
+    second_header = read_public_header(second)
+    assert first_header["kdf"]["salt"] != second_header["kdf"]["salt"]
+    assert first_header["cipher"]["nonce"] != second_header["cipher"]["nonce"]
+    assert set(first_header) == {"format_version", "kdf", "cipher"}
+
+
+def test_decrypted_snapshot_component_hashes_match_manifest(home: Path, tmp_path: Path):
+    bundle = _backup(home, tmp_path)
+    tar_path = tmp_path / "inspection.tar"
+    decrypt_file(bundle, tar_path, PASSPHRASE)
+    with tarfile.open(tar_path) as archive:
+        manifest = json.loads(archive.extractfile("manifest.json").read())
+        for component in manifest["components"]:
+            content = archive.extractfile(component["archive_path"]).read()
+            assert len(content) == component["byte_size"]
+            assert hashlib.sha256(content).hexdigest() == component["sha256"]
+
+
+def test_wrong_passphrase_ciphertext_tamper_and_header_tamper_fail_closed(home: Path, tmp_path: Path):
+    bundle = _backup(home, tmp_path)
+    with pytest.raises(BackupError, match="decryption_failed"):
+        verify_backup(bundle, "wrong phrase")
+    changed = tmp_path / "changed.mashabackup"
+    data = bytearray(bundle.read_bytes())
+    data[-20] ^= 1
+    changed.write_bytes(data)
+    with pytest.raises(BackupError, match="decryption_failed"):
+        verify_backup(changed, PASSPHRASE)
+    data = bytearray(bundle.read_bytes())
+    data[20] ^= 1
+    changed.write_bytes(data)
+    with pytest.raises(BackupError):
+        verify_backup(changed, PASSPHRASE)
+
+
+def test_final_bundle_is_only_published_after_verification(home: Path, tmp_path: Path):
+    destination = tmp_path / "masha.mashabackup"
+    with patch("backend.backup.service.verify_backup", side_effect=BackupError("invalid_backup")):
+        with pytest.raises(BackupError, match="invalid_backup"):
+            WholeHomeBackupService(home).create_backup(destination, PASSPHRASE)
+    assert not destination.exists()
+    assert not list(tmp_path.glob("*.partial"))
+
+
+@pytest.mark.parametrize("name", ["../escape", "/absolute", "payload/link"])
+def test_untrusted_archive_paths_and_links_are_rejected(home: Path, tmp_path: Path, name: str):
+    tar_path = tmp_path / "unsafe.tar"
+    with tarfile.open(tar_path, "w") as archive:
+        info = tarfile.TarInfo(name)
+        if name == "payload/link":
+            info.type = tarfile.SYMTYPE
+            info.linkname = "elsewhere"
+            archive.addfile(info)
+        else:
+            info.size = 1
+            archive.addfile(info, __import__("io").BytesIO(b"x"))
+    bundle = tmp_path / "unsafe.mashabackup"
+    encrypt_file(tar_path, bundle, PASSPHRASE)
+    with pytest.raises(BackupError, match="invalid_backup"):
+        verify_backup(bundle, PASSPHRASE)
+
+
+def test_duplicate_and_undeclared_archive_entries_are_rejected(tmp_path: Path):
+    tar_path = tmp_path / "unsafe.tar"
+    with tarfile.open(tar_path, "w") as archive:
+        for _ in range(2):
+            info = tarfile.TarInfo("manifest.json")
+            info.size = 2
+            archive.addfile(info, __import__("io").BytesIO(b"{}"))
+        info = tarfile.TarInfo("payload/extra.txt")
+        info.size = 1
+        archive.addfile(info, __import__("io").BytesIO(b"x"))
+    bundle = tmp_path / "unsafe.mashabackup"
+    encrypt_file(tar_path, bundle, PASSPHRASE)
+    with pytest.raises(BackupError, match="invalid_backup"):
+        verify_backup(bundle, PASSPHRASE)
+
+
+def test_absurd_outer_header_length_is_rejected_before_payload_allocation(tmp_path: Path):
+    bundle = tmp_path / "invalid.mashabackup"
+    bundle.write_bytes(b"MSHBKUP1" + (999_999).to_bytes(4, "big"))
+    with pytest.raises(BackupError, match="invalid_backup"):
+        verify_backup(bundle, PASSPHRASE)
+
+
+def test_installed_skill_symlink_escape_is_rejected(home: Path, tmp_path: Path, monkeypatch):
+    link = home / "local-data/skills/backup_skill/escape.txt"
+    try:
+        link.symlink_to(home / ".env")
+    except OSError:
+        link.write_text("simulated symlink", encoding="utf-8")
+        manifest, _ = SkillRegistry.inspect_package_path(link.parent)
+        digest = json.loads((home / "local-data/config/skills.json").read_text(encoding="utf-8"))["skills"][0]["package_sha256"]
+        original_is_symlink = Path.is_symlink
+
+        def simulated_is_symlink(value: Path) -> bool:
+            return value == link or original_is_symlink(value)
+
+        monkeypatch.setattr(Path, "is_symlink", simulated_is_symlink)
+        monkeypatch.setattr(
+            "backend.backup.inventory.SkillRegistry.inspect_package_path",
+            lambda _: (manifest, digest),
+        )
+    with pytest.raises(BackupError, match="installed_skill_symlink_unsupported"):
+        WholeHomeBackupService(home).create_backup(tmp_path / "failed.mashabackup", PASSPHRASE)

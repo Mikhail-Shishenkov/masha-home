@@ -1,0 +1,237 @@
+"""Create and verify encrypted, portable Whole-Home backups.  No restore lives here."""
+
+from __future__ import annotations
+
+import hashlib
+import io
+import os
+import sqlite3
+import tarfile
+import tempfile
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path, PurePosixPath
+
+from pydantic import ValidationError
+
+from backend.identity.identity_models import IdentityManifest
+
+from .crypto import decrypt_file, encrypt_file
+from .errors import BackupError
+from .inventory import BackupInventory, StagedComponent
+from .models import BackupManifest, BackupVerification
+
+
+_MAX_COMPONENT_BYTES = 512 * 1024 * 1024
+_MAX_ARCHIVE_MEMBERS = 513
+_CHUNK_BYTES = 1024 * 1024
+
+
+class WholeHomeBackupService:
+    """Bounded backup writer and read-only verifier for a single Home root."""
+
+    def __init__(self, project_root: Path):
+        self.project_root = Path(project_root)
+
+    def create_backup(self, destination_path: Path, passphrase: str) -> BackupVerification:
+        destination = _validate_destination(destination_path)
+        partial = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.partial")
+        try:
+            with tempfile.TemporaryDirectory(prefix="masha-backup-") as temporary:
+                temporary_root = Path(temporary)
+                staged = BackupInventory(self.project_root, temporary_root / "staged").stage()
+                manifest = BackupManifest(
+                    backup_id=f"backup-{uuid.uuid4()}",
+                    created_at=datetime.now(timezone.utc),
+                    components=tuple(item.manifest for item in staged),
+                )
+                archive_path = temporary_root / "payload.tar"
+                _write_tar(archive_path, manifest, staged)
+                encrypt_file(archive_path, partial, passphrase)
+                verification = verify_backup(partial, passphrase)
+                os.replace(partial, destination)
+                return verification
+        except BackupError:
+            _remove_partial(partial)
+            raise
+        except (OSError, tarfile.TarError, ValueError) as error:
+            _remove_partial(partial)
+            raise BackupError("backup_creation_failed") from error
+
+
+def create_backup(project_root: Path, destination_path: Path, passphrase: str) -> BackupVerification:
+    """Convenience core API; destination is always explicit and caller-owned."""
+    return WholeHomeBackupService(project_root).create_backup(destination_path, passphrase)
+
+
+def verify_backup(path: Path, passphrase: str) -> BackupVerification:
+    """Verify untrusted encrypted input without extracting or mutating a Home."""
+    bundle = Path(path)
+    if not bundle.is_file() or bundle.is_symlink():
+        raise BackupError("invalid_backup")
+    try:
+        with tempfile.TemporaryDirectory(prefix="masha-backup-verify-") as temporary:
+            archive_path = Path(temporary) / "payload.tar"
+            decrypt_file(bundle, archive_path, passphrase)
+            return _verify_tar(archive_path, Path(temporary))
+    except BackupError:
+        raise
+    except (OSError, tarfile.TarError, sqlite3.Error, ValidationError, ValueError) as error:
+        raise BackupError("invalid_backup") from error
+
+
+def _validate_destination(value: Path) -> Path:
+    destination = Path(value)
+    if destination.suffix != ".mashabackup" or destination.name == ".mashabackup":
+        raise BackupError("backup_destination_invalid")
+    if destination.exists() or destination.is_symlink():
+        raise BackupError("backup_destination_exists")
+    if not destination.parent.is_dir() or destination.parent.is_symlink():
+        raise BackupError("backup_destination_unavailable")
+    return destination
+
+
+def _write_tar(path: Path, manifest: BackupManifest, components: tuple[StagedComponent, ...]) -> None:
+    with tarfile.open(path, mode="w") as archive:
+        _add_bytes(archive, "manifest.json", manifest.model_dump_json(indent=None).encode("utf-8"))
+        for component in components:
+            _add_file(archive, component.manifest.archive_path, component.staged_path)
+
+
+def _add_bytes(archive: tarfile.TarFile, name: str, content: bytes) -> None:
+    info = tarfile.TarInfo(name)
+    info.size = len(content)
+    info.mode = 0o600
+    info.mtime = 0
+    archive.addfile(info, io.BytesIO(content))
+
+
+def _add_file(archive: tarfile.TarFile, name: str, source: Path) -> None:
+    info = tarfile.TarInfo(name)
+    info.size = source.stat().st_size
+    info.mode = 0o600
+    info.mtime = 0
+    with source.open("rb") as incoming:
+        archive.addfile(info, incoming)
+
+
+def _verify_tar(path: Path, temporary_root: Path) -> BackupVerification:
+    with tarfile.open(path, mode="r") as archive:
+        members = archive.getmembers()
+        if not 1 <= len(members) <= _MAX_ARCHIVE_MEMBERS:
+            raise BackupError("invalid_backup")
+        seen: set[str] = set()
+        for member in members:
+            _validate_member(member, seen)
+        by_name = {member.name: member for member in members}
+        manifest_member = by_name.get("manifest.json")
+        if manifest_member is None:
+            raise BackupError("invalid_backup")
+        manifest = _read_manifest(archive, manifest_member)
+        expected = {"manifest.json"} | {component.archive_path for component in manifest.components}
+        if set(by_name) != expected:
+            raise BackupError("invalid_backup")
+        if len(expected) != len(members):
+            raise BackupError("invalid_backup")
+        component_ids = {component.component_id for component in manifest.components}
+        if len(component_ids) != len(manifest.components):
+            raise BackupError("invalid_backup")
+        for component in manifest.components:
+            member = by_name[component.archive_path]
+            _verify_component(archive, member, component.byte_size, component.sha256)
+        _verify_identity(archive, by_name["payload/identity/masha.identity.json"])
+        _verify_memory_snapshot(archive, by_name["payload/memory/masha.sqlite3"], temporary_root)
+        return BackupVerification(
+            backup_id=manifest.backup_id,
+            created_at=manifest.created_at,
+            components_verified=len(manifest.components),
+        )
+
+
+def _validate_member(member: tarfile.TarInfo, seen: set[str]) -> None:
+    name = member.name
+    posix = PurePosixPath(name)
+    if (
+        not member.isfile()
+        or name in seen
+        or not name
+        or posix.is_absolute()
+        or ".." in posix.parts
+        or "\\" in name
+        or len(name) > 512
+        or member.size < 0
+        or member.size > _MAX_COMPONENT_BYTES
+    ):
+        raise BackupError("invalid_backup")
+    seen.add(name)
+
+
+def _read_manifest(archive: tarfile.TarFile, member: tarfile.TarInfo) -> BackupManifest:
+    if member.size > 512 * 1024:
+        raise BackupError("invalid_backup")
+    incoming = archive.extractfile(member)
+    if incoming is None:
+        raise BackupError("invalid_backup")
+    with incoming:
+        payload = incoming.read(member.size + 1)
+    if len(payload) != member.size:
+        raise BackupError("invalid_backup")
+    try:
+        return BackupManifest.model_validate_json(payload)
+    except ValidationError as error:
+        raise BackupError("invalid_backup") from error
+
+
+def _verify_component(archive: tarfile.TarFile, member: tarfile.TarInfo, expected_size: int, expected_sha256: str) -> None:
+    if member.size != expected_size:
+        raise BackupError("invalid_backup")
+    incoming = archive.extractfile(member)
+    if incoming is None:
+        raise BackupError("invalid_backup")
+    digest = hashlib.sha256()
+    count = 0
+    with incoming:
+        for chunk in iter(lambda: incoming.read(_CHUNK_BYTES), b""):
+            count += len(chunk)
+            if count > _MAX_COMPONENT_BYTES:
+                raise BackupError("invalid_backup")
+            digest.update(chunk)
+    if count != expected_size or digest.hexdigest() != expected_sha256:
+        raise BackupError("invalid_backup")
+
+
+def _verify_identity(archive: tarfile.TarFile, member: tarfile.TarInfo) -> None:
+    incoming = archive.extractfile(member)
+    if incoming is None:
+        raise BackupError("invalid_backup")
+    with incoming:
+        payload = incoming.read(member.size + 1)
+    if len(payload) != member.size:
+        raise BackupError("invalid_backup")
+    try:
+        IdentityManifest.model_validate_json(payload)
+    except ValidationError as error:
+        raise BackupError("invalid_backup") from error
+
+
+def _verify_memory_snapshot(archive: tarfile.TarFile, member: tarfile.TarInfo, temporary_root: Path) -> None:
+    snapshot = temporary_root / "memory.sqlite3"
+    incoming = archive.extractfile(member)
+    if incoming is None:
+        raise BackupError("invalid_backup")
+    with incoming, snapshot.open("xb") as outgoing:
+        for chunk in iter(lambda: incoming.read(_CHUNK_BYTES), b""):
+            outgoing.write(chunk)
+    connection = sqlite3.connect(f"file:{snapshot.as_posix()}?mode=ro", uri=True)
+    try:
+        if connection.execute("PRAGMA quick_check").fetchone() != ("ok",):
+            raise BackupError("invalid_backup")
+    finally:
+        connection.close()
+
+
+def _remove_partial(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
