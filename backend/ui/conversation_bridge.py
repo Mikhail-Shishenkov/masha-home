@@ -971,6 +971,7 @@ class LocalConversationBridge(QObject):
             "",
             "PDF (*.pdf)",
         )
+
         if not source:
             self._emit({"kind": "local_document_cancelled"})
             return
@@ -983,6 +984,32 @@ class LocalConversationBridge(QObject):
             self._emit({"kind": "local_document_rejected", "reason": "local_document_unavailable"})
             return
         self._emit({"kind": "local_document_selected", "document": selection.model_dump(mode="json")})
+
+    @Slot(str, str)
+    def resolveHomeAttentionProactive(self, interaction_id: str, decision: str):  # noqa: N802
+        """Resolve one currently visible reminder through the existing lifecycle."""
+        if self._application is None or self._turn_in_flight:
+            self._emit({"kind": "proactive_resolution_rejected"})
+            return
+        attention = self._application.home_attention(conversation_id=self._conversation_id)
+        selected = next((
+            item for item in attention.attention_items
+            if item.kind == "proactive_interaction" and item.interaction_id == interaction_id
+        ), None)
+        if selected is None or decision not in selected.allowed_actions:
+            self._emit({"kind": "proactive_resolution_rejected"})
+            return
+        try:
+            resolved = self._application.resolve_proactive(interaction_id, decision)
+        except (KeyError, ValueError):
+            self._emit({"kind": "proactive_resolution_rejected"})
+            return
+        self._emit({
+            "kind": "home_attention_resolved",
+            "interaction": resolved.model_dump(mode="json"),
+            "attention": self._application.home_attention(conversation_id=self._conversation_id).model_dump(mode="json"),
+            "snapshot": self._session_snapshot("proactive_resolved", event_id=interaction_id, decision=decision).model_dump(mode="json"),
+        })
 
     @Slot(str)
     def clearLocalDocument(self, token: str):  # noqa: N802 - opaque composer token only

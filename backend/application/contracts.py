@@ -380,6 +380,8 @@ class HomeAttentionItemView(UiContract):
     title: str = Field(min_length=1, max_length=200)
     detail: str | None = Field(default=None, max_length=500)
     urgency: Literal["quiet", "notice", "important"]
+    interaction_id: str | None = Field(default=None, min_length=1)
+    allowed_actions: tuple[Literal["acknowledge", "dismiss"], ...] = ()
 class HomeAttentionView(UiContract):
     """Bounded truth for what currently deserves attention in Home."""
 
@@ -476,6 +478,15 @@ class PermissionPendingView(UiContract):
     status: str = Field(min_length=1, max_length=80)
 
 
+class ExternalConnectionView(UiContract):
+    """Local, renderer-safe state of one independent read connection."""
+
+    connector_id: Literal["google-calendar", "google-drive", "yandex-mail", "yandex-disk"]
+    display_name: str = Field(min_length=1, max_length=80)
+    state: Literal["ready", "needs_reconnect", "disconnected"]
+    access: Literal["read_only"] = "read_only"
+
+
 class WorkbenchView(UiContract):
     profiles: tuple[ModelProfileView, ...]
     skills: tuple[SkillWorkbenchView, ...]
@@ -485,6 +496,7 @@ class WorkbenchView(UiContract):
     action_autonomy_enabled: bool
     action_autonomy_level: int = Field(ge=0, le=4)
     active_agent_runs: int = Field(ge=0)
+    connections: tuple[ExternalConnectionView, ...] = ()
 
 
 class SkillInstallPreviewView(UiContract):

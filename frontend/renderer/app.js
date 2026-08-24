@@ -83,6 +83,7 @@ const closeReflections = document.getElementById("close-reflections");
 const workbenchTrigger = document.getElementById("workbench-trigger");
 const workbenchSurface = document.getElementById("workbench-surface");
 const workbenchModels = document.getElementById("workbench-models");
+const workbenchConnections = document.getElementById("workbench-connections");
 const workbenchSkills = document.getElementById("workbench-skills");
 const workbenchPermissions = document.getElementById("workbench-permissions");
 const closeWorkbench = document.getElementById("close-workbench");
@@ -670,9 +671,21 @@ function modelItem(profile) {
 
 function renderWorkbench(view) {
   workbenchModels.replaceChildren();
+  workbenchConnections.replaceChildren();
   workbenchSkills.replaceChildren();
   workbenchPermissions.replaceChildren();
   const profiles = view?.profiles || [];
+  const connectionState = {
+    ready: "Подключён",
+    needs_reconnect: "Нужно переподключить",
+    disconnected: "Не подключён",
+  };
+  for (const connection of view?.connections || []) {
+    workbenchConnections.append(workbenchItem(
+      connection.display_name,
+      `Только чтение · ${connectionState[connection.state] || "Не подключён"}`,
+    ));
+  }
   const familiarProfiles = profiles.filter((profile) => profile.profile_id === "primary" || profile.profile_id === "fast");
   const otherProfiles = profiles.filter((profile) => !familiarProfiles.includes(profile));
   for (const profile of familiarProfiles) {
@@ -726,6 +739,7 @@ function renderWorkbench(view) {
     ));
   }
   if (!workbenchModels.children.length) workbenchModels.append(objectEmpty("Профили моделей пока не настроены."));
+  if (!workbenchConnections.children.length) workbenchConnections.append(objectEmpty("Пока ничего не подключено."));
   if (!workbenchSkills.children.length) workbenchSkills.append(objectEmpty("Навыков в локальном реестре пока нет."));
   if (!workbenchPermissions.children.length) workbenchPermissions.append(objectEmpty("Постоянных разрешений и ожидающих решений нет."));
 }
@@ -1496,6 +1510,23 @@ homeAttentionTitle.textContent =
       copy.append(detail);
     }
 
+    if (item.kind === "proactive_interaction" && item.interaction_id && item.allowed_actions?.length) {
+      const actions = document.createElement("div");
+      actions.className = "attention-actions";
+      const addAction = (decision, label) => {
+        if (!item.allowed_actions.includes(decision)) return;
+        const action = document.createElement("button");
+        action.type = "button";
+        action.textContent = label;
+        action.disabled = inFlight;
+        action.addEventListener("click", () => bridge.resolveHomeAttentionProactive(item.interaction_id, decision));
+        actions.append(action);
+      };
+      addAction("acknowledge", "Понял");
+      addAction("dismiss", "Не сейчас");
+      copy.append(actions);
+    }
+
     row.append(marker, copy);
     attentionLines.append(row);
   }
@@ -2216,6 +2247,14 @@ function handleBridgeEvent(encoded) {
     homeAttention.hidden = false;
     document.documentElement.dataset.homeAttention = "active";
     homeAttentionTrigger.setAttribute("aria-expanded", "true");
+    return;
+  }
+  if (payload.kind === "home_attention_resolved") {
+    applySnapshot(payload.snapshot);
+    renderHomeAttention(payload.attention);
+    surfaceStatus.textContent = payload.interaction.state === "acknowledged"
+      ? "Хорошо, учла."
+      : "Не сейчас — убрала без других изменений.";
     return;
   }
   if (payload.kind === "safety_changed") {

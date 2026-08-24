@@ -525,6 +525,8 @@ class MashaApplication:
                     title=interaction.title,
                     detail=interaction.message,
                     urgency="notice",
+                    interaction_id=interaction.interaction_id,
+                    allowed_actions=interaction.allowed_actions,
                 )
             )
 

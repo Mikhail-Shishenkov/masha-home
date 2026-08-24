@@ -372,6 +372,7 @@ class MemoryIntentHandler:
         shared_continuity=None,
         capability_router: NaturalLanguageCapabilityRouter | None = None,
         human_information=None,
+        on_commitment_terminal=None,
     ):
         self.proposal_store = proposal_store
         self.confirmed_memory = confirmed_memory
@@ -380,6 +381,7 @@ class MemoryIntentHandler:
         self.shared_continuity = shared_continuity
         self.capability_router = capability_router or NaturalLanguageCapabilityRouter()
         self.human_information = human_information
+        self._on_commitment_terminal = on_commitment_terminal
         self._continuity_clarifications: dict[str, ContinuityResolveClarification] = {}
         self._human_entity_clarifications: dict[str, HumanEntityClarification] = {}
         self._presented_entity_sets: dict[str, PresentedEntitySet] = {}
@@ -2018,8 +2020,15 @@ class MemoryIntentHandler:
             )
         return self._confirmation_success(proposal)
 
-    @staticmethod
-    def _confirmation_success(proposal: MemoryProposal) -> MemoryIntentResult:
+    def _confirmation_success(self, proposal: MemoryProposal) -> MemoryIntentResult:
+        if (
+            proposal.record_type == "commitment"
+            and proposal.record_payload.get("status") in {"completed", "cancelled"}
+            and self._on_commitment_terminal is not None
+        ):
+            commitment_id = proposal.target_record_id or proposal.record_payload.get("id")
+            if isinstance(commitment_id, str) and commitment_id:
+                self._on_commitment_terminal(commitment_id)
         if proposal.operation in {"continuity_create", "continuity_update"}:
             response = "Готово. Наша история обновлена."
         elif proposal.operation == MemoryMutationOperation.FORGET.value:

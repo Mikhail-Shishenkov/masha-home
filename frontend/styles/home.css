@@ -426,6 +426,9 @@ html[data-home-attention="active"] .conversation-surface.is-surface-concealed { 
 .workbench-item p { color: rgba(236,223,207,.58); font: 400 12px/1.5 system-ui, sans-serif; }
 .workbench-item button { justify-self: start; padding: 7px 0; border: 0; border-bottom: 1px solid rgba(226,188,126,.38); color: #e9c58e; background: none; font: 600 10px/1.2 system-ui, sans-serif; text-transform: uppercase; letter-spacing: .08em; cursor: pointer; }
 .workbench-item button:disabled { opacity: .42; cursor: not-allowed; }
+.attention-actions { display: flex; flex-wrap: wrap; gap: 13px; margin-top: 11px; }
+.attention-actions button { padding: 0 0 4px; border: 0; border-bottom: 1px solid rgba(226,188,126,.38); color: rgba(239,202,147,.88); background: none; font: 600 10px/1.2 system-ui, sans-serif; letter-spacing: .06em; cursor: pointer; }
+.attention-actions button:disabled { opacity: .45; cursor: not-allowed; }
 .workbench-other { list-style: none; }
 .workbench-other-options { color: rgba(236,223,207,.55); font: 400 12px/1.5 system-ui, sans-serif; }
 .workbench-other-options summary { padding: 7px 0; color: rgba(239,202,147,.72); cursor: pointer; }

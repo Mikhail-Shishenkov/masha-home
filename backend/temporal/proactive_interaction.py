@@ -51,6 +51,14 @@ class ProactiveInteractionStore:
     def acknowledge(self, event_id: str, now: datetime): return self._terminal_transition(event_id, "acknowledged", "acknowledged_at", ProactiveEventState.ACKNOWLEDGED, now)
     def dismiss(self, event_id: str, now: datetime): return self._terminal_transition(event_id, "dismissed", "dismissed_at", ProactiveEventState.DISMISSED, now)
 
+    def dismiss_delivered_reminders_for_commitment(self, commitment_id: str, now: datetime):
+        """Close only delivered commitment reminders; check-ins remain untouched."""
+        with self.repository._connection() as c:
+            rows = c.execute("""SELECT pi.event_id FROM proactive_interactions pi
+                JOIN temporal_events te ON te.id=pi.temporal_event_id
+                WHERE pi.state='delivered' AND te.source_type='commitment' AND te.source_id=?""", (commitment_id,)).fetchall()
+        return tuple(self.dismiss(row["event_id"], now) for row in rows)
+
     def _terminal_transition(self, event_id, state, field, event_state, now):
         result = self._transition(event_id, state, field, now)
         if result.get("proactive_event_id"):

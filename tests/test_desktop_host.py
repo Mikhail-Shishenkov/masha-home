@@ -167,7 +167,8 @@ def test_webchannel_bridge_exposes_only_typed_allowlisted_slots():
         "loadInitialState",
         "loadRecentConversations",
         "loadMoreConversations",
-        "loadHomeAttention",
+            "loadHomeAttention",
+            "resolveHomeAttentionProactive",
         "loadCommitments",
         "loadMoreCommitments",
         "loadAgentRuns",
@@ -467,6 +468,14 @@ def test_local_conversation_bridge_serializes_one_real_isolated_turn(tmp_path):
     bridge.close()
 
 
+def test_static_home_surfaces_keep_attention_actions_and_connection_shelf_human():
+    root = Path(__file__).resolve().parents[1]
+    html = (root / "frontend" / "index.html").read_text(encoding="utf-8")
+    renderer = (root / "frontend" / "renderer" / "app.js").read_text(encoding="utf-8")
+    assert "Что подключено" in html and "workbench-connections" in html
+    assert "resolveHomeAttentionProactive" in renderer
+    assert "Понял" in renderer and "Не сейчас" in renderer
+
 def test_desktop_bridge_loads_bounded_memory_and_continuity_without_mutation(tmp_path):
     from backend.application import build_masha_application
     from backend.llm.model_router import ModelRouter
@@ -523,7 +532,12 @@ def test_desktop_bridge_projects_workbench_and_switches_only_available_profile(t
     bridge.loadWorkbench()
     loaded = next(item for item in events if item["kind"] == "workbench_loaded")
     fast = next(item for item in loaded["workbench"]["profiles"] if item["profile_id"] == "fast")
+    assert [item["connector_id"] for item in loaded["workbench"]["connections"]] == [
+        "google-calendar", "google-drive", "yandex-mail", "yandex-disk",
+    ]
+    assert {item["access"] for item in loaded["workbench"]["connections"]} == {"read_only"}
     assert "grant_id" not in json.dumps(loaded, ensure_ascii=False)
+    assert "secret_ref" not in json.dumps(loaded, ensure_ascii=False)
     assert "local-data" not in json.dumps(loaded, ensure_ascii=False)
     assert loaded["snapshot"]["composition"]["primary_surface_id"] == "home.workbench"
 

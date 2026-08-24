@@ -100,6 +100,24 @@ def test_public_composition_root_builds_without_cli(tmp_path):
     assert (root / "local-data" / "conversations" / "history.json").exists() is False
 
 
+def test_workbench_projects_four_local_read_connections_without_network(tmp_path, monkeypatch):
+    import socket
+
+    _, _, application = _application(tmp_path)
+    monkeypatch.setattr(socket, "create_connection", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("network")))
+
+    connections = application.workbench().connections
+
+    assert [(item.connector_id, item.state, item.access) for item in connections] == [
+        ("google-calendar", "disconnected", "read_only"),
+        ("google-drive", "disconnected", "read_only"),
+        ("yandex-mail", "disconnected", "read_only"),
+        ("yandex-disk", "disconnected", "read_only"),
+    ]
+    rendered = str([item.model_dump() for item in connections])
+    assert "secret_ref" not in rendered and "oauth" not in rendered.casefold()
+
+
 def test_typed_human_information_api_searches_and_proposes_restore_without_fake_command(tmp_path):
     root, _, application = _application(tmp_path)
     repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")
@@ -1294,6 +1312,51 @@ def test_opted_in_natural_two_minute_reminder_reaches_home_once(tmp_path):
     assert status.proactive_level == 1
     assert status.runtime_mode == "background"
     assert status.commitment_reminders_allowed is True
+
+
+def test_home_attention_projects_and_resolves_only_its_visible_proactive_item(tmp_path):
+    from backend.temporal.proactive import ProactiveDecisionEngine
+    from backend.temporal.temporal_models import ProactiveDecision
+    from backend.temporal.temporal_runtime import TemporalRuntime
+
+    _, _, application = _application(tmp_path)
+    repository = application._conversation._conversation.memory_retriever.memory_store
+    now = datetime(2026, 8, 13, 8, 0, tzinfo=timezone.utc)
+    clock = FixedClock(now)
+    engine = TemporalEngine(clock)
+    document = repository.read_document()
+    commitment = document.commitments[0].model_copy(update={"due_at": now - timedelta(minutes=1)})
+    repository.replace_document(document.model_copy(update={"commitments": [commitment]}))
+    application._conversation._conversation.temporal_engine = engine
+    application._conversation._conversation.memory_intent_handler.temporal_engine = engine
+    application._proactive._clock = clock
+    event = TemporalRuntime(repository, engine).recover().events[0]
+    candidate = ProactiveDecisionEngine.candidate(
+        event,
+        commitment_text=commitment.text,
+        temporal_context=engine.context(None),
+        decision=ProactiveDecision.REMIND,
+        generated_at=now,
+    )
+    application._proactive._store.ensure_candidate(candidate)
+    application._proactive._store.mark_delivered(event.event_id, "Пора поставить чайник.", now)
+
+    before = application._proactive._store.list()
+    attention = application.home_attention()
+    item = next(item for item in attention.attention_items if item.kind == "proactive_interaction")
+    assert item.interaction_id == event.event_id
+    assert item.allowed_actions == ("acknowledge", "dismiss")
+    assert all(
+        row.interaction_id is None and row.allowed_actions == ()
+        for row in attention.attention_items if row.kind != "proactive_interaction"
+    )
+    assert application.home_attention().model_dump() == attention.model_dump()
+    assert application._proactive._store.list() == before
+
+    application.resolve_proactive(item.interaction_id, "acknowledge")
+    refreshed = application.home_attention()
+    assert refreshed.pending_interactions_count == 0
+    assert not any(row.kind == "proactive_interaction" for row in refreshed.attention_items)
 
 
 def test_open_continuity_threads_are_newest_first_and_restart_safe(tmp_path):

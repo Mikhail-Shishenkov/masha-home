@@ -10,8 +10,9 @@ from backend.memory.sqlite_repository import MemorySqliteRepository
 from backend.temporal.proactive import ProactiveDecisionEngine, ProactivePolicy
 from backend.temporal.proactive_interaction import ProactiveInteractionService, ProactiveInteractionStore
 from backend.temporal.proactive_interaction import ProactiveInteractionUnavailableError
+from backend.temporal.proactive_events import ProactiveEvent, ProactiveEventState, ProactiveEventStore, ProactiveEventType, check_in_event_id
 from backend.temporal.temporal_engine import FixedClock, TemporalEngine
-from backend.temporal.temporal_models import ProactiveDecision
+from backend.temporal.temporal_models import CheckInCandidate, ProactiveDecision
 from backend.temporal.temporal_runtime import TemporalRuntime
 
 ROOT = __import__('pathlib').Path(__file__).resolve().parents[1]
@@ -71,3 +72,32 @@ def test_daily_limit_uses_moscow_calendar_day(tmp_path, canonical_memory):
 
     assert count == 0
     assert latest == previous_moscow_day
+
+
+def test_terminal_commitment_closes_only_its_delivered_reminder(tmp_path, canonical_memory):
+    repo, candidate = _candidate(tmp_path, canonical_memory)
+    store = ProactiveInteractionStore(repo)
+    store.ensure_candidate(candidate)
+    store.mark_delivered(candidate.event.event_id, "Напомню про отчёт.", NOW)
+
+    checkin_id = check_in_event_id("message-1")
+    events = ProactiveEventStore(repo)
+    events.create(ProactiveEvent(
+        event_id=checkin_id, event_type=ProactiveEventType.CHECK_IN,
+        source_type="absence", source_id="message-1", created_at=NOW,
+        detected_at=NOW,
+    ))
+    events.update_state(checkin_id, ProactiveEventState.CANDIDATE, NOW)
+    store.ensure_candidate(CheckInCandidate(
+        event_id=checkin_id, absence_duration_seconds=3600,
+        last_message_at=NOW, current_local_time=NOW, proactive_level=2,
+    ))
+    store.mark_delivered(checkin_id, "Просто заглянула.", NOW)
+
+    resolved = store.dismiss_delivered_reminders_for_commitment(
+        candidate.source_commitment_id, NOW,
+    )
+
+    assert [item["event_id"] for item in resolved] == [candidate.event.event_id]
+    assert store.get(candidate.event.event_id)["state"] == "dismissed"
+    assert store.get(checkin_id)["state"] == "delivered"

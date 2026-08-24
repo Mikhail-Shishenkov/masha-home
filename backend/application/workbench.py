@@ -17,10 +17,11 @@ from .contracts import (
 class WorkbenchApplicationService:
     """Read existing operating controls without turning the Home into an admin API."""
 
-    def __init__(self, *, models, permissions, installer=None):
+    def __init__(self, *, models, permissions, installer=None, connections=None):
         self._models = models
         self._permissions = permissions
         self._installer = installer
+        self._connections = connections
 
     def view(self, *, profile_limit: int = 4, skill_limit: int = 6, grant_limit: int = 6) -> WorkbenchView:
         snapshot: PermissionsSnapshot = self._permissions()
@@ -85,6 +86,7 @@ class WorkbenchApplicationService:
             action_autonomy_enabled=snapshot.action_autonomy.enabled,
             action_autonomy_level=snapshot.action_autonomy.maximum_autonomy_level,
             active_agent_runs=snapshot.active_agent_runs,
+            connections=() if self._connections is None else self._connections.view(),
         )
 
     @staticmethod

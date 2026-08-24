@@ -65,6 +65,7 @@ from .continuity import ContinuityApplicationService
 from .home_snapshot import HomeSnapshotService
 from .human_information import HumanInformationService
 from .external_context import LocalExternalContextHintProvider
+from .external_connections import ExternalConnectionApplicationService
 from .model_settings import ModelSettingsService
 from .local_documents import LocalDocumentTurnService
 from .memory_candidates import MemoryCandidateApplicationService
@@ -101,6 +102,13 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
     proactive_policy = ProactivePolicyStore(config / "proactive-policy.json")
     runtime_journal = DailyRuntimeJournal(runtime / "daily-runtime-receipts.json")
     daemon = ProactiveDaemon(core.project_root)
+    connector_secret_store = WindowsCredentialManagerSecretStore()
+    connector_config_stores = {
+        "google-calendar": GoogleCalendarConfigStore(config / "google-calendar.json"),
+        "google-drive": GoogleDriveConfigStore(config / "google-drive.json"),
+        "yandex-mail": YandexMailConfigStore(config / "yandex-mail.json"),
+        "yandex-disk": YandexDiskConfigStore(config / "yandex-disk.json"),
+    }
     safety = AutonomySafetyService(store=AutonomySafetyStore(config / "autonomy-safety.json"))
     interactions = ProactiveInteractionStore(
         core.repository,
@@ -237,6 +245,10 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
             models=models,
             permissions=permissions_snapshot,
             installer=installer,
+            connections=ExternalConnectionApplicationService(
+                config_stores=connector_config_stores,
+                secret_store=connector_secret_store,
+            ),
         ),
         memory_candidates=MemoryCandidateApplicationService(
             core.conversation.passive_memory_service
@@ -282,6 +294,10 @@ def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
         clock=temporal_engine.clock.now_utc,
     )
     presented_read_sets = PresentedReadSetRegistry()
+    interactions = ProactiveInteractionStore(
+        repository,
+        home_timezone=temporal_engine.home_timezone.tzinfo,
+    )
     conversation = ConversationService(
         identity_kernel=identity,
         memory_retriever=MemoryRetriever(repository),
@@ -305,12 +321,13 @@ def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
                 )
             ),
             human_information=human_information,
+            on_commitment_terminal=lambda commitment_id: interactions.dismiss_delivered_reminders_for_commitment(
+                commitment_id,
+                temporal_engine.clock.now_utc(),
+            ),
         ),
         model_profiles=profiles,
-        proactive_interactions=ProactiveInteractionStore(
-            repository,
-            home_timezone=temporal_engine.home_timezone.tzinfo,
-        ),
+        proactive_interactions=interactions,
         temporal_engine=temporal_engine,
         shared_continuity=shared_continuity,
         reflection_intent_handler=ReflectionIntentHandler(reflection),
