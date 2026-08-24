@@ -17,6 +17,18 @@ from backend.runtime.safety import AutonomySafetyStore
 from backend.backup.recovery_journal import RecoveryJournal
 
 from .proactive import ProactivePolicyStore
+from .temporal_runtime import due_aware_cycle_delay
+
+
+_WAKE_REVISION_UNSET = object()
+
+
+def request_proactive_wakeup(project_root: Path) -> None:
+    """Notify the existing runtime that deadline state changed; no domain data lives here."""
+    runtime_dir = Path(project_root) / "local-data" / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    wake_path = runtime_dir / "proactive-daemon.wake"
+    wake_path.touch()
 
 
 class ProactiveDaemon:
@@ -34,6 +46,7 @@ class ProactiveDaemon:
         self._lease = PidLease(self.lock_path, process_probe=process_probe or default_process_probe)
         self.stop_path = self.runtime_dir / "proactive-daemon.stop"
         self.status_path = self.runtime_dir / "proactive-daemon-status.json"
+        self.wake_path = self.runtime_dir / "proactive-daemon.wake"
         self.journal = DailyRuntimeJournal(self.runtime_dir / "daily-runtime-receipts.json")
         self.safety_store = AutonomySafetyStore(
             self.project_root / "local-data" / "config" / "autonomy-safety.json"
@@ -52,6 +65,7 @@ class ProactiveDaemon:
             descriptor = self._lease.descriptor
             cycles = 0
             while not self.stop_path.exists() and (max_cycles is None or cycles < max_cycles):
+                cycle_wake_revision = self._wake_revision()
                 journal = RecoveryJournal(self.project_root)
                 if not journal.background_activity_allowed():
                     reason = "recovery_hold_active" if journal.is_hold() else "recovery_active"
@@ -61,6 +75,7 @@ class ProactiveDaemon:
                     self._status("stopped", result="suppress", reason="emergency_stop_engaged", error=None, interval=None)
                     break
                 interval = 300
+                wait_seconds = float(interval)
                 try:
                     from backend.conversation.cli import build_service
                     service = build_service(project_root=self.project_root)
@@ -69,7 +84,12 @@ class ProactiveDaemon:
                     if policy.runtime_mode == "background":
                         receipt = DailyRuntime(history=service.history, temporal_engine=service.temporal_engine, repository=service.memory_retriever.memory_store, identity_kernel=service.identity_kernel, router=service.router, model_profiles=service.model_profiles, safety_store=self.safety_store).run_cycle(policy)
                         self.journal.append(receipt)
-                        self._status("running", result=receipt.result, reason=receipt.reason, error=None, interval=interval)
+                        wait_seconds = due_aware_cycle_delay(
+                            service.memory_retriever.memory_store,
+                            now=datetime.now(timezone.utc),
+                            cadence_seconds=interval,
+                        )
+                        self._status("running", result=receipt.result, reason=receipt.reason, error=None, interval=wait_seconds)
                     else:
                         self._status("running", result="manual_mode", reason="background_disabled", error=None, interval=interval)
                 except Exception as error:
@@ -78,7 +98,7 @@ class ProactiveDaemon:
                     self._status("running", result="error", reason="cycle_error", error=str(error), interval=interval)
                 cycles += 1
                 if max_cycles is None or cycles < max_cycles:
-                    self._wait(interval)
+                    self._wait(wait_seconds, since_revision=cycle_wake_revision)
         finally:
             if descriptor is not None:
                 self._lease.release()
@@ -113,12 +133,27 @@ class ProactiveDaemon:
         self._lease.acquire()
         return self._lease.descriptor
 
-    def _wait(self, seconds):
+    def _wait(self, seconds, *, since_revision=_WAKE_REVISION_UNSET):
+        wake_revision = (
+            self._wake_revision()
+            if since_revision is _WAKE_REVISION_UNSET
+            else since_revision
+        )
         remaining = seconds
         while remaining > 0 and not self.stop_path.exists() and not self.safety_store.is_engaged():
+            if self._wake_revision() != wake_revision:
+                return
             step = min(1, remaining)
             self.sleep(step)
             remaining -= step
+            if self._wake_revision() != wake_revision:
+                return
+
+    def _wake_revision(self):
+        try:
+            return self.wake_path.stat().st_mtime_ns
+        except FileNotFoundError:
+            return None
 
     def _status(self, daemon, *, result, reason, error, interval):
         now = datetime.now(timezone.utc)

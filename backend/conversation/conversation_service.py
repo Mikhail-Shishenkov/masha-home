@@ -72,6 +72,24 @@ _UNSUPPORTED_DOCUMENT_CLAIM = re.compile(
     r"\b(?:я\s+)?(?:прочитала|посмотрела|изучила)\s+(?:эт(?:от|у)\s+)?(?:pdf|пдф|документ)\b",
     re.IGNORECASE,
 )
+_FALSE_WEB_DENIAL = re.compile(
+    r"(?:у\s+меня\s+нет\s+доступа\s+к\s+интернету|"
+    r"я\s+не\s+(?:могу|умею)\s+(?:искать|проверить|посмотреть)\s+(?:в\s+)?(?:интернете|сети))",
+    re.IGNORECASE,
+)
+_FALSE_MAIL_DENIAL = re.compile(
+    r"(?:у\s+меня\s+нет\s+доступа\s+к\s+почте|я\s+не\s+(?:могу|умею)\s+(?:проверить|читать|посмотреть)\s+почту)",
+    re.IGNORECASE,
+)
+_FALSE_CALENDAR_DENIAL = re.compile(
+    r"(?:у\s+меня\s+нет\s+доступа\s+к\s+календарю|я\s+не\s+(?:могу|умею)\s+(?:проверить|читать|посмотреть)\s+календарь)",
+    re.IGNORECASE,
+)
+_FALSE_FILES_DENIAL = re.compile(
+    r"(?:у\s+меня\s+нет\s+доступа\s+к\s+(?:drive|диску|файлам)|"
+    r"я\s+не\s+(?:могу|умею)\s+(?:проверить|читать|посмотреть)\s+(?:drive|диск|файлы))",
+    re.IGNORECASE,
+)
 _SHARED_CONTINUITY_QUERY = re.compile(
     r"\b(?:между\s+нами|наш(?:а|ей|у)\s+истори(?:я|и|ю)|общ(?:ая|ей|ую)\s+истори(?:я|и|ю)|"
     r"открыт(?:ая|ые|ую)\s+нит(?:ь|и)|что\s+у\s+нас\s+продолжается)\b"
@@ -156,6 +174,26 @@ def remove_unsupported_document_claim(value: str) -> str:
     return _UNSUPPORTED_DOCUMENT_CLAIM.sub("Я не читала этот документ", value)
 
 
+def ground_completed_capability_claims(
+    value: str,
+    *,
+    completed_web: bool,
+    completed_mail: bool = False,
+    completed_calendar: bool = False,
+    completed_files: bool = False,
+) -> str:
+    """A completed application receipt outranks contradictory model prose."""
+    if completed_web:
+        value = _FALSE_WEB_DENIAL.sub("Я проверила доступные интернет-источники", value)
+    if completed_mail:
+        value = _FALSE_MAIL_DENIAL.sub("Я проверила почту", value)
+    if completed_calendar:
+        value = _FALSE_CALENDAR_DENIAL.sub("Я проверила календарь", value)
+    if completed_files:
+        value = _FALSE_FILES_DENIAL.sub("Я прочитала выбранный файл", value)
+    return value
+
+
 class ConversationService:
     def __init__(
         self,
@@ -182,6 +220,7 @@ class ConversationService:
         google_drive_service=None,
         yandex_mail_service=None,
         yandex_disk_service=None,
+        home_capability_provider=None,
     ):
         self.identity_kernel = identity_kernel
         self.memory_retriever = memory_retriever
@@ -205,6 +244,7 @@ class ConversationService:
         self.google_drive_service = google_drive_service
         self.yandex_mail_service = yandex_mail_service
         self.yandex_disk_service = yandex_disk_service
+        self.home_capability_provider = home_capability_provider
         self.last_recall_result = None
         self.last_external_observation = None
         self.last_external_observations = ()
@@ -476,6 +516,16 @@ class ConversationService:
             model_messages = self._replace_current_model_request(model_messages, resolved_mail_request.model_message())
         if resolved_disk_document_request is not None:
             model_messages = self._replace_current_model_request(model_messages, resolved_disk_document_request.model_message())
+        try:
+            home_capabilities = (
+                {}
+                if self.home_capability_provider is None
+                else self.home_capability_provider().model_dump(mode="json")
+            )
+        except Exception:
+            # Capability projection is descriptive only and must never break a
+            # healthy conversation if local config metadata is malformed.
+            home_capabilities = {}
         request = self.context_compiler.compile(
             messages=model_messages,
             identity_context=self.identity_kernel.build_context(),
@@ -499,6 +549,7 @@ class ConversationService:
                     ))
                 )
             ),
+            home_capabilities=home_capabilities,
         )
         try:
             response = self.router.generate(request)
@@ -533,6 +584,23 @@ class ConversationService:
                 remove_model_authored_urls(grounded_response)
                 or "Проверила источники, но не смогла уверенно сформулировать ответ."
             )
+        grounded_response = ground_completed_capability_claims(
+            grounded_response,
+            completed_web=any(
+                item.request.kind.value == "web_search"
+                and item.status is ObservationStatus.COMPLETED
+                for item in external_observations
+            ),
+            completed_mail=mail_outcome is not None and mail_outcome.status in {
+                "read_completed", "important_completed",
+            },
+            completed_calendar=calendar_outcome is not None and calendar_outcome.status == "completed",
+            completed_files=(
+                drive_outcome is not None and drive_outcome.status == "read_completed"
+            ) or (
+                disk_outcome is not None and disk_outcome.status == "read_completed"
+            ),
+        )
         grounded_completed_items = tuple(
             str(item.get("data", {}).get("content") or item.get("data", {}).get("text") or "")
             for item in self.working_memory.get_all()

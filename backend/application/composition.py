@@ -49,7 +49,7 @@ from backend.skills.installer import SkillInstallProposalStore, SkillInstallerSe
 from backend.skills.permissions import PermissionControlService, PermissionsSnapshot
 from backend.skills.registry import SkillRegistry
 from backend.temporal.proactive import ProactivePolicyStore
-from backend.temporal.proactive_daemon import ProactiveDaemon
+from backend.temporal.proactive_daemon import ProactiveDaemon, request_proactive_wakeup
 from backend.temporal.proactive_interaction import ProactiveInteractionStore
 from backend.temporal.temporal_engine import TemporalEngine
 from backend.temporal.timezone_provider import HomeTimeZoneProvider, HomeTimeZoneStore
@@ -66,6 +66,7 @@ from .home_snapshot import HomeSnapshotService
 from .human_information import HumanInformationService
 from .external_context import LocalExternalContextHintProvider
 from .external_connections import ExternalConnectionApplicationService
+from .home_capabilities import HomeCapabilityApplicationService
 from .model_settings import ModelSettingsService
 from .local_documents import LocalDocumentTurnService
 from .memory_candidates import MemoryCandidateApplicationService
@@ -130,6 +131,17 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
         runtime_root=runtime / "skill-installs",
     )
     internet_policy = InternetAccessPolicyStore(config / "internet-access.json")
+    connections = ExternalConnectionApplicationService(
+        config_stores=connector_config_stores,
+        secret_store=connector_secret_store,
+    )
+    capabilities = HomeCapabilityApplicationService(
+        connections=connections,
+        internet_policy=internet_policy,
+        safety_store=safety.store,
+        proactive_policy=proactive_policy,
+    )
+    core.conversation.home_capability_provider = capabilities.snapshot
     document_store = DocumentReadStore(runtime / "document-read-receipts.json")
     core.conversation.external_observation_service = ExternalObservationService(
         provider=DDGSWebSearchProvider(
@@ -223,6 +235,7 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
             journal=runtime_journal,
             daemon=daemon,
             hold_checker=RecoveryJournal(core.project_root).is_hold,
+            wake_path=runtime / "proactive-daemon.wake",
             runtime=DailyRuntime(
                 history=core.conversation.history,
                 temporal_engine=core.conversation.temporal_engine,
@@ -245,10 +258,7 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
             models=models,
             permissions=permissions_snapshot,
             installer=installer,
-            connections=ExternalConnectionApplicationService(
-                config_stores=connector_config_stores,
-                secret_store=connector_secret_store,
-            ),
+            connections=connections,
         ),
         memory_candidates=MemoryCandidateApplicationService(
             core.conversation.passive_memory_service
@@ -325,6 +335,7 @@ def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
                 commitment_id,
                 temporal_engine.clock.now_utc(),
             ),
+            on_timed_commitment_changed=lambda: request_proactive_wakeup(root),
         ),
         model_profiles=profiles,
         proactive_interactions=interactions,

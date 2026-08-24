@@ -529,6 +529,36 @@ def test_workbench_model_selection_is_manual_and_keeps_other_domains_unchanged(t
     assert history_path.exists() is before["history_exists"]
 
 
+def test_workbench_filters_empty_profile_projection_before_renderer_boundary(tmp_path):
+    from backend.llm.model_profiles import ModelProfileStore
+
+    root = _isolated_root(tmp_path)
+    store = ModelProfileStore(root / "local-data" / "config" / "models.json")
+    data = json.loads(store.path.read_text(encoding="utf-8"))
+    data["profiles"].append({
+        "profile_id": "empty-option",
+        "display_name": "",
+        "provider_id": "ollama-local",
+        "model_id": "",
+        "timeout_seconds": 30,
+        "think": False,
+        "capabilities": ["text"],
+        "enabled": False,
+        "description": "",
+    })
+    store.path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    application = build_masha_application(
+        project_root=root,
+        router=ModelRouter([LocalProfileProvider()]),
+    )
+
+    profiles = application.workbench().profiles
+
+    assert profiles
+    assert all(item.profile_id.strip() and item.display_name.strip() and item.model_id.strip() for item in profiles)
+    assert all(item.profile_id != "empty-option" for item in profiles)
+
+
 def test_commitment_projection_uses_temporal_engine_and_keeps_exact_due_open(tmp_path):
     root, _, application = _application(tmp_path)
     repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")

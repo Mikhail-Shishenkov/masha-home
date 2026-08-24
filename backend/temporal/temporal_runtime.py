@@ -16,6 +16,33 @@ EVENT_TYPE = "commitment_due"
 SOURCE_TYPE = "commitment"
 
 
+def next_open_commitment_due_at(repository, *, now: datetime) -> datetime | None:
+    """Return the nearest future deadline from the canonical commitment store."""
+    document = repository.read_document()
+    if document is None:
+        return None
+    now_utc = now.astimezone(timezone.utc)
+    due_times = (
+        item.due_at.astimezone(timezone.utc)
+        for item in document.commitments
+        if item.status.value == "open" and item.due_at is not None
+    )
+    return min((due for due in due_times if due > now_utc), default=None)
+
+
+def due_aware_cycle_delay(repository, *, now: datetime, cadence_seconds: float) -> float:
+    """Wake just after the next due boundary, never later than policy cadence."""
+    if repository is None:
+        return float(cadence_seconds)
+    due_at = next_open_commitment_due_at(repository, now=now)
+    if due_at is None:
+        return float(cadence_seconds)
+    # TemporalEngine classifies overdue strictly after due_at.  One second is
+    # enough to cross that boundary without creating an early reminder.
+    until_overdue = max(0.0, (due_at - now.astimezone(timezone.utc)).total_seconds()) + 1.0
+    return min(float(cadence_seconds), until_overdue)
+
+
 def commitment_due_event_id(commitment_id: str, due_at: datetime) -> str:
     """Return the stable ID for one commitment/deadline occurrence."""
     due_utc = due_at.astimezone(timezone.utc).isoformat()

@@ -493,6 +493,21 @@ class MashaApplication:
                 )
             )
 
+        # A delivered interaction must remain reachable until the human
+        # resolves it; future planning cannot crowd it out of Attention.
+        if proactive.items and len(attention_items) < 4:
+            interaction = proactive.items[0]
+            attention_items.append(
+                HomeAttentionItemView(
+                    kind="proactive_interaction",
+                    title=interaction.title,
+                    detail=interaction.message,
+                    urgency="notice",
+                    interaction_id=interaction.interaction_id,
+                    allowed_actions=interaction.allowed_actions,
+                )
+            )
+
         # Then look forward.
         for commitment in upcoming:
             if len(attention_items) >= 4:
@@ -512,13 +527,19 @@ class MashaApplication:
                 )
             )
 
-        # Proactivity uses only the remaining attention space.
+        # Additional delivered interactions use only the remaining space.
         remaining_slots = max(
             0,
             4 - len(attention_items),
         )
 
-        for interaction in proactive.items[:remaining_slots]:
+        already_presented = {item.interaction_id for item in attention_items if item.interaction_id}
+        for interaction in (
+            item for item in proactive.items
+            if item.interaction_id not in already_presented
+        ):
+            if remaining_slots <= 0:
+                break
             attention_items.append(
                 HomeAttentionItemView(
                     kind="proactive_interaction",
@@ -529,6 +550,7 @@ class MashaApplication:
                     allowed_actions=interaction.allowed_actions,
                 )
             )
+            remaining_slots -= 1
 
         return HomeAttentionView(
             observed_at=observed_at,

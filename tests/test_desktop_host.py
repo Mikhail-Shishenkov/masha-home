@@ -474,7 +474,12 @@ def test_static_home_surfaces_keep_attention_actions_and_connection_shelf_human(
     renderer = (root / "frontend" / "renderer" / "app.js").read_text(encoding="utf-8")
     assert "Что подключено" in html and "workbench-connections" in html
     assert "resolveHomeAttentionProactive" in renderer
-    assert "Понял" in renderer and "Не сейчас" in renderer
+    styles = (root / "frontend" / "styles" / "home.css").read_text(encoding="utf-8")
+    assert "Понял" in renderer and "Убрать" in renderer
+    assert "просроченное дело" in renderer and "свежая просрочка" not in renderer
+    assert "showReminderToast" in renderer and "playReminderCueOnce" in renderer
+    assert 'id="reminder-toast"' in html and 'aria-live="polite"' in html
+    assert 'data-attention-level="quiet"' in styles and "animation: none" in styles
 
 def test_desktop_bridge_loads_bounded_memory_and_continuity_without_mutation(tmp_path):
     from backend.application import build_masha_application

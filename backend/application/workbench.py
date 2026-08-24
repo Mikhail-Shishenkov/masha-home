@@ -25,7 +25,13 @@ class WorkbenchApplicationService:
 
     def view(self, *, profile_limit: int = 4, skill_limit: int = 6, grant_limit: int = 6) -> WorkbenchView:
         snapshot: PermissionsSnapshot = self._permissions()
-        profiles = self._models.list_profiles()[:profile_limit]
+        profiles = tuple(
+            profile
+            for profile in self._models.list_profiles()
+            if profile.profile_id.strip()
+            and profile.display_name.strip()
+            and profile.model_id.strip()
+        )[:profile_limit]
         skills = tuple(
             SkillWorkbenchView(
                 skill_id=item.skill_id,

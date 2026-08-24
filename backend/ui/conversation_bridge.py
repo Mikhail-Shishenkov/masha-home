@@ -85,6 +85,9 @@ class LocalConversationBridge(QObject):
             for item in proactive.items
         }
 
+        attention = self._application.home_attention(
+            conversation_id=self._conversation_id
+        )
         self._emit(
             {
                 "kind": "home_initial",
@@ -108,6 +111,7 @@ class LocalConversationBridge(QObject):
                     self._application.agent_runs(limit=8).items
                 ),
                 "proactive_interactions_count": len(proactive.items),
+                "attention": attention.model_dump(mode="json"),
                 "continuity_count": self._continuity_count(),
                 "active_continuity_thread": self._active_continuity_payload(),
                 "reflection_items_count": self._reflection_count(),
@@ -395,6 +399,10 @@ class LocalConversationBridge(QObject):
             "interactions": interactions.model_dump(mode="json"),
             "snapshot": snapshot.model_dump(mode="json"),
             "delivery_origin": "local_runtime",
+            "new_interaction_id": first.interaction_id,
+            "attention": self._application.home_attention(
+                conversation_id=self._conversation_id
+            ).model_dump(mode="json"),
         })
 
     @Slot(str, str)

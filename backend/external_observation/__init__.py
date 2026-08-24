@@ -1,6 +1,13 @@
 """Read-only external observation foundation."""
 
-from .intent import ExplicitExternalIntentGate, ExplicitWebFetchIntentGate, ExternalIntentDecision, FetchIntentDecision
+from .intent import (
+    ExplicitExternalIntentGate,
+    ExplicitWebFetchIntentGate,
+    ExternalIntentDecision,
+    FetchIntentDecision,
+    InformationSpace,
+    classify_information_space,
+)
 from .context import (
     ExternalContextHint,
     ExternalContextHintKind,
@@ -50,6 +57,8 @@ __all__ = [
     "ExternalContextResolution",
     "ExternalIntentDecision",
     "FetchIntentDecision",
+    "InformationSpace",
+    "classify_information_space",
     "ExternalObservation",
     "FetchedPageEvidence",
     "ExternalObservationService",

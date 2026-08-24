@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from enum import Enum
 from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -36,10 +37,50 @@ class ExternalIntentClassifier(Protocol):
     def classify(self, message: str, recent_messages: tuple[str, ...]) -> ExternalIntentDecision | None: ...
 
 
-_PREFIX = re.compile(r"^\s*(?:маш(?:а|енька)?\s*[,!:-]?\s*)?", re.IGNORECASE)
 _SPACE = re.compile(r"\s+")
 _PUNCTUATION = re.compile(r"[^\w\s«»'./+:#-]+", re.UNICODE)
+_LEAD_IN = re.compile(
+    r"^(?:(?:маш(?:а|енька)?|слушай|пожалуйста|капец|ну\s+ка)\b|"
+    r"а\s+(?:можешь|теперь)\b|"
+    r"а(?=\s+(?:посмотри|проверь|найди|поищи|узнай))\b)\s*[,!:\-]?\s*",
+    re.IGNORECASE,
+)
+_CONNECTOR_SCOPE = re.compile(
+    r"\b(?:google\s+drive|гугл\s+диск\w*|яндекс\s+диск\w*|yandex\s+disk|"
+    r"(?:моей\s+)?почт(?:е|у|ы)|календар(?:е|ь|я)|драйв(?:е|а)?)\b"
+)
+_HOME_SCOPE = re.compile(
+    r"\b(?:что\s+ты\s+(?:обо\s+мне\s+)?помнишь|(?:в|из)\s+(?:моей\s+)?памят[иь]|"
+    r"в\s+сохраненн(?:ой|ую)\s+информаци[ию]|у\s+нас\s+в\s+истории|"
+    r"что\s+мы\s+обсуждали|наш(?:а|ей|у)\s+истори(?:я|и|ю)|"
+    r"что\s+ты\s+знаешь\s+обо\s+мне)\b"
+)
+_EXTERNAL_SCOPE = re.compile(
+    r"\b(?:в\s+(?:интернете|сети|вебе)|онлайн|что\s+(?:сейчас\s+)?(?:пишут|известно)|"
+    r"(?:свежая|актуальная)\s+информация|последние\s+новости)\b"
+)
+_GENERIC_DISCOVERY = re.compile(
+    r"^(?:найди|поищи|узнай)\s+(?:пожалуйста\s+)?(?:информацию\s+)?(?:обо|об|о|про)\s*(?P<query>.+)$|"
+    r"^что\s+(?:сейчас\s+)?известно\s+(?:обо|об|о|про)\s*(?P<known>.+)$"
+)
+_PERSONAL_REFERENCE = re.compile(
+    r"^(?:(?:о|об|обо)\s+)?(?:мне|меня|нас|себе|моем|моём|моей|нашей|этом)\b|"
+    r"\b(?:обо\s+мне|про\s+меня|у\s+нас)\b"
+)
+
+
+class InformationSpace(str, Enum):
+    """Application-owned information-space arbitration; it grants no authority."""
+
+    EXPLICIT_CONNECTOR = "explicit_connector"
+    EXTERNAL_PUBLIC = "external_public"
+    HOME_INFORMATION = "home_information"
+    ORDINARY_CONVERSATION = "ordinary_conversation"
 _EXPLICIT = (
+    re.compile(
+        r"^что\s+есть\s+(?:в\s+(?:интернете|сети|вебе)|онлайн)\s+"
+        r"(?:о|об|про)?\s*(?P<query>.+)$"
+    ),
     re.compile(
         r"^(?:поищи|найди|проверь|посмотри)\s+"
         r"(?:пожалуйста\s+)?(?:в\s+(?:интернете|сети|вебе)|онлайн)\s*(?P<query>.*)$"
@@ -98,8 +139,37 @@ _ORDINAL = {"первый": 1, "второй": 2, "третий": 3, "четве
 
 
 def normalize_external_utterance(value: str) -> str:
-    text = _PREFIX.sub("", value.casefold().replace("ё", "е"))
-    return _SPACE.sub(" ", _PUNCTUATION.sub(" ", text)).strip()
+    text = _SPACE.sub(
+        " ",
+        _PUNCTUATION.sub(" ", value.casefold().replace("ё", "е")),
+    ).strip()
+    # Lead-ins carry warmth, not authority.  Strip several consecutive wrappers
+    # without maintaining full-sentence variants.
+    while True:
+        unwrapped = _LEAD_IN.sub("", text, count=1).strip()
+        if unwrapped == text:
+            return text
+        text = unwrapped
+
+
+def classify_information_space(message: str) -> InformationSpace:
+    """Classify only explicit information-space evidence, deterministically."""
+    normalized = normalize_external_utterance(message)
+    if _CONNECTOR_SCOPE.search(normalized):
+        return InformationSpace.EXPLICIT_CONNECTOR
+    if _HOME_SCOPE.search(normalized):
+        return InformationSpace.HOME_INFORMATION
+    if _EXTERNAL_SCOPE.search(normalized):
+        return InformationSpace.EXTERNAL_PUBLIC
+    discovery = _GENERIC_DISCOVERY.match(normalized)
+    if discovery is not None:
+        subject = (discovery.group("query") or discovery.group("known") or "").strip()
+        return (
+            InformationSpace.HOME_INFORMATION
+            if _PERSONAL_REFERENCE.search(subject)
+            else InformationSpace.EXTERNAL_PUBLIC
+        )
+    return InformationSpace.ORDINARY_CONVERSATION
 
 
 def infer_freshness(value: str) -> FreshnessRequirement:
@@ -129,9 +199,32 @@ class ExplicitExternalIntentGate:
         recent_messages: tuple[str, ...] = (),
     ) -> ExternalIntentDecision:
         normalized = normalize_external_utterance(message)
+        information_space = classify_information_space(message)
+        if information_space in {
+            InformationSpace.EXPLICIT_CONNECTOR,
+            InformationSpace.HOME_INFORMATION,
+        }:
+            return ExternalIntentDecision(explicit=False, reason="non_external_information_space")
         deterministic = self._deterministic(normalized)
         if deterministic is not None:
             return deterministic
+        if information_space is InformationSpace.EXTERNAL_PUBLIC:
+            generic = _GENERIC_DISCOVERY.match(normalized)
+            query = (
+                (generic.group("query") or generic.group("known") or "").strip(" -—,:;.")
+                if generic is not None
+                else re.sub(
+                    r"^(?:что\s+есть|посмотри|проверь|найди|поищи)\s+",
+                    "",
+                    normalized,
+                ).strip(" -—,:;.")
+            )
+            return ExternalIntentDecision(
+                explicit=True,
+                query_hint=query or None,
+                freshness=infer_freshness(normalized),
+                reason="external_information_space",
+            )
         if _CONTEXTUAL_FOLLOW_UP.fullmatch(normalized) and any(
             self._deterministic(normalize_external_utterance(previous)) is not None
             for previous in recent_messages[-4:]

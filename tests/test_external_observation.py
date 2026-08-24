@@ -22,6 +22,7 @@ from backend.external_observation import (
     InternetAccessMode,
     InternetAccessPolicy,
     InternetAccessPolicyStore,
+    InformationSpace,
     InvocationAuthority,
     LocalExternalQueryPlanner,
     ProviderSearchRequest,
@@ -29,6 +30,7 @@ from backend.external_observation import (
     SourceTime,
     WebSearchProviderFailedError,
     canonicalize_https_url,
+    classify_information_space,
 )
 from backend.llm.model_models import PrivacyScope
 from backend.llm.model_router import ModelRouter
@@ -146,6 +148,25 @@ def test_contextual_web_follow_up_requires_a_recent_explicit_web_turn():
     assert without_context.explicit is False
     assert with_context.explicit is True and with_context.query_hint is None
     assert referenced.explicit is True and referenced.query_hint is None
+
+
+@pytest.mark.parametrize(
+    ("phrase", "space", "explicit"),
+    (
+        ("Маша, что есть в интернете про Ладу Азимут?", InformationSpace.EXTERNAL_PUBLIC, True),
+        ("Слушай, а посмотри пожалуйста в интернете про Ладу Азимут", InformationSpace.EXTERNAL_PUBLIC, True),
+        ("Маша, найди информацию про Ладу Азимут", InformationSpace.EXTERNAL_PUBLIC, True),
+        ("Маша, найди в сохранённой информации всё про видеокарты", InformationSpace.HOME_INFORMATION, False),
+        ("Маша, что ты помнишь про мои мотоциклы?", InformationSpace.HOME_INFORMATION, False),
+        ("Маша, найди информацию обо мне", InformationSpace.HOME_INFORMATION, False),
+        ("Маша, найди информацию про меня", InformationSpace.HOME_INFORMATION, False),
+        ("Маша, найди в Google Drive документы про AI", InformationSpace.EXPLICIT_CONNECTOR, False),
+        ("Мне кажется, интернет изменил людей", InformationSpace.ORDINARY_CONVERSATION, False),
+    ),
+)
+def test_information_space_arbitration_is_semantic_and_fail_closed(phrase, space, explicit):
+    assert classify_information_space(phrase) is space
+    assert ExplicitExternalIntentGate().detect(phrase).explicit is explicit
 
 
 def test_default_policy_is_explicit_zero_traffic_and_load_does_not_write(tmp_path):
@@ -467,6 +488,44 @@ def test_conversation_web_turn_keeps_model_local_skips_passive_memory_and_persis
     )
     persisted = restarted.conversation(result.conversation_id)
     assert persisted.messages[-1].external_observation == observation
+
+
+@pytest.mark.parametrize("phrase", (
+    "Маша, что есть в интернете про Ладу Азимут?",
+    "Слушай, а посмотри пожалуйста в интернете про Ладу Азимут",
+    "Маша, найди информацию про Ладу Азимут",
+))
+def test_public_discovery_semantic_family_reaches_web_not_home_memory(tmp_path, phrase):
+    root = _isolated_root(tmp_path)
+    model = LocalProfileProvider(response_text="Нашла сведения по источникам.")
+    application = build_masha_application(project_root=root, router=ModelRouter([model]))
+    provider = FakeWebSearchProvider((_evidence(title="Лада Азимут"),))
+    service, _, _ = _service(root, provider, planner_query="Лада Азимут")
+    application._conversation._conversation.external_observation_service = service
+
+    result = application.send_message(phrase, project_id=PROJECT_ID)
+
+    assert len(provider.requests) == 1
+    assert provider.requests[0].query == "Лада Азимут"
+    assert result.assistant_message.external_observation is not None
+    assert "сохранённой информации ничего" not in result.assistant_message.content
+
+
+def test_completed_web_receipt_prevents_false_internet_denial(tmp_path):
+    root = _isolated_root(tmp_path)
+    model = LocalProfileProvider(response_text="У меня нет доступа к интернету, но попробую ответить.")
+    application = build_masha_application(project_root=root, router=ModelRouter([model]))
+    provider = FakeWebSearchProvider((_evidence(),))
+    service, _, _ = _service(root, provider)
+    application._conversation._conversation.external_observation_service = service
+
+    result = application.send_message(
+        "Поищи в интернете последнюю версию Ollama",
+        project_id=PROJECT_ID,
+    )
+
+    assert "нет доступа к интернету" not in result.assistant_message.content.casefold()
+    assert "проверила доступные интернет-источники" in result.assistant_message.content.casefold()
 
 
 def test_web_assisted_model_cannot_publish_its_own_url(tmp_path):

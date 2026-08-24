@@ -20,6 +20,7 @@ from backend.connectors.google_drive.reader import DriveReadOutcome, ResolvedDri
 from backend.document_read import DocumentEvidence, DocumentPageEvidence, DocumentReadReceipt, DocumentReadSourceKind
 from backend.connectors.yandex_mail.models import MailMessageContent, MailMessageSummary, MailOutcome, ResolvedMailRequest
 from backend.connectors.yandex_disk.reader import DiskReadOutcome, ResolvedYandexDiskDocumentRequest
+from backend.application.home_capabilities import HomeCapabilitySnapshot
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +49,24 @@ def test_service_routes_identity_bounded_memory_time_and_history(tmp_path):
     assert "current_local_time" in provider.last_request.private_context
     assert len(provider.last_request.private_context["memory_context"]) <= 6
     assert [message.role.value for message in service.history.messages(conversation_id)] == ["user", "assistant"]
+
+
+def test_home_capability_snapshot_reaches_model_as_description_without_execution(tmp_path):
+    provider = FakeProvider(provider_id="ollama-local", response_text="Да, Дом умеет искать по твоей просьбе.")
+    service = _service(tmp_path, provider)
+    service.home_capability_provider = lambda: HomeCapabilitySnapshot(
+        web_search="available", web_fetch="available",
+        google_calendar_read="unavailable", google_drive_read="unavailable",
+        yandex_mail_read="needs_reconnect", yandex_disk_read="unavailable",
+        proactive_reminders="available",
+    )
+
+    service.send("Ты умеешь искать в интернете?", project_id="project_masha_home")
+
+    context = provider.last_request.private_context
+    assert context["home_capabilities"]["web_search"] == "available"
+    assert context["home_capabilities"]["yandex_mail_read"] == "needs_reconnect"
+    assert "не даёт разрешения" in context["home_capability_contract"]
 
 
 def test_service_returns_controlled_error_for_unavailable_local_model(tmp_path):

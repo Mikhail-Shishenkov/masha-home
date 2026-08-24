@@ -58,6 +58,16 @@ ACTIVE_CONTINUITY_CONTRACT = (
     "и сам по себе ничего не меняет."
 )
 
+HOME_CAPABILITY_CONTRACT = (
+    "ВОЗМОЖНОСТИ ДОМА: home_capabilities — локальный описательный снимок реальных "
+    "возможностей приложения. available означает, что Home умеет это делать по явной "
+    "просьбе; blocked — возможность сейчас остановлена политикой; needs_reconnect — "
+    "нужно переподключение; unavailable — не настроено. Этот снимок не даёт разрешения "
+    "ничего запускать: действие принадлежит только application routing. Не отрицай "
+    "доступную возможность и не заявляй недоступную как работающую. Не перечисляй "
+    "внутренние поля снимка без прямого вопроса пользователя."
+)
+
 
 BEHAVIORAL_CONTRACT = (
     "Непереговорные правила ответа. Личность Маши задаёт только защищённый контекст "
@@ -106,6 +116,7 @@ class ConversationContextCompiler:
         active_continuity: dict[str, str] | None = None,
         external_information: list[dict] | None = None,
         external_information_contract: str | None = None,
+        home_capabilities: dict | None = None,
     ) -> ModelRequest:
         safe_home_moment = (
             home_moment
@@ -127,6 +138,8 @@ class ConversationContextCompiler:
                 "home_moment_contract": home_moment_contract,
                 "active_continuity": active_continuity,
                 "active_continuity_contract": ACTIVE_CONTINUITY_CONTRACT,
+                "home_capabilities": home_capabilities or {},
+                "home_capability_contract": HOME_CAPABILITY_CONTRACT,
                 "question_scope": self._question_scope(messages),
                 "shared_continuity_contract": (
                     "ОБЩАЯ ИСТОРИЯ: подтверждённый общий момент — не факт о Мише и не "

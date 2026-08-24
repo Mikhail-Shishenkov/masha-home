@@ -110,9 +110,14 @@ _CONFIRM = re.compile(
 _REJECT = re.compile(r"^\s*(?:нет|не надо|не сейчас|не сохраняй|не запоминай|отмена)(?:\s+(?P<id>[0-9a-f-]{36}))?\s*[.!]?\s*$", re.IGNORECASE)
 _MEMORY_PREFIX = re.compile(r"^\s*(?:маша\s*,?\s*)?запомни\b", re.IGNORECASE)
 _COMPLETE = re.compile(r"^\s*(?:маша\s*,?\s*)?отметь\s+(?P<body>.+?)\s+выполненным\s*$", re.IGNORECASE)
+_HUMAN_RECALL = re.compile(
+    r"^\s*(?:маша\s*,?\s*)?что\s+ты\s+(?:обо\s+мне\s+)?помнишь"
+    r"(?:\s+про\s+(?P<query>.+?))?\s*\??\s*$",
+    re.IGNORECASE,
+)
 _SHOW_MEMORY = re.compile(
-    r"^\s*(?:маша\s*,?\s*)?(?:что\s+ты\s+(?:обо\s+мне\s+)?помнишь(?:\s+про\s+(?P<remember_query>.+?))?|"
-    r"что\s+ты\s+знаешь(?:\s+про\s+(?P<query>.+?))?|покажи\s+(?:мою\s+)?память)\s*\??\s*$",
+    r"^\s*(?:маша\s*,?\s*)?(?:что\s+ты\s+знаешь(?:\s+про\s+(?P<query>.+?))?|"
+    r"покажи\s+(?:мою\s+)?память)\s*\??\s*$",
     re.IGNORECASE,
 )
 _FORGOTTEN_REVIEW = re.compile(
@@ -124,9 +129,16 @@ _FORGOTTEN_REVIEW = re.compile(
     re.IGNORECASE,
 )
 _SEARCH_INFORMATION = re.compile(
-    r"^\s*(?:маша\s*,?\s*)?(?:найди|поищи)\s+"
-    r"(?:(?:всю|все|всё)\s+)?(?:(?P<kind>информацию|записи|дело|историю|тему)\s+)?"
+    r"^\s*(?:маша\s*,?\s*)?(?:найди|поищи)\s+(?:(?:всю|все|всё)\s+)?(?:"
+    r"(?:в\s+(?:моей\s+)?памяти|в\s+сохраненн(?:ой|ую)\s+информации|у\s+нас\s+в\s+истории)\s+"
+    r"(?:(?P<kind>информацию|записи|дело|историю|тему)\s+)?|"
+    r"(?P<kind_direct>записи|дело|историю|тему)\s+)"
     r"(?:про|о)?\s*(?P<body>.+?)\s*\??\s*$",
+    re.IGNORECASE,
+)
+_HUMAN_PRESENTATION_PREFIX = re.compile(
+    r"^(?:Память|История|Дело|Тема)\s*(?:·\s*(?:актуально|из прошлого|забыто|"
+    r"открыто|завершено))?\s*(?:—|:)?\s*",
     re.IGNORECASE,
 )
 _RESTORE_INFORMATION = re.compile(
@@ -373,6 +385,7 @@ class MemoryIntentHandler:
         capability_router: NaturalLanguageCapabilityRouter | None = None,
         human_information=None,
         on_commitment_terminal=None,
+        on_timed_commitment_changed=None,
     ):
         self.proposal_store = proposal_store
         self.confirmed_memory = confirmed_memory
@@ -382,6 +395,7 @@ class MemoryIntentHandler:
         self.capability_router = capability_router or NaturalLanguageCapabilityRouter()
         self.human_information = human_information
         self._on_commitment_terminal = on_commitment_terminal
+        self._on_timed_commitment_changed = on_timed_commitment_changed
         self._continuity_clarifications: dict[str, ContinuityResolveClarification] = {}
         self._human_entity_clarifications: dict[str, HumanEntityClarification] = {}
         self._presented_entity_sets: dict[str, PresentedEntitySet] = {}
@@ -495,8 +509,14 @@ class MemoryIntentHandler:
 
         # These read/proposal commands are deliberately resolved locally.  They
         # cannot be hallucinated as a model capability and never expose storage.
+        if recall := _HUMAN_RECALL.match(message):
+            return self._human_recall(
+                recall.group("query"),
+                project_id=project_id,
+                conversation_id=conversation_id,
+            )
         if show := _SHOW_MEMORY.match(message):
-            query = show.group("remember_query") or show.group("query")
+            query = show.group("query")
             return self._show_memory(
                 query,
                 project_id,
@@ -523,7 +543,7 @@ class MemoryIntentHandler:
                 conversation_id=conversation_id,
             )
         if search := _SEARCH_INFORMATION.match(message):
-            requested_kind = (search.group("kind") or "").casefold()
+            requested_kind = (search.group("kind") or search.group("kind_direct") or "").casefold()
             scope = (
                 "tasks"
                 if requested_kind == "дело"
@@ -759,6 +779,70 @@ class MemoryIntentHandler:
         )
         return MemoryIntentResult(handled=True, response="\n".join(lines))
 
+    def _human_recall(
+        self,
+        query: str | None,
+        *,
+        project_id: str,
+        conversation_id: str,
+    ) -> MemoryIntentResult:
+        """Render bounded confirmed recall as a portrait, not an admin list."""
+        if self.human_information is None:
+            return self._show_memory(query, project_id, conversation_id=conversation_id)
+        result = self.human_information.search_for_conversation(
+            query=query or "",
+            project_id=project_id,
+            scope="history",
+            mode="current",
+            limit=8,
+        )
+        points: list[str] = []
+        seen: set[str] = set()
+        for match in result.matches:
+            point = self._human_presentation_text(match.item.label)
+            key = normalize_utterance(point)
+            if not point or key in seen:
+                continue
+            seen.add(key)
+            points.append(point)
+            if len(points) >= 8:
+                break
+        if not points:
+            self._presented_entity_sets.pop(conversation_id, None)
+            return MemoryIntentResult(
+                handled=True,
+                response=(
+                    "Про это у меня сейчас нет подтверждённых воспоминаний."
+                    if query
+                    else "У меня пока нет достаточно подтверждённых записей, чтобы честно собрать портрет."
+                ),
+            )
+        heading = (
+            f"Вот что я подтверждённо помню про {query.strip().rstrip('?.')}:"
+            if query
+            else "Из подтверждённого я помню о тебе вот что:"
+        )
+        presented = self.human_information.presented_entity_set(
+            result,
+            conversation_id=conversation_id,
+        )
+        if presented is not None:
+            self._presented_entity_sets[conversation_id] = presented
+        return MemoryIntentResult(
+            handled=True,
+            response="\n".join([heading, *(f"{index}. {point}" for index, point in enumerate(points, 1))]),
+        )
+
+    @staticmethod
+    def _human_presentation_text(label: str) -> str:
+        """Remove one or more storage-shaped wrappers from visible prose."""
+        text = label.strip()
+        while True:
+            cleaned = _HUMAN_PRESENTATION_PREFIX.sub("", text, count=1).strip()
+            if cleaned == text:
+                return text
+            text = cleaned
+
     def _search_human_information(
         self,
         query: str,
@@ -809,9 +893,12 @@ class MemoryIntentHandler:
         lines = [heading]
         for ordinal, match in enumerate(result.matches, 1):
             item = match.item
+            prefix = f"{kind_labels[item.kind]} · {availability_labels[item.availability.value]}"
+            label = item.label.strip()
             lines.append(
-                f"{ordinal}. {kind_labels[item.kind]} · "
-                f"{availability_labels[item.availability.value]} — {item.label}"
+                f"{ordinal}. {label}"
+                if label.casefold().startswith(prefix.casefold())
+                else f"{ordinal}. {prefix} — {self._human_presentation_text(label)}"
             )
         if mode == "forgotten_review":
             lines.append("Если хочешь вернуть запись, назови её номер — сначала я попрошу подтверждение.")
@@ -2021,6 +2108,8 @@ class MemoryIntentHandler:
         return self._confirmation_success(proposal)
 
     def _confirmation_success(self, proposal: MemoryProposal) -> MemoryIntentResult:
+        if proposal.record_type == "commitment" and self._on_timed_commitment_changed is not None:
+            self._on_timed_commitment_changed()
         if (
             proposal.record_type == "commitment"
             and proposal.record_payload.get("status") in {"completed", "cancelled"}

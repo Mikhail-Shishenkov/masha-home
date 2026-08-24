@@ -419,6 +419,29 @@ def test_stale_application_list_stays_in_transcript_but_not_model_history(tmp_pa
     assert MemoryManagementService(human_repository).get(ACTIVE_MAC_ID).payload["visibility"] == "hidden"
 
 
+def test_conversational_recall_is_bounded_human_portrait_not_admin_dump(tmp_path, human_repository):
+    service, provider, _ = _conversation(tmp_path, human_repository)
+
+    _, response = service.send("Что ты обо мне помнишь?", project_id=PROJECT_ID)
+
+    assert provider.last_request is None
+    assert response.startswith("Из подтверждённого я помню о тебе вот что:")
+    assert "Нашла в сохранённой информации" not in response
+    assert "Память · актуально — Память · актуально" not in response
+    assert len([line for line in response.splitlines() if line[:1].isdigit()]) <= 8
+
+
+def test_thematic_recall_and_raw_memory_view_have_distinct_presentations(tmp_path, human_repository):
+    service, provider, _ = _conversation(tmp_path, human_repository)
+    conversation_id, recall = service.send("Что ты помнишь про MacBook?", project_id=PROJECT_ID)
+    _, raw = service.send("Покажи мою память", project_id=PROJECT_ID, conversation_id=conversation_id)
+
+    assert provider.last_request is None
+    assert recall.startswith("Вот что я подтверждённо помню про MacBook:")
+    assert raw.startswith("Нашла в сохранённой информации:")
+    assert "Память · актуально — Память · актуально" not in raw
+
+
 def test_human_search_and_recall_stay_interactive_around_one_thousand_records(human_repository):
     document = human_repository.read_document()
     template = document.facts[0]

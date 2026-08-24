@@ -29,6 +29,8 @@ const homeAttention = document.getElementById("home-attention");
 const homeAttentionTitle =
   document.getElementById("home-attention-title");
 const attentionLines = document.getElementById("attention-lines");
+const reminderToast = document.getElementById("reminder-toast");
+const reminderToastMessage = document.getElementById("reminder-toast-message");
 const safetyTrigger = document.getElementById("safety-trigger");
 const safetyOverlay = document.getElementById("safety-overlay");
 const resumeAction = document.getElementById("resume-action");
@@ -272,6 +274,7 @@ function updateAttentionMagic() {
 }
 let lastAttentionReasonCount = null;
 let attentionNoveltyTimer = null;
+let reminderToastTimer = null;
 const COMPOSER_MIN_HEIGHT = 44;
 const COMPOSER_MAX_HEIGHT = 112;
 const SURFACE_EXIT_MS = 200;
@@ -1080,8 +1083,6 @@ function renderAgentRuns(view) {
 
 function renderProactiveInteractions(view) {
   proactiveList.replaceChildren();
-  attentionMagicState.proactive = view?.items?.length || 0;
-  updateAttentionMagic();
   for (const interaction of view?.items || []) {
     const item = document.createElement("li");
     item.className = "proactive-item";
@@ -1095,7 +1096,7 @@ function renderProactiveInteractions(view) {
     for (const decision of interaction.allowed_actions) {
       const button = document.createElement("button");
       button.type = "button";
-      button.textContent = decision === "acknowledge" ? "Понял" : "Не сейчас";
+      button.textContent = decision === "acknowledge" ? "Понял" : "Убрать";
       button.addEventListener("click", () => {
         bridge.resolveProactiveInteraction(interaction.interaction_id, decision);
       });
@@ -1454,6 +1455,26 @@ function renderHomeAttention(attention) {
   attentionLines.replaceChildren();
 
   const items = attention?.attention_items || [];
+  const actualKinds = new Set(items.map((item) => item.kind));
+  attentionMagicState.commitments = items.filter((item) =>
+    item.kind === "overdue_commitment" || item.kind === "upcoming_commitment"
+  ).length;
+  attentionMagicState.freshOverdueCommitments = actualKinds.has("overdue_commitment") ? 1 : 0;
+  attentionMagicState.proactive = items.filter((item) => item.kind === "proactive_interaction").length;
+  attentionMagicState.pendingConfirmation = actualKinds.has("pending_confirmation");
+  attentionMagicState.modelAvailable = !actualKinds.has("model_unavailable");
+  attentionMagicState.safetyEngaged = actualKinds.has("safety_stop");
+  if (items.length === 0) {
+    Object.assign(attentionMagicState, {
+      commitments: 0,
+      freshOverdueCommitments: 0,
+      proactive: 0,
+      pendingConfirmation: false,
+      modelAvailable: true,
+      safetyEngaged: false,
+    });
+  }
+  updateAttentionMagic();
   const hasImportant = items.some(
   (item) => item.urgency === "important"
 );
@@ -1464,10 +1485,7 @@ const hasPendingDecision = items.some(
     || item.kind === "model_unavailable"
 );
 
-const hasSomething =
-  items.length > 0
-  || attention.stale_overdue_commitments_count > 0
-  || attention.unscheduled_commitments_count > 0;
+const hasSomething = items.length > 0;
 
 homeAttentionTitle.textContent =
   hasPendingDecision
@@ -1523,7 +1541,7 @@ homeAttentionTitle.textContent =
         actions.append(action);
       };
       addAction("acknowledge", "Понял");
-      addAction("dismiss", "Не сейчас");
+      addAction("dismiss", "Убрать");
       copy.append(actions);
     }
 
@@ -1552,11 +1570,51 @@ const proactive =
   Number(attention.pending_interactions_count || 0);
 
 if (freshOverdue > 0) {
+  const remainder100 = freshOverdue % 100;
+  const remainder10 = freshOverdue % 10;
+  const noun = remainder10 === 1 && remainder100 !== 11
+    ? "просроченное дело"
+    : remainder10 >= 2 && remainder10 <= 4 && (remainder100 < 12 || remainder100 > 14)
+      ? "просроченных дела"
+      : "просроченных дел";
   summaryBits.push(
-    freshOverdue === 1
-      ? "1 свежая просрочка"
-      : `${freshOverdue} свежих просрочки`
+    `${freshOverdue} ${noun}`
   );
+}
+
+function playReminderCueOnce() {
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) return;
+  try {
+    const audio = new AudioContext();
+    const oscillator = audio.createOscillator();
+    const gain = audio.createGain();
+    oscillator.frequency.value = 660;
+    gain.gain.setValueAtTime(0.0001, audio.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.035, audio.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + 0.16);
+    oscillator.connect(gain).connect(audio.destination);
+    oscillator.start();
+    oscillator.stop(audio.currentTime + 0.17);
+    oscillator.addEventListener("ended", () => audio.close(), { once: true });
+  } catch {
+    // Browser/OS audio policy may block sound; visual delivery remains valid.
+  }
+}
+
+function showReminderToast(interactions, interactionId) {
+  const reminder = (interactions?.items || []).find((item) =>
+    item.interaction_id === interactionId && item.interaction_type === "reminder"
+  );
+  if (!reminder) return;
+  clearTimeout(reminderToastTimer);
+  reminderToastMessage.textContent = reminder.message;
+  reminderToast.hidden = false;
+  playReminderCueOnce();
+  reminderToastTimer = window.setTimeout(() => {
+    reminderToast.hidden = true;
+    reminderToastTimer = null;
+  }, 6500);
 }
 
 if (upcoming > 0) {
@@ -1918,13 +1976,7 @@ function handleBridgeEvent(encoded) {
   if (payload.kind === "home_initial") {
     resetHumanSearchUi();
     applySnapshot(payload.snapshot);
-    attentionMagicState.commitments =
-        Number(payload.commitments_count || 0);
-    attentionMagicState.freshOverdueCommitments =
-        Number(payload.fresh_overdue_commitments_count || 0);
-    attentionMagicState.proactive =
-        Number(payload.proactive_interactions_count || 0);
-    updateAttentionMagic();
+    renderHomeAttention(payload.attention);
     renderConversation(payload.conversation);
     activeConversationId = payload.conversation?.conversation_id || null;
     renderRecent(payload.recent, activeConversationId);
@@ -2060,6 +2112,8 @@ function handleBridgeEvent(encoded) {
     if (interactionSafety.isBackgroundProactiveProjection(payload)) {
       interactionSafety.preserveComposer(input, document, () => {
         renderProactiveInteractions(payload.interactions);
+        renderHomeAttention(payload.attention);
+        showReminderToast(payload.interactions, payload.new_interaction_id);
         proactiveTrigger.hidden = !(payload.interactions?.items?.length > 0);
       });
       return;
@@ -2078,7 +2132,8 @@ function handleBridgeEvent(encoded) {
     proactiveTrigger.hidden = !(payload.remaining_count > 0);
     surfaceStatus.textContent = payload.interaction.state === "acknowledged"
       ? "Хорошо, учла."
-      : "Не сейчас — убрала без других изменений.";
+      : "Убрала без других изменений.";
+    bridge.loadHomeAttention();
     input.focus();
     return;
   }
@@ -2254,7 +2309,7 @@ function handleBridgeEvent(encoded) {
     renderHomeAttention(payload.attention);
     surfaceStatus.textContent = payload.interaction.state === "acknowledged"
       ? "Хорошо, учла."
-      : "Не сейчас — убрала без других изменений.";
+      : "Убрала без других изменений.";
     return;
   }
   if (payload.kind === "safety_changed") {
