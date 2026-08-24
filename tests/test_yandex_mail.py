@@ -3,9 +3,10 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from backend.connectors.yandex_mail.config import YandexMailConfig,YandexMailConfigStore,YANDEX_MAIL_SCOPE
+from backend.connectors.yandex_mail.intent import mail_intent
 from backend.connectors.yandex_mail.models import MailMessageContent,MailMessageSummary,MailOutcome,ResolvedMailRequest
 from backend.connectors.yandex_mail.oauth import challenge,verifier
-from backend.connectors.yandex_mail.reader import YandexMailReader,YandexMailInvalidGrant,YandexMailUnavailable,_content
+from backend.connectors.yandex_mail.reader import MAX_RESULTS,ImapYandexSession,YandexMailReader,YandexMailInvalidGrant,YandexMailUnavailable,_content,_criteria
 from backend.connectors.yandex_mail.service import YandexMailConversationService
 from backend.external_observation.policy import InternetAccessMode,InternetAccessPolicy,InternetAccessPolicyStore
 from backend.runtime.safety import AutonomySafetyService,AutonomySafetyStore
@@ -13,7 +14,7 @@ from backend.secrets import InMemorySecretStore,ConnectorCredentialState
 
 class Session:
  def __init__(self,*_):self.calls=[]
- def search(self,*_):return (MailMessageSummary("yandex","u2","Второе письмо","GitHub",datetime(2026,8,24,tzinfo=timezone.utc),10,False),MailMessageSummary("yandex","u1","Первое письмо","Миша",None,10,False))
+ def search(self,criteria,limit):self.calls.append(("search",criteria,limit));return (MailMessageSummary("yandex","u2","Второе письмо","GitHub",datetime(2026,8,24,tzinfo=timezone.utc),10,False),MailMessageSummary("yandex","u1","Первое письмо","Миша",None,10,False))
  def fetch(self,ref,_):self.calls.append(ref);return "From: =?utf-8?b?0JzQuNGI0LA=?= <misha@example.com>\nSubject: =?utf-8?b?0KLQtdC80LA=?=\nContent-Type: text/html; charset=utf-8\n\n<html><body>Привет <b>мир</b><script>evil()</script></body></html>".encode()
  def close(self):pass
 def reader(tmp_path,*,token_post=None,session_factory=Session):
@@ -41,3 +42,41 @@ def test_bounded_results_and_application_owned_second_reference(tmp_path):
 def test_mail_content_and_resolved_request_do_not_expose_uid():
  item=MailMessageSummary("yandex","secret-uid","Тема","Отправитель",None,None,False);content=MailMessageContent(item,"текст")
  assert "secret-uid" not in json.dumps(content.model_value(),ensure_ascii=False);assert "секрет" not in ResolvedMailRequest("Тема","Отправитель").model_message()
+
+def test_new_recent_today_and_important_keep_distinct_intents_and_criteria():
+ assert mail_intent("что нового в почте").kind=="unread"
+ assert mail_intent("есть новые письма").kind=="unread"
+ assert mail_intent("покажи последние письма").kind=="recent"
+ assert mail_intent("что пришло сегодня").kind=="today"
+ assert mail_intent("есть что-нибудь важное").kind=="important"
+ assert _criteria("unread",None)==("UNSEEN",) and _criteria("recent",None)==("ALL",)
+
+def test_conversational_lead_ins_route_only_clear_mail_requests():
+ for phrase in ("Маша, а теперь что нового в почте?","Маш, посмотри, что нового в почте","Маш, глянь, есть новые письма?","Маш, скажи, что пришло сегодня"):
+  assert mail_intent(phrase) is not None
+ assert mail_intent("Мы вчера обсуждали почту и новые письма") is None
+
+def test_unread_search_is_bounded_and_empty_result_is_human(tmp_path):
+ session=Session();r,_,_=reader(tmp_path,session_factory=lambda *_:session)
+ assert r.search("unread").status=="search_completed" and session.calls==[("search",("UNSEEN",),MAX_RESULTS)]
+ class Empty(Session):
+  def search(self,criteria,limit):return ()
+ empty,_,_=reader(tmp_path/"empty",session_factory=Empty)
+ outcome=empty.search("unread");assert outcome.status=="no_unread" and YandexMailConversationService.human_result(outcome)=="Новых непрочитанных писем нет."
+
+def test_imap_unseen_listing_uses_readonly_and_body_peek_without_store(monkeypatch):
+ class Client:
+  def __init__(self,*_):self.calls=[]
+  def authenticate(self,*_):self.calls.append(("authenticate",));return "OK",[]
+  def select(self,*args,**kwargs):self.calls.append(("select",args,kwargs));return "OK",[]
+  def uid(self,*args):
+   self.calls.append(("uid",args))
+   if args[0]=="SEARCH":return "OK",[b"1"]
+   return "OK",[(b"1 (RFC822.SIZE 5)",b"From: Misha <m@example.com>\nSubject: Hi\n\n")]
+  def logout(self):self.calls.append(("logout",))
+ client=Client();monkeypatch.setattr("backend.connectors.yandex_mail.reader.imaplib.IMAP4_SSL",lambda *_:client)
+ session=ImapYandexSession("misha@yandex.ru","token");session.search(("UNSEEN",),MAX_RESULTS);session.close()
+ assert ("select",("INBOX",),{"readonly":True}) in client.calls
+ assert any(call[1][0]=="SEARCH" and "UNSEEN" in call[1] for call in client.calls if call[0]=="uid")
+ assert any("BODY.PEEK" in call[1][-1] for call in client.calls if call[0]=="uid" and call[1][0]=="FETCH")
+ assert not any(call[0]=="uid" and call[1][0]=="STORE" for call in client.calls)

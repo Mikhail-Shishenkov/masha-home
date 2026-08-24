@@ -55,7 +55,7 @@ class YandexMailReader:
   config,token,outcome=self._token()
   if outcome:return outcome
   try:
-   session=self._session(config.account_email,token); rows=session.search(_criteria(kind,query),MAX_RESULTS); session.close(); return MailOutcome("no_messages" if not rows else ("important_completed" if kind=="important" else "search_completed"),rows)
+   session=self._session(config.account_email,token); rows=session.search(_criteria(kind,query),MAX_RESULTS); session.close(); return MailOutcome(("no_unread" if kind=="unread" else "no_messages") if not rows else ("important_completed" if kind=="important" else "search_completed"),rows)
   except (YandexMailUnavailable,YandexMailNetworkBlocked,imaplib.IMAP4.error,OSError):return MailOutcome("unavailable")
  def read(self,item):
   config,token,outcome=self._token()
@@ -93,6 +93,7 @@ def _token_post(fields):
  try:return json.loads(raw)
  except Exception as error:raise YandexMailUnavailable("oauth_invalid") from error
 def _criteria(kind,q):
+ if kind=="unread":return("UNSEEN",)
  if kind=="today":return("SINCE",datetime.now().strftime("%d-%b-%Y"))
  if kind=="sender":return("FROM",q)
  if kind=="topic":return("SUBJECT",q)

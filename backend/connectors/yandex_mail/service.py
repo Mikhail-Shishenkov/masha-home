@@ -17,4 +17,4 @@ class YandexMailConversationService:
  @staticmethod
  def human_result(outcome):
   if outcome.status=="search_completed":return "Нашла в Яндекс Почте:\n"+"\n".join(f"{i}. {x.subject} — {x.sender}" for i,x in enumerate(outcome.messages,1))
-  return {"disconnected":"Яндекс Почта не подключена.","needs_reconnect":"Нужно переподключить Яндекс Почту.","unavailable":"Сейчас не удалось обратиться к почте.","no_messages":"Писем по этому запросу не нашла.","message_too_large":"Это письмо слишком большое для безопасного чтения.","clarification_required":"Уточни, какое именно письмо прочитать."}.get(outcome.status,"Не смогла разобрать содержимое этого письма.")
+  return {"disconnected":"Яндекс Почта не подключена.","needs_reconnect":"Нужно переподключить Яндекс Почту.","unavailable":"Сейчас не удалось обратиться к почте.","no_unread":"Новых непрочитанных писем нет.","no_messages":"Писем по этому запросу не нашла.","message_too_large":"Это письмо слишком большое для безопасного чтения.","clarification_required":"Уточни, какое именно письмо прочитать."}.get(outcome.status,"Не смогла разобрать содержимое этого письма.")
