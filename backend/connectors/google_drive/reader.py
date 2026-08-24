@@ -254,9 +254,7 @@ class GoogleDriveReader:
 
     def _search_files(self, query: str, access_token: str) -> tuple[DriveFileCandidate, ...]:
         escaped = _escape_drive_query(query)
-        if not escaped:
-            return ()
-        search_query = f"trashed = false and (name contains '{escaped}' or fullText contains '{escaped}')"
+        search_query = "trashed = false" if not escaped else f"trashed = false and (name contains '{escaped}' or fullText contains '{escaped}')"
         rows: list[DriveFileCandidate] = []
         page_token: str | None = None
         for _ in range(self.MAX_PAGES):

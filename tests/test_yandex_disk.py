@@ -8,6 +8,7 @@ from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from backend.connectors import yandex_disk_cli
+from backend.connectors.google_drive.intent import drive_intent
 from backend.connectors.google_drive.service import GoogleDriveConversationService
 from backend.connectors.presented_read_sets import PresentedReadSetRegistry
 from backend.connectors.yandex_mail.service import YandexMailConversationService
@@ -77,6 +78,25 @@ def test_bounded_metadata_filename_path_search_and_recent(tmp_path):
     serialized=json.dumps(outcome.model_context(),ensure_ascii=False);assert "disk:/" not in serialized and "DISK_ACCESS_TOKEN_MUST_NOT_ESCAPE" not in serialized
 
 
+def test_simple_disk_list_is_one_provider_ordered_metadata_page(tmp_path):
+    transport=Transport(pages=[_items(*[(f"disk:/file-{index}.pdf",f"file-{index}.pdf","application/pdf",100) for index in range(12)])]);reader,_,_=_reader(tmp_path,transport)
+    outcome=reader.list_files();calls=[call for call in transport.calls if "/resources/files?" in call[1]]
+    assert outcome.status=="search_completed" and len(outcome.files)==10 and len(calls)==1
+    assert "limit=10" in calls[0][1] and "offset=0" in calls[0][1]
+
+
+def test_recent_and_simple_list_route_to_their_distinct_reader_operations():
+    file=DiskFileCandidate("disk:/one.pdf","one.pdf","application/pdf",1,None,None,True)
+    class Reader:
+        def __init__(self):self.calls=[]
+        def recent(self):self.calls.append("recent");return type("Found",(),{"status":"search_completed","files":(file,),"scan_limited":False})()
+        def list_files(self):self.calls.append("list");return type("Found",(),{"status":"search_completed","files":(file,),"scan_limited":False})()
+    reader=Reader();service=YandexDiskConversationService(reader=reader)
+    assert service.observe("Маш, покажи последние файлы на Яндекс Диске",conversation_id="recent").status=="search_completed"
+    assert service.observe("Покажи просто файлы на Яндекс Диске",conversation_id="list").status=="search_completed"
+    assert reader.calls==["recent","list"]
+
+
 def test_scan_max_pages_and_filename_not_content_semantics(tmp_path):
     pages=[_items(*[(f"disk:/other/{index}.pdf",f"other-{index}.pdf","application/pdf",100) for index in range(100)]) for _ in range(5)]
     transport=Transport(pages=pages);reader,_,_=_reader(tmp_path,transport);outcome=reader.search("contract")
@@ -113,16 +133,26 @@ def test_intents_and_latest_presented_owner_win_for_ordinal():
     assert disk_intent("Покажи последние файлы на Яндекс Диске").kind=="recent"
     assert disk_intent("Прочитай файл Договор.pdf").kind=="read_name"
     assert disk_intent("Прочитай https://public.example/page") is None
+    assert disk_intent("Покажи файлы на Яндекс Диске").kind=="list"
+    assert disk_intent("Покажи просто файлы на Яндекс Диске").kind=="list"
+    assert disk_intent("Что у меня есть на Яндекс Диске").kind=="list"
+    assert drive_intent("покажи последние файлы на Яндекс Диске") is None
+    assert drive_intent("найди на Яндекс Диске документ про SQL") is None
+    assert drive_intent("прочитай на Яндекс Диске файл договор.pdf") is None
+    assert drive_intent("есть у меня на Яндекс Диске файл договор.pdf") is None
+    assert drive_intent("найди в Drive документы про AI").kind=="search"
     first=DiskFileCandidate("disk:/one.pdf","one.pdf","application/pdf",1,None,None,True);second=DiskFileCandidate("disk:/two.pdf","two.pdf","application/pdf",1,None,None,True)
     class Reader:
         def search(self,_):return type("Found",(),{"status":"search_completed","files":(first,second),"scan_limited":False})()
         def recent(self):return self.search("")
+        def list_files(self):return self.search("")
         def read_file(self,file):self.read=file;return type("Read",(),{"status":"read_completed","document_receipt":object(),"resolved_document_request":object()})()
     registry=PresentedReadSetRegistry();service=YandexDiskConversationService(reader=Reader(),presented_read_sets=registry);service.observe("найди на яндекс диске файл про договор",conversation_id="c")
     assert GoogleDriveConversationService(reader=object(),presented_read_sets=registry).observe("прочитай второй",conversation_id="c") is None
     assert YandexMailConversationService(reader=object(),presented_read_sets=registry).observe("прочитай второй",conversation_id="c") is None
     assert service.observe("прочитай второй",conversation_id="c").status=="read_completed" and service.reader.read.resource_path=="disk:/two.pdf"
     registry.present("c","yandex_mail",(object(),));assert service.observe("прочитай второй",conversation_id="c") is None
+    assert service.observe("покажи просто файлы на яндекс диске",conversation_id="other").status=="search_completed"
 
 
 def test_disk_cli_disconnect_does_not_touch_mail_secret(tmp_path,monkeypatch):

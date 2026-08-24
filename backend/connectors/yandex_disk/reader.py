@@ -151,6 +151,19 @@ class YandexDiskReader:
         except (YandexDiskUnavailable, YandexDiskNetworkBlocked):
             return DiskReadOutcome("unavailable")
 
+    def list_files(self) -> DiskReadOutcome:
+        """One provider-ordered metadata page; this is not a recent-files claim."""
+        credentials = self._credentials()
+        if isinstance(credentials, DiskReadOutcome):
+            return credentials
+        _config, token = credentials
+        try:
+            payload = self._request_json(self.API_ROOT + "/resources/files?" + urlencode({"limit": self.MAX_RESULTS, "offset": 0, "fields": self._FIELDS}), token)
+            rows = tuple(filter(None, (_candidate(item) for item in payload.get("items", []))))[:self.MAX_RESULTS]
+            return DiskReadOutcome("no_files" if not rows else "search_completed", files=rows)
+        except (YandexDiskUnavailable, YandexDiskNetworkBlocked):
+            return DiskReadOutcome("unavailable")
+
     def search(self, query: str) -> DiskReadOutcome:
         tokens = _query_tokens(query)
         if not tokens:

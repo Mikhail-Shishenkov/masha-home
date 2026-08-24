@@ -45,7 +45,7 @@ class YandexDiskConversationService:
                 self._present(conversation_id, files)
             matches = tuple(file for file in files if _same_name(file.name, intent.query or ""))
             return self.reader.read_file(matches[0]) if len(matches) == 1 else DiskReadOutcome("clarification_required")
-        outcome = self.reader.recent() if intent.kind == "recent" else self.reader.search(intent.query or "")
+        outcome = self.reader.recent() if intent.kind == "recent" else (self.reader.list_files() if intent.kind == "list" else self.reader.search(intent.query or ""))
         if outcome.status == "search_completed":
             self._present(conversation_id, outcome.files)
         return outcome

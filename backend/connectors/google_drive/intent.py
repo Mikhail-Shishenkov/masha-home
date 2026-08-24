@@ -9,6 +9,7 @@ from dataclasses import dataclass
 _SPACE = re.compile(r"\s+")
 _PUNCT = re.compile(r"[^\w\s'-]+", re.UNICODE)
 _ORDINAL = {"первый": 1, "первую": 1, "первое": 1, "второй": 2, "вторую": 2, "второе": 2, "третий": 3, "третью": 3, "третье": 3}
+_YANDEX_DISK = re.compile(r"\b(?:яндекс[\s-]*диск\w*|yandex[\s-]*disk)\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,10 @@ class DriveIntent:
 def drive_intent(message: str) -> DriveIntent | None:
     normalized = _SPACE.sub(" ", _PUNCT.sub(" ", message.casefold().replace("ё", "е"))).strip()
     if not normalized:
+        return None
+    # A named provider is application-owned routing authority.  Drive must
+    # never turn an explicitly Yandex-targeted request into a Drive call.
+    if _YANDEX_DISK.search(normalized):
         return None
     ordinal = re.fullmatch(r"(?:маш(?:а|енька)?\s+)?(?:прочитай|изучи|открой)\s+(?:файл\s+|документ\s+)?(первый|первую|первое|второй|вторую|второе|третий|третью|третье)", normalized)
     if ordinal is not None:
@@ -39,7 +44,13 @@ def drive_intent(message: str) -> DriveIntent | None:
         if not query:
             return DriveIntent("clarify")
         return DriveIntent("read_name" if explicit is not None else "read_presented_name", query=query)
-    search = re.match(r"^(?:маш(?:а|енька)?\s+)?(?:найди|поищи|покажи|есть\s+у\s+меня)\s+(?:в\s+(?:моем\s+)?(?:drive|драйве)\s+)?(?:файл(?:ы)?|документ(?:ы)?)?\s*(.*)$", normalized)
+    listed = re.fullmatch(
+        r"(?:маш(?:а|енька)?\s+)?(?:покажи|выведи|открой|дай\s+посмотреть)\s+(?:просто\s+)?(?:мои\s+)?(?:файл(?:ы)?|документ(?:ы)?)\s+(?:в|на)\s+(?:моем\s+)?(?:drive|драйве)",
+        normalized,
+    ) or re.fullmatch(r"(?:маш(?:а|енька)?\s+)?что\s+у\s+меня\s+есть\s+в\s+(?:моем\s+)?(?:drive|драйве)", normalized)
+    if listed is not None:
+        return DriveIntent("list")
+    search = re.match(r"^(?:маш(?:а|енька)?\s+)?(?:найди|поищи|отыщи|посмотри|проверь|покажи|есть\s+у\s+меня)\s+(?:в\s+(?:моем\s+)?(?:drive|драйве)\s+)?(?:файл(?:ы)?|документ(?:ы)?)?\s*(.*)$", normalized)
     if search is not None:
         if not re.search(r"\b(?:drive|драйв\w*|файл\w*|документ\w*)\b", normalized):
             return None

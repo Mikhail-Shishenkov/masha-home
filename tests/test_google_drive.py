@@ -95,6 +95,18 @@ def test_drive_scope_and_safe_config_credentials(tmp_path: Path):
     assert reader.search("SQL").status == "no_files"
 
 
+def test_explicit_yandex_disk_never_routes_to_google_drive_but_drive_list_still_works(tmp_path: Path):
+    from backend.connectors.google_drive.intent import drive_intent
+    assert drive_intent("покажи последние файлы на Яндекс Диске") is None
+    assert drive_intent("покажи файлы в Драйве").kind == "list"
+    transport = FakeTransport(pages=[_files(("id-1", "Plan", "application/pdf", "100"))])
+    reader, _, _ = _reader(tmp_path, transport)
+    outcome = reader.search("")
+    assert outcome.status == "search_completed" and outcome.files[0].name == "Plan"
+    call = next(item for item in transport.calls if item[0] == "json" and "/drive/v3/files?" in item[1])
+    assert "trashed+%3D+false" in call[1]
+
+
 def test_restored_drive_metadata_without_credentials_needs_reconnect(tmp_path: Path):
     config = GoogleDriveConfig(client_id="desktop-client-identifier")
     missing = InMemorySecretStore()
