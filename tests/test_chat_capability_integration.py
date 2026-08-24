@@ -343,6 +343,7 @@ def test_terminal_minute_reminder_flows_from_confirmation_to_due_event(tmp_path,
     )
     assert commitment.text == "чтобы я поставил чайник"
     assert commitment.due_at == now + timedelta(minutes=2)
+    assert commitment.reminder_delivery_mode.value == "explicit_user_reminder"
     recovered = TemporalRuntime(
         store,
         TemporalEngine(FixedClock(now + timedelta(minutes=3))),

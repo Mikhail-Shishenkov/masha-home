@@ -4,6 +4,7 @@ from copy import deepcopy
 from datetime import datetime, time, timedelta, timezone
 
 from backend.memory.sqlite_repository import MemorySqliteRepository
+from backend.memory.memory_models import CommitmentStatus, ReminderDeliveryMode
 from backend.temporal.proactive import ProactiveDecisionEngine, ProactivePolicy
 from backend.temporal.temporal_engine import FixedClock, TemporalEngine
 from backend.temporal.temporal_models import ProactiveDecision
@@ -13,12 +14,14 @@ from backend.temporal.temporal_runtime import TemporalRuntime, commitment_due_ev
 NOW = datetime(2026, 8, 11, 12, 0, tzinfo=timezone.utc)
 
 
-def _repository(tmp_path, canonical_memory, *, due_at, status="open"):
+def _repository(tmp_path, canonical_memory, *, due_at, status="open", explicit=False):
     document = deepcopy(canonical_memory)
     commitment = document["commitments"][0]
     commitment["due_at"] = due_at.isoformat()
     commitment["status"] = status
     commitment["completed_at"] = due_at.isoformat() if status == "completed" else None
+    if explicit:
+        commitment["reminder_delivery_mode"] = "explicit_user_reminder"
     repository = MemorySqliteRepository(tmp_path / "memory.sqlite3")
     repository.replace_document(document)
     return repository
@@ -59,8 +62,19 @@ def test_exact_due_boundary_creates_no_event_and_preserves_mem11_open_semantics(
 def test_completed_and_cancelled_commitments_create_no_active_due_event(tmp_path, canonical_memory):
     due_at = NOW - timedelta(minutes=1)
     for status in ("completed", "cancelled"):
-        repository = _repository(tmp_path / status, canonical_memory, due_at=due_at, status=status)
+        repository = _repository(
+            tmp_path / status, canonical_memory, due_at=due_at,
+            status=status, explicit=True,
+        )
         assert _runtime(repository).recover().events == ()
+
+
+def test_commitment_status_and_reminder_origin_enums_remain_distinct():
+    assert CommitmentStatus.EXPIRED.value == "expired"
+    assert {item.value for item in ReminderDeliveryMode} == {
+        "policy_controlled",
+        "explicit_user_reminder",
+    }
 
 
 def test_repeated_recovery_and_restart_are_idempotent(tmp_path, canonical_memory):

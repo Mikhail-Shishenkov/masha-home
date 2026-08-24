@@ -190,6 +190,10 @@
           ],
           "title": "Due At"
         },
+        "reminder_delivery_mode": {
+          "$ref": "#/$defs/ReminderDeliveryMode",
+          "default": "policy_controlled"
+        },
         "completed_at": {
           "anyOf": [
             {
@@ -1320,6 +1324,15 @@
         "revised"
       ],
       "title": "RelationshipStatus",
+      "type": "string"
+    },
+    "ReminderDeliveryMode": {
+      "description": "Application-owned origin for one timed commitment occurrence.",
+      "enum": [
+        "policy_controlled",
+        "explicit_user_reminder"
+      ],
+      "title": "ReminderDeliveryMode",
       "type": "string"
     },
     "SourceType": {

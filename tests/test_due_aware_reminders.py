@@ -9,16 +9,19 @@ from backend.temporal.proactive_daemon import ProactiveDaemon, request_proactive
 from backend.temporal.proactive_interaction import ProactiveInteractionStore
 from backend.temporal.temporal_engine import FixedClock
 from backend.temporal.temporal_runtime import due_aware_cycle_delay
+from backend.temporal.reminder_trace import ReminderDeliveryTrace
 
 
 NOW = datetime(2026, 8, 24, 12, 0, tzinfo=timezone.utc)
 
 
-def _repository(tmp_path, canonical_memory, due_at):
+def _repository(tmp_path, canonical_memory, due_at, *, explicit=False):
     data = deepcopy(canonical_memory)
     data["commitments"][0]["status"] = "open"
     data["commitments"][0]["due_at"] = due_at.isoformat()
     data["commitments"][0]["completed_at"] = None
+    if explicit:
+        data["commitments"][0]["reminder_delivery_mode"] = "explicit_user_reminder"
     repository = MemorySqliteRepository(tmp_path / "memory.sqlite3")
     repository.replace_document(data)
     return repository
@@ -91,3 +94,68 @@ def test_wakeup_arriving_during_cycle_is_not_lost_before_wait(tmp_path):
     request_proactive_wakeup(tmp_path)
 
     daemon._wait(300, since_revision=revision_before_cycle)
+
+
+def test_recovery_hold_suppresses_home_fallback_and_records_reason(tmp_path, canonical_memory):
+    repository = _repository(
+        tmp_path, canonical_memory, NOW - timedelta(minutes=1), explicit=True,
+    )
+    clock = FixedClock(NOW)
+    calls = []
+    trace = ReminderDeliveryTrace(tmp_path / "reminder-trace.json")
+
+    class Runtime:
+        def __init__(self):
+            self.repository = repository
+
+        def run_cycle(self, _policy):
+            calls.append(True)
+            raise AssertionError("recovery HOLD must suppress runtime")
+
+    service = ProactiveApplicationService(
+        store=ProactiveInteractionStore(repository),
+        clock=clock,
+        runtime=Runtime(),
+        policy_store=type("PolicyStore", (), {"load": lambda _self: ProactivePolicy(
+            enabled=True, proactive_level=1, allow_commitment_reminders=True,
+            runtime_mode="background",
+        )})(),
+        hold_checker=lambda: True,
+        trace=trace,
+    )
+
+    assert service.refresh().items == ()
+    assert calls == []
+    assert trace.list()[-1]["reason"] == "recovery_hold"
+
+
+def test_recent_daemon_start_prevents_parallel_home_fallback(tmp_path, canonical_memory):
+    repository = _repository(tmp_path, canonical_memory, NOW - timedelta(minutes=1))
+    clock = FixedClock(NOW)
+    calls = []
+    daemon = ProactiveDaemon(tmp_path)
+    daemon._status(
+        "starting", result="starting", reason="safety_released",
+        error=None, interval=None,
+    )
+
+    class Runtime:
+        def __init__(self):
+            self.repository = repository
+
+        def run_cycle(self, _policy):
+            calls.append(True)
+
+    service = ProactiveApplicationService(
+        store=ProactiveInteractionStore(repository),
+        clock=clock,
+        runtime=Runtime(),
+        daemon=daemon,
+        policy_store=type("PolicyStore", (), {"load": lambda _self: ProactivePolicy(
+            enabled=True, proactive_level=1, allow_commitment_reminders=True,
+            runtime_mode="background",
+        )})(),
+    )
+
+    assert service.refresh().items == ()
+    assert calls == []

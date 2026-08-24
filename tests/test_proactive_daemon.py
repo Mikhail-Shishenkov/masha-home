@@ -108,6 +108,52 @@ def test_emergency_stop_prevents_daemon_service_build_and_exits(tmp_path, monkey
     assert daemon.status()["last_reason"] == "emergency_stop_engaged"
 
 
+def test_safety_release_restarts_eligible_background_daemon_once(tmp_path):
+    policy_store = ProactivePolicyStore(
+        tmp_path / "local-data" / "config" / "proactive-policy.json"
+    )
+    policy_store.save(ProactivePolicy(
+        enabled=True, proactive_level=1, allow_commitment_reminders=True,
+        runtime_mode="background",
+    ))
+    launches = []
+    daemon = ProactiveDaemon(tmp_path, launcher=lambda *args, **kwargs: launches.append((args, kwargs)))
+    safety = AutonomySafetyService(store=daemon.safety_store)
+    safety.engage()
+
+    assert daemon.start_if_eligible() is False
+    safety.release()
+    assert daemon.start_if_eligible() is True
+    assert daemon.start_if_eligible() is True
+    assert len(launches) == 1
+    assert daemon.status()["daemon"] == "starting"
+
+
+def test_stale_dead_pid_allows_restart_but_unknown_metadata_fails_closed(tmp_path):
+    ProactivePolicyStore(
+        tmp_path / "local-data" / "config" / "proactive-policy.json"
+    ).save(ProactivePolicy(enabled=True, runtime_mode="background"))
+    launches = []
+    daemon = ProactiveDaemon(
+        tmp_path, process_probe=lambda _pid: False,
+        launcher=lambda *args, **kwargs: launches.append((args, kwargs)),
+    )
+    daemon.lock_path.write_text("999999999", encoding="ascii")
+
+    assert daemon.start_if_eligible() is True
+    assert len(launches) == 1
+
+    other = ProactiveDaemon(
+        tmp_path / "unknown", launcher=lambda *args, **kwargs: launches.append((args, kwargs)),
+    )
+    ProactivePolicyStore(
+        other.project_root / "local-data" / "config" / "proactive-policy.json"
+    ).save(ProactivePolicy(enabled=True, runtime_mode="background"))
+    other.lock_path.write_text("malformed", encoding="ascii")
+    assert other.start_if_eligible() is False
+    assert len(launches) == 1
+
+
 @pytest.mark.parametrize("phase", [RecoveryPhase.APPLYING, RecoveryPhase.BLOCKED, RecoveryPhase.CHECKPOINTED])
 def test_incomplete_recovery_suppresses_daemon_before_service_build(tmp_path, monkeypatch, phase):
     now = datetime.now(timezone.utc)

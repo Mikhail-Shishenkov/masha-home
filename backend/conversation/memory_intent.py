@@ -571,7 +571,10 @@ class MemoryIntentHandler:
         if create := _CREATE_COMMITMENT.match(message):
             if pending:
                 return self._pending_conflict()
-            return self._propose_commitment(create.group("body"), conversation_id, project_id)
+            return self._propose_commitment(
+                create.group("body"), conversation_id, project_id,
+                explicit_reminder=self._is_explicit_reminder_request(message),
+            )
         if forget := _FORGET.match(message):
             if pending:
                 return self._pending_conflict()
@@ -655,6 +658,7 @@ class MemoryIntentHandler:
                 return self._pending_conflict()
             return self._handle_capability(
                 parsed,
+                original_message=message,
                 conversation_id=conversation_id,
                 project_id=project_id,
                 active_continuity_thread_id=active_continuity_thread_id,
@@ -675,6 +679,7 @@ class MemoryIntentHandler:
         self,
         parsed: ParsedCapabilityIntent,
         *,
+        original_message: str,
         conversation_id: str,
         project_id: str,
         active_continuity_thread_id: str | None = None,
@@ -694,7 +699,10 @@ class MemoryIntentHandler:
         if parsed.intent is CapabilityIntent.QUERY_COMMITMENTS:
             return self._list_commitments(project_id, query=parsed.entity, temporal_scope=parsed.temporal_scope)
         if parsed.intent is CapabilityIntent.CREATE_COMMITMENT:
-            return self._propose_commitment(parsed.entity or "", conversation_id, project_id)
+            return self._propose_commitment(
+                parsed.entity or "", conversation_id, project_id,
+                explicit_reminder=self._is_explicit_reminder_request(original_message),
+            )
         if parsed.intent is CapabilityIntent.COMPLETE_COMMITMENT:
             return self._propose_completion(parsed.entity or "", conversation_id)
         if parsed.intent is CapabilityIntent.QUERY_CONTINUITY:
@@ -1399,7 +1407,14 @@ class MemoryIntentHandler:
         )
         return MemoryIntentResult(handled=True, response="\n".join(lines))
 
-    def _propose_commitment(self, body: str, conversation_id: str, project_id: str) -> MemoryIntentResult:
+    def _propose_commitment(
+        self,
+        body: str,
+        conversation_id: str,
+        project_id: str,
+        *,
+        explicit_reminder: bool = False,
+    ) -> MemoryIntentResult:
         body = body.strip().rstrip(".")
         body = re.sub(
             r"^(?:дело|задач[ау]|обязательство)\s*[:,—-]?\s+",
@@ -1413,7 +1428,11 @@ class MemoryIntentHandler:
         body, due = self.temporal_engine.extract_due(body)
         if due is not None and due.ambiguity is not None:
             return MemoryIntentResult(handled=True, response="Срок получился неоднозначным. Скажи дату и время точнее — я не буду угадывать.")
-        record = self._make_record("commitment", body, project_id, due_at=None if due is None else due.resolved_utc)
+        record = self._make_record(
+            "commitment", body, project_id,
+            due_at=None if due is None else due.resolved_utc,
+            explicit_reminder=explicit_reminder and due is not None,
+        )
         proposal = self.proposal_store.create(MemoryProposal(
             id=str(uuid4()), conversation_id=conversation_id, record_type="commitment",
             record_payload=record.model_dump(mode="json"), created_at=self._now(), status=ProposalStatus.PENDING,
@@ -2238,7 +2257,20 @@ class MemoryIntentHandler:
         return "fact"
 
     @classmethod
-    def _make_record(cls, record_type: MemoryRecordType, body: str, project_id: str, due_at=None) -> ConfirmedRecord:
+    def _is_explicit_reminder_request(cls, message: str) -> bool:
+        """Classify provenance at request time; delivery never re-reads prose."""
+        return re.match(r"^напомни(?:\s+мне)?\b", normalize_utterance(message)) is not None
+
+    @classmethod
+    def _make_record(
+        cls,
+        record_type: MemoryRecordType,
+        body: str,
+        project_id: str,
+        due_at=None,
+        *,
+        explicit_reminder: bool = False,
+    ) -> ConfirmedRecord:
         now = cls._now()
         record_id = f"{record_type}_{uuid4()}"
         if record_type == "fact":
@@ -2278,6 +2310,8 @@ class MemoryIntentHandler:
                 updated_at=now,
             )
         if record_type == "commitment":
+            from backend.memory.memory_models import ReminderDeliveryMode
+
             return Commitment(
                 id=record_id,
                 text=body,
@@ -2286,6 +2320,10 @@ class MemoryIntentHandler:
                 visibility=Visibility.VISIBLE,
                 project_ids=[project_id],
                 due_at=due_at,
+                reminder_delivery_mode=(
+                    ReminderDeliveryMode.EXPLICIT_USER_REMINDER
+                    if explicit_reminder else ReminderDeliveryMode.POLICY_CONTROLLED
+                ),
                 completed_at=None,
                 importance=0.7,
                 source=SourceType.EXPLICIT_USER_INPUT,

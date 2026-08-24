@@ -247,6 +247,7 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
                 router=core.router,
                 model_profiles=core.profiles,
                 safety_store=safety.store,
+                trace=reminder_trace,
             ),
         ),
         continuity=ContinuityApplicationService(

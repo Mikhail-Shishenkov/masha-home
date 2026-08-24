@@ -10,12 +10,13 @@ from backend.llm.fake_provider import FakeProvider
 from backend.llm.model_profiles import ModelProfileStore
 from backend.llm.model_router import ModelRouter
 from backend.memory.sqlite_repository import MemorySqliteRepository
-from backend.memory.memory_models import MemoryDocument
+from backend.memory.memory_models import MemoryDocument, ReminderDeliveryMode
 from backend.runtime.daily_runtime import DailyRuntime, DailyRuntimeJournal
 from backend.runtime.safety import AutonomySafetyService, AutonomySafetyStore
 from backend.temporal.proactive import ProactivePolicy, ProactivePolicyStore
 from backend.temporal.proactive_daemon import ProactiveDaemon
 from backend.temporal.temporal_engine import FixedClock, TemporalEngine
+from backend.temporal.reminder_trace import ReminderDeliveryTrace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,11 +31,17 @@ class CountingProvider(FakeProvider):
         return super().generate(request)
 
 
-def _runtime(tmp_path, canonical_memory, monkeypatch, *, overdue: bool):
+def _runtime(tmp_path, canonical_memory, monkeypatch, *, overdue: bool, explicit: bool = False, trace=None):
     repo = MemorySqliteRepository(tmp_path / "memory.sqlite3")
     document = MemoryDocument.model_validate(canonical_memory)
     if overdue:
-        commitment = document.commitments[0].model_copy(update={"text": "Отправить отчёт", "due_at": NOW - timedelta(hours=1)})
+        commitment = document.commitments[0].model_copy(update={
+            "text": "Отправить отчёт", "due_at": NOW - timedelta(hours=1),
+            "reminder_delivery_mode": (
+                ReminderDeliveryMode.EXPLICIT_USER_REMINDER
+                if explicit else ReminderDeliveryMode.POLICY_CONTROLLED
+            ),
+        })
         document = document.model_copy(update={"commitments": [commitment]})
     repo.replace_document(document)
     history = ConversationStore(tmp_path / "history.json")
@@ -51,8 +58,92 @@ def _runtime(tmp_path, canonical_memory, monkeypatch, *, overdue: bool):
         router=ModelRouter([provider]),
         model_profiles=profiles,
         safety_store=AutonomySafetyStore(tmp_path / "safety.json"),
+        trace=trace,
     )
     return runtime, repo, provider, profiles
+
+
+def test_explicit_user_reminder_delivers_inside_quiet_hours_with_trace(tmp_path, canonical_memory, monkeypatch):
+    trace = ReminderDeliveryTrace(tmp_path / "reminder-trace.json")
+    runtime, _, provider, _ = _runtime(
+        tmp_path, canonical_memory, monkeypatch, overdue=True, explicit=True, trace=trace,
+    )
+    policy = ProactivePolicy(
+        enabled=True, proactive_level=2, allow_commitment_reminders=True,
+        allow_checkins=True, quiet_hours_start=datetime.min.time().replace(hour=19),
+        quiet_hours_end=datetime.min.time().replace(hour=20),
+        daily_message_limit=0, maximum_reminders=0, cooldown_seconds=86_400,
+        absence_threshold_seconds=60,
+    )
+
+    receipt = runtime.run_cycle(policy)
+
+    reminder = next(item for item in receipt.items if item.kind == "reminder")
+    assert (reminder.state, reminder.reason) == ("delivered", "explicit_user_reminder")
+    assert provider.calls == 1
+    decision = next(row for row in trace.list() if row["stage"] == "reminder_evaluated")
+    assert decision["decision"] == "deliver"
+    assert decision["reason"] == "explicit_user_reminder"
+    assert decision["due_at"] is not None
+
+
+def test_unsolicited_checkin_and_policy_reminder_stay_suppressed_in_quiet_hours(tmp_path, canonical_memory, monkeypatch):
+    trace = ReminderDeliveryTrace(tmp_path / "reminder-trace.json")
+    policy = ProactivePolicy(
+        enabled=True, proactive_level=2, allow_commitment_reminders=True,
+        allow_checkins=True, quiet_hours_start=datetime.min.time().replace(hour=19),
+        quiet_hours_end=datetime.min.time().replace(hour=20),
+        daily_message_limit=3, maximum_reminders=3, cooldown_seconds=0,
+        absence_threshold_seconds=60,
+    )
+    reminder_runtime, _, reminder_provider, _ = _runtime(
+        tmp_path / "reminder", canonical_memory, monkeypatch, overdue=True, trace=trace,
+    )
+    checkin_runtime, _, checkin_provider, _ = _runtime(
+        tmp_path / "checkin", canonical_memory, monkeypatch, overdue=False,
+    )
+
+    reminder_receipt = reminder_runtime.run_cycle(policy)
+    checkin_receipt = checkin_runtime.run_cycle(policy)
+
+    assert reminder_receipt.items[0].reason == "quiet_hours"
+    assert checkin_receipt.items[0].reason == "quiet_hours"
+    assert reminder_provider.calls == checkin_provider.calls == 0
+    decision = next(row for row in trace.list() if row["stage"] == "reminder_evaluated")
+    assert (decision["decision"], decision["reason"]) == ("suppress", "quiet_hours")
+
+
+def test_explicit_user_reminder_ignores_existing_daily_count_and_cooldown(tmp_path, canonical_memory, monkeypatch):
+    runtime, _, provider, _ = _runtime(
+        tmp_path, canonical_memory, monkeypatch, overdue=True, explicit=True,
+    )
+    runtime.controlled.interaction_store.delivery_stats = lambda _now: (99, NOW - timedelta(seconds=1))
+    policy = ProactivePolicy(
+        enabled=True, proactive_level=1, allow_commitment_reminders=True,
+        daily_message_limit=1, maximum_reminders=1, cooldown_seconds=86_400,
+    )
+
+    receipt = runtime.run_cycle(policy)
+
+    assert receipt.items[0].state == "delivered"
+    assert receipt.items[0].reason == "explicit_user_reminder"
+    assert provider.calls == 1
+
+
+def test_explicit_user_reminder_still_respects_emergency_stop(tmp_path, canonical_memory, monkeypatch):
+    trace = ReminderDeliveryTrace(tmp_path / "reminder-trace.json")
+    runtime, _, provider, _ = _runtime(
+        tmp_path, canonical_memory, monkeypatch, overdue=True, explicit=True, trace=trace,
+    )
+    AutonomySafetyService(store=runtime.safety_store, clock=lambda: NOW).engage()
+
+    receipt = runtime.run_cycle(ProactivePolicy(
+        enabled=True, proactive_level=1, allow_commitment_reminders=True,
+    ))
+
+    assert receipt.halted_reason == "emergency_stop_engaged"
+    assert provider.calls == 0
+    assert trace.list()[-1]["reason"] == "emergency_stop_engaged"
 
 
 def test_daily_cycle_prioritises_reminder_and_suppresses_checkin(tmp_path, canonical_memory, monkeypatch):
@@ -100,7 +191,9 @@ def test_daily_cycle_delivers_checkin_when_no_reminder_exists(tmp_path, canonica
 
 
 def test_daily_cycle_restart_is_idempotent_and_does_not_call_model_twice(tmp_path, canonical_memory, monkeypatch):
-    runtime, repo, provider, profiles = _runtime(tmp_path, canonical_memory, monkeypatch, overdue=True)
+    runtime, repo, provider, profiles = _runtime(
+        tmp_path, canonical_memory, monkeypatch, overdue=True, explicit=True,
+    )
     policy = ProactivePolicy(enabled=True, proactive_level=1, allow_commitment_reminders=True, maximum_reminders=3, daily_message_limit=3, cooldown_seconds=0)
     first = runtime.run_cycle(policy)
     restarted = DailyRuntime(

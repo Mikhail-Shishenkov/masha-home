@@ -1002,7 +1002,7 @@ def test_open_home_refresh_projects_new_live_reminder_once(tmp_path):
     assert all(row["at"].endswith("+00:00") for row in trace)
     assert ProactiveInteractionStore(repository).list()[0]["state"] == "delivered"
     assert len(application._proactive._journal.list()) == 2
-    assert application.status().proactive_reason_code == "authorised"
+    assert application.status().proactive_reason_code == "explicit_user_reminder"
     bridge.close()
 
 

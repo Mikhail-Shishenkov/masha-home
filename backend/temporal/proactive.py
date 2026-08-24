@@ -108,6 +108,23 @@ class ProactiveDecisionEngine:
             return ProactiveEvaluation(ProactiveDecision.SUPPRESS, "cooldown")
         return ProactiveEvaluation(ProactiveDecision.REMIND, "authorised")
 
+    def evaluate_explicit_user_reminder(
+        self,
+        policy: ProactivePolicy,
+        *,
+        mutation_requested: bool = False,
+    ) -> ProactiveEvaluation:
+        """Authorize one confirmed user-requested occurrence outside initiative limits."""
+        if mutation_requested:
+            return ProactiveEvaluation(ProactiveDecision.REQUIRE_CONFIRMATION, "mutation_requires_confirmation")
+        if not policy.enabled:
+            return ProactiveEvaluation(ProactiveDecision.SUPPRESS, "proactive_disabled")
+        if policy.proactive_level < 1:
+            return ProactiveEvaluation(ProactiveDecision.SUPPRESS, "level_below_reminder")
+        if not policy.allow_commitment_reminders:
+            return ProactiveEvaluation(ProactiveDecision.SUPPRESS, "reminders_disabled")
+        return ProactiveEvaluation(ProactiveDecision.REMIND, "explicit_user_reminder")
+
     def decide_checkin(self, policy: ProactivePolicy, *, absence_seconds: int | None, now: datetime, last_reminder_at: datetime | None = None, reminders_sent: int = 0) -> ProactiveDecision:
         if not policy.enabled or policy.proactive_level < 2 or not policy.allow_checkins: return ProactiveDecision.SUPPRESS
         if absence_seconds is None or absence_seconds < policy.absence_threshold_seconds: return ProactiveDecision.SUPPRESS

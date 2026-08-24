@@ -58,6 +58,13 @@ class CommitmentStatus(str, Enum):
     EXPIRED = "expired"
 
 
+class ReminderDeliveryMode(str, Enum):
+    """Application-owned origin for one timed commitment occurrence."""
+
+    POLICY_CONTROLLED = "policy_controlled"
+    EXPLICIT_USER_REMINDER = "explicit_user_reminder"
+
+
 class CandidateType(str, Enum):
     FACT = "fact"
     DECISION = "decision"
@@ -232,6 +239,7 @@ class Commitment(StrictMemoryModel):
     visibility: Visibility
     project_ids: list[NonEmptyStr]
     due_at: AwareDatetime | None
+    reminder_delivery_mode: ReminderDeliveryMode = ReminderDeliveryMode.POLICY_CONTROLLED
     completed_at: AwareDatetime | None
     importance: Score
     source: SourceType

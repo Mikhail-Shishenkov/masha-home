@@ -17,6 +17,7 @@ from backend.temporal.proactive_runtime import ControlledProactiveRuntime
 from backend.temporal.temporal_models import ProactiveDecision
 from backend.temporal.temporal_runtime import TemporalRuntime
 from backend.runtime.safety import AutonomySafetyStore
+from backend.memory.memory_models import ReminderDeliveryMode
 
 
 class DailyCycleItem(BaseModel):
@@ -103,11 +104,12 @@ class DailyRuntimeJournal:
 class DailyRuntime:
     """Orchestrates REMIND before CHECK_IN without owning either domain."""
 
-    def __init__(self, *, history, temporal_engine, repository, identity_kernel, router, model_profiles, safety_store: AutonomySafetyStore):
+    def __init__(self, *, history, temporal_engine, repository, identity_kernel, router, model_profiles, safety_store: AutonomySafetyStore, trace=None):
         self.temporal_engine = temporal_engine
         self.repository = repository
         self.model_profiles = model_profiles
         self.safety_store = safety_store
+        self.trace = trace
         self.controlled = ControlledProactiveRuntime(
             history=history,
             temporal_engine=temporal_engine,
@@ -124,6 +126,11 @@ class DailyRuntime:
         started_at = self.temporal_engine.clock.now_utc()
         profile = self.model_profiles.get_active_profile()
         if self.safety_store.is_engaged():
+            if self.trace is not None:
+                self.trace.record(
+                    "runtime_suppressed", at=started_at,
+                    decision="suppress", reason="emergency_stop_engaged",
+                )
             return DailyCycleReceipt(
                 cycle_id=f"dcy1_{uuid4().hex}",
                 started_at=started_at,
@@ -151,29 +158,44 @@ class DailyRuntime:
                 items.append(DailyCycleItem(kind="reminder", event_id=event.event_id, decision="suppress", state=interaction["state"], reason=f"terminal_or_delivered:{interaction['state']}"))
                 continue
 
-            if awaiting_response:
+            commitment = commitments.get(event.source_commitment_id)
+            if commitment is None or commitment.status.value != "open":
+                items.append(DailyCycleItem(
+                    kind="reminder", event_id=event.event_id, decision="suppress",
+                    state="suppressed", reason="source_commitment_inactive",
+                ))
+                continue
+            explicit_user_reminder = (
+                commitment.reminder_delivery_mode
+                is ReminderDeliveryMode.EXPLICIT_USER_REMINDER
+            )
+
+            if awaiting_response and not explicit_user_reminder:
                 reminder_blocks_checkin = True
                 self.controlled.record_decision(event.event_id, ProactiveDecision.SUPPRESS.value, "awaiting_user_response", entity_type="temporal_event")
                 items.append(DailyCycleItem(kind="reminder", event_id=event.event_id, decision="suppress", state="suppressed", reason="awaiting_user_response"))
                 continue
-            if cycle_contact_reserved:
+            if cycle_contact_reserved and not explicit_user_reminder:
                 reminder_blocks_checkin = True
                 self.controlled.record_decision(event.event_id, ProactiveDecision.SUPPRESS.value, "cycle_delivery_limit", entity_type="temporal_event")
                 items.append(DailyCycleItem(kind="reminder", event_id=event.event_id, decision="suppress", state="suppressed", reason="cycle_delivery_limit"))
                 continue
 
-            evaluation = self.decisions.evaluate_reminder(
-                policy,
-                now=started_at,
-                reminders_sent=reminders_sent,
-                last_reminder_at=last_delivery,
+            evaluation = (
+                self.decisions.evaluate_explicit_user_reminder(policy)
+                if explicit_user_reminder
+                else self.decisions.evaluate_reminder(
+                    policy,
+                    now=started_at,
+                    reminders_sent=reminders_sent,
+                    last_reminder_at=last_delivery,
+                )
             )
             self.controlled.record_decision(event.event_id, evaluation.decision.value, evaluation.reason, entity_type="temporal_event")
             if evaluation.decision is not ProactiveDecision.REMIND:
                 items.append(DailyCycleItem(kind="reminder", event_id=event.event_id, decision=evaluation.decision.value, state="suppressed", reason=evaluation.reason))
                 continue
 
-            commitment = commitments[event.source_commitment_id]
             cycle_contact_reserved = True
             candidate = self.decisions.candidate(
                 event,
@@ -212,10 +234,28 @@ class DailyRuntime:
             items.append(DailyCycleItem(kind="check_in", event_id=checkin.event_id, decision="check_in" if checkin.decision == "delivered" else "suppress", state=checkin.decision, reason=checkin.reason or "unknown"))
 
         finished_at = self.temporal_engine.clock.now_utc()
-        return DailyCycleReceipt(
+        receipt = DailyCycleReceipt(
             cycle_id=f"dcy1_{uuid4().hex}",
             started_at=started_at,
             finished_at=finished_at,
             model_profile=profile.profile_id,
             items=tuple(items),
         )
+        self._trace_reminder_decisions(receipt, temporal_context)
+        return receipt
+
+    def _trace_reminder_decisions(self, receipt: DailyCycleReceipt, temporal_context) -> None:
+        if self.trace is None:
+            return
+        due_by_event = {event.event_id: event.due_at for event in temporal_context.events}
+        for item in receipt.items:
+            if item.kind != "reminder":
+                continue
+            self.trace.record(
+                "reminder_evaluated",
+                interaction_id=item.event_id,
+                at=receipt.started_at,
+                decision="deliver" if item.state == "delivered" else "suppress",
+                reason=item.reason,
+                due_at=due_by_event.get(item.event_id),
+            )

@@ -27,14 +27,17 @@ class ProactiveApplicationService:
 
     def refresh(self, *, limit: int = 6) -> ProactiveInteractionListView:
         """Project deliveries; run the existing runtime only at policy cadence."""
-        if not self._hold_checker() and self._runtime is not None and self._policy_store is not None:
+        if self._hold_checker():
+            self._record("runtime_suppressed", decision="suppress", reason="recovery_hold")
+            return self.list(limit=limit)
+        if self._runtime is not None and self._policy_store is not None:
             wake_revision = self._current_wake_revision()
             if wake_revision != self._wake_revision:
                 self._wake_revision = wake_revision
                 self._next_runtime_cycle_at = None
             policy = self._policy_store.load()
             if policy.runtime_mode == "background" and (
-                self._daemon is None or not self._daemon.is_running()
+                self._daemon is None or not self._daemon.is_operational_or_starting()
             ):
                 now = self._clock.now_utc()
                 if self._runtime_interval_seconds != policy.cycle_interval_seconds:
@@ -87,9 +90,20 @@ class ProactiveApplicationService:
     def record_renderer_handoff(self, interaction_id: str, emitted_at: datetime) -> None:
         self._record("renderer_delivery_emitted", interaction_id=interaction_id, at=emitted_at)
 
-    def _record(self, stage: str, *, interaction_id: str | None = None, at: datetime | None = None) -> None:
+    def _record(
+        self,
+        stage: str,
+        *,
+        interaction_id: str | None = None,
+        at: datetime | None = None,
+        decision: str | None = None,
+        reason: str | None = None,
+    ) -> None:
         if self._trace is not None:
-            self._trace.record(stage, interaction_id=interaction_id, at=at)
+            self._trace.record(
+                stage, interaction_id=interaction_id, at=at,
+                decision=decision, reason=reason,
+            )
 
     def _current_wake_revision(self):
         if self._wake_path is None:

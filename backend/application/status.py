@@ -107,7 +107,9 @@ class MashaStatusService:
         return self._safety_view(self._safety.engage(reason))
 
     def release_emergency_stop(self) -> SafetyView:
-        return self._safety_view(self._safety.release())
+        state = self._safety.release()
+        self._daemon.start_if_eligible()
+        return self._safety_view(state)
 
     @staticmethod
     def _safety_view(state) -> SafetyView:

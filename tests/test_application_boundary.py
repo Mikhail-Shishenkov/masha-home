@@ -326,6 +326,27 @@ def test_natural_commitment_variants_strip_service_words_and_require_confirmatio
         )
 
 
+def test_timed_task_without_explicit_reminder_keeps_policy_controlled_origin(tmp_path):
+    _, _, application = _application(tmp_path)
+    result = application.send_message(
+        "добавь дело закрыть окно завтра в 10:30",
+        project_id=PROJECT_ID,
+    )
+    application.resolve_confirmation(
+        conversation_id=result.conversation_id,
+        proposal_id=result.pending_confirmation.proposal_id,
+        decision="confirm",
+        project_id=PROJECT_ID,
+    )
+
+    commitment = next(
+        item
+        for item in application._conversation._conversation.memory_retriever.memory_store.read_document().commitments
+        if "закрыть окно" in item.text
+    )
+    assert commitment.reminder_delivery_mode.value == "policy_controlled"
+
+
 def test_command_typo_can_use_semantic_fallback_but_bare_action_is_not_a_command(tmp_path):
     semantic = LocalProfileProvider(response_text=json.dumps({
         "intent": "create_commitment",
@@ -468,6 +489,26 @@ def test_status_keeps_proactive_stop_and_model_failure_distinct(tmp_path):
     resumed = application.resume_autonomy()
     assert resumed.emergency_stop_engaged is False
     assert application.status().proactive_enabled is False
+
+
+def test_application_resume_restores_eligible_background_daemon(tmp_path):
+    from backend.temporal.proactive import ProactivePolicy, ProactivePolicyStore
+
+    root, _, application = _application(tmp_path)
+    ProactivePolicyStore(
+        root / "local-data" / "config" / "proactive-policy.json"
+    ).save(ProactivePolicy(
+        enabled=True, proactive_level=1, allow_commitment_reminders=True,
+        runtime_mode="background",
+    ))
+    launches = []
+    application._status._daemon._launcher = lambda *args, **kwargs: launches.append((args, kwargs))
+
+    application.emergency_stop("test")
+    resumed = application.resume_autonomy()
+
+    assert resumed.emergency_stop_engaged is False
+    assert len(launches) == 1
 
 
 def test_visual_resolver_hides_paths_and_checks_canonical_integrity(tmp_path):
@@ -1328,6 +1369,12 @@ def test_opted_in_natural_two_minute_reminder_reaches_home_once(tmp_path):
         decision="confirm",
         project_id=PROJECT_ID,
     )
+    commitment = next(
+        item
+        for item in application._conversation._conversation.memory_retriever.memory_store.read_document().commitments
+        if "чайник" in item.text
+    )
+    assert commitment.reminder_delivery_mode.value == "explicit_user_reminder"
     clock.value = now + timedelta(minutes=2, seconds=1)
 
     first = application.refresh_proactive_interactions()

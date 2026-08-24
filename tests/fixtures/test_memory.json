@@ -96,6 +96,7 @@
         "project_masha_home"
       ],
       "due_at": null,
+      "reminder_delivery_mode": "policy_controlled",
       "completed_at": null,
       "importance": 0.9,
       "source": "conversation",

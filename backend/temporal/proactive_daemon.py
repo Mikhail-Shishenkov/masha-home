@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
+import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -42,6 +44,7 @@ class ProactiveDaemon:
         *,
         sleep=time.sleep,
         process_probe: Callable[[int], bool] | None = None,
+        launcher=None,
     ):
         self.project_root = Path(project_root)
         self.runtime_dir = self.project_root / "local-data" / "runtime"
@@ -58,6 +61,62 @@ class ProactiveDaemon:
         )
         self.sleep = sleep
         self._process_probe = process_probe or default_process_probe
+        self._launcher = launcher or subprocess.Popen
+
+    def start_if_eligible(self) -> bool:
+        """Start the one leased daemon after a safe lifecycle transition."""
+        liveness = self.liveness()
+        if liveness.state == "running":
+            return True
+        if liveness.state != "stopped":
+            return False
+        if self._start_is_recent():
+            return True
+        if self.safety_store.is_engaged() or not RecoveryJournal(self.project_root).background_activity_allowed():
+            return False
+        policy = ProactivePolicyStore(
+            self.project_root / "local-data" / "config" / "proactive-policy.json"
+        ).load()
+        if not policy.enabled or policy.runtime_mode != "background":
+            return False
+        flags = (
+            getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            | getattr(subprocess, "DETACHED_PROCESS", 0)
+        )
+        try:
+            self._launcher(
+                [
+                    sys.executable,
+                    "-m",
+                    "backend.temporal.proactive_daemon",
+                    "--project-root",
+                    str(self.project_root),
+                ],
+                cwd=self.project_root,
+                creationflags=flags,
+                close_fds=True,
+            )
+        except OSError:
+            return False
+        self._status(
+            "starting", result="starting", reason="safety_released",
+            error=None, interval=None,
+        )
+        return True
+
+    def is_operational_or_starting(self) -> bool:
+        """Avoid racing the Home fallback with a just-launched leased daemon."""
+        return self.is_running() or self._start_is_recent()
+
+    def _start_is_recent(self) -> bool:
+        status = self.status()
+        if status.get("daemon") != "starting" or not status.get("last_cycle"):
+            return False
+        try:
+            started_at = datetime.fromisoformat(status["last_cycle"])
+            return (datetime.now(timezone.utc) - started_at).total_seconds() < 10
+        except (TypeError, ValueError):
+            return False
 
     def run(self, *, max_cycles: int | None = None):
         descriptor = None
@@ -74,9 +133,11 @@ class ProactiveDaemon:
                 journal = RecoveryJournal(self.project_root)
                 if not journal.background_activity_allowed():
                     reason = "recovery_hold_active" if journal.is_hold() else "recovery_active"
+                    self.trace.record("runtime_suppressed", decision="suppress", reason=reason)
                     self._status("stopped", result="suppress", reason=reason, error=None, interval=None)
                     break
                 if self.safety_store.is_engaged():
+                    self.trace.record("runtime_suppressed", decision="suppress", reason="emergency_stop_engaged")
                     self._status("stopped", result="suppress", reason="emergency_stop_engaged", error=None, interval=None)
                     break
                 interval = 300
@@ -96,7 +157,16 @@ class ProactiveDaemon:
                             row["event_id"] for row in interaction_store.list() if row["state"] == "delivered"
                         }
                         self.trace.record("daemon_runtime_cycle_started")
-                        receipt = DailyRuntime(history=service.history, temporal_engine=service.temporal_engine, repository=service.memory_retriever.memory_store, identity_kernel=service.identity_kernel, router=service.router, model_profiles=service.model_profiles, safety_store=self.safety_store).run_cycle(policy)
+                        receipt = DailyRuntime(
+                            history=service.history,
+                            temporal_engine=service.temporal_engine,
+                            repository=service.memory_retriever.memory_store,
+                            identity_kernel=service.identity_kernel,
+                            router=service.router,
+                            model_profiles=service.model_profiles,
+                            safety_store=self.safety_store,
+                            trace=self.trace,
+                        ).run_cycle(policy)
                         self.journal.append(receipt)
                         if interaction_store is not None:
                             for row in interaction_store.list():

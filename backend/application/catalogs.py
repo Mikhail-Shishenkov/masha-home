@@ -49,6 +49,7 @@ RUNTIME_STATUS_LABELS = {
 
 PROACTIVE_REASON_LABELS = {
     "authorised": "Контакт разрешён настройками",
+    "explicit_user_reminder": "Напоминание явно попросил Миша",
     "proactive_disabled": "Инициативность выключена",
     "level_below_reminder": "Уровень инициативности ниже напоминаний",
     "level_below_checkin": "Уровень инициативности ниже check-in",

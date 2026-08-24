@@ -14,10 +14,31 @@ class ReminderDeliveryTrace:
         self.path = Path(path)
         self.limit = limit
 
-    def record(self, stage: str, *, interaction_id: str | None = None, at: datetime | None = None) -> None:
+    def record(
+        self,
+        stage: str,
+        *,
+        interaction_id: str | None = None,
+        at: datetime | None = None,
+        decision: str | None = None,
+        reason: str | None = None,
+        due_at: datetime | None = None,
+    ) -> None:
         rows = self.list()
-        rows.append({"stage": stage, "interaction_id": interaction_id,
-                     "at": (at or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()})
+        row = {
+            "stage": stage,
+            "interaction_id": interaction_id,
+            "decision": decision,
+            "reason": reason,
+            "due_at": None if due_at is None else due_at.astimezone(timezone.utc).isoformat(),
+            "at": (at or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat(),
+        }
+        if rows and all(
+            rows[-1].get(key) == row.get(key)
+            for key in ("stage", "interaction_id", "decision", "reason", "due_at")
+        ):
+            return
+        rows.append(row)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(self.path.suffix + ".tmp")
         temporary.write_text(json.dumps(rows[-self.limit:], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
