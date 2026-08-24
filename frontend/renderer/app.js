@@ -13,7 +13,6 @@ const sendButton = document.getElementById("send-button");
 const addLocalDocument = document.getElementById("add-local-document");
 const localDocumentChip = document.getElementById("local-document-chip");
 const localDocumentLabel = document.getElementById("local-document-label");
-const clearLocalDocument = document.getElementById("clear-local-document");
 const newConversationButton = document.getElementById("new-conversation");
 const specialEveningToggle = document.getElementById("special-evening-toggle");
 const specialProximityToggle =
@@ -517,7 +516,6 @@ function setComposerState({ enabled, waiting = false }) {
   input.disabled = !enabled || waiting;
   sendButton.disabled = !enabled || waiting || !input.value.trim();
   addLocalDocument.disabled = !enabled || waiting;
-  clearLocalDocument.disabled = !enabled || waiting;
   newConversationButton.disabled = !enabled || waiting;
   recentToggle.disabled = !enabled || waiting;
   specialEveningToggle.disabled = !enabled || waiting;
@@ -2384,12 +2382,6 @@ composer.addEventListener("submit", (event) => {
 
 addLocalDocument.addEventListener("click", () => {
   if (ready && !inFlight) bridge.chooseLocalDocument();
-});
-
-clearLocalDocument.addEventListener("click", () => {
-  if (ready && !inFlight && stagedLocalDocument) {
-    bridge.clearLocalDocument(stagedLocalDocument.token);
-  }
 });
 
 newConversationButton.addEventListener("click", () => {

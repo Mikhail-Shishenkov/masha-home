@@ -20,6 +20,7 @@ from backend.connectors.google_drive.reader import (
     GoogleDriveReader,
     GoogleDriveTokenInvalidGrant,
     GoogleDriveUnavailable,
+    ResolvedDriveDocumentRequest,
 )
 from backend.connectors.google_drive.service import GoogleDriveConversationService
 from backend.document_read import DocumentReader
@@ -133,6 +134,7 @@ def test_supported_drive_files_reuse_document_reader(tmp_path: Path, mime_type: 
     outcome = reader.read_file(file)
     assert outcome.status == "read_completed"
     assert outcome.document_receipt is not None
+    assert outcome.resolved_document_request == ResolvedDriveDocumentRequest(display_name="План")
     assert outcome.document_receipt.source_kind.value == "connector"
     assert outcome.document_receipt.evidence.pages[0].text == "Bounded Drive document."
     download = next(call for call in transport.calls if call[0] == "download")

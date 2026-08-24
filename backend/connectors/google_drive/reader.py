@@ -107,10 +107,27 @@ class DriveFileCandidate:
 
 
 @dataclass(frozen=True)
+class ResolvedDriveDocumentRequest:
+    """Application-owned meaning after a Drive file reference is resolved."""
+
+    display_name: str
+    action: str = "read_selected_document"
+
+    def model_message(self) -> str:
+        return (
+            f'Пользователь выбрал документ «{self.display_name}». '
+            "Прочитай выбранный документ и ответь по его содержимому. "
+            "Ссылка на первый, второй, третий или имя файла уже разрешена приложением "
+            "как выбор файла; не трактуй её как номер раздела, пункта или страницы документа."
+        )
+
+
+@dataclass(frozen=True)
 class DriveReadOutcome:
     status: str
     files: tuple[DriveFileCandidate, ...] = ()
     document_receipt: DocumentReadReceipt | None = None
+    resolved_document_request: ResolvedDriveDocumentRequest | None = None
 
     def model_context(self) -> list[dict]:
         if self.status != "search_completed":
@@ -199,7 +216,11 @@ class GoogleDriveReader:
         )
         if self.document_store is not None:
             receipt = self.document_store.save(receipt)
-        return DriveReadOutcome("read_completed", document_receipt=receipt)
+        return DriveReadOutcome(
+            "read_completed",
+            document_receipt=receipt,
+            resolved_document_request=ResolvedDriveDocumentRequest(display_name=file.name),
+        )
 
     def _credentials(self) -> tuple[GoogleDriveConfig, str] | DriveReadOutcome:
         config = self.config_store.load()

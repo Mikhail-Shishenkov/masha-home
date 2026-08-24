@@ -16,7 +16,7 @@ from backend.memory.memory_retriever import MemoryRetriever
 from backend.memory.memory_store import MemoryStore
 from backend.memory.working_memory import WorkingMemory
 from backend.connectors.google_calendar.reader import CalendarReadOutcome, CalendarEventEvidence
-from backend.connectors.google_drive.reader import DriveReadOutcome
+from backend.connectors.google_drive.reader import DriveReadOutcome, ResolvedDriveDocumentRequest
 from backend.document_read import DocumentEvidence, DocumentPageEvidence, DocumentReadReceipt, DocumentReadSourceKind
 
 
@@ -197,3 +197,50 @@ def test_drive_document_evidence_reaches_local_model_without_passive_memory(tmp_
     assert "SQL plan evidence text." in serialized
     assert passive.calls == []
     assert all("SQL plan evidence text." not in item.content for item in service.history.messages(conversation_id))
+
+
+@pytest.mark.parametrize("user_text", ("Прочитай второй", "Прочитай файл 03. Конспекты и готовые ответы"))
+def test_resolved_drive_selection_replaces_only_model_current_request(tmp_path, user_text):
+    provider = FakeProvider(provider_id="ollama-local", response_text="В выбранном документе есть конспекты.")
+    receipt = DocumentReadReceipt(
+        receipt_id="doc-drive-resolved",
+        source_kind=DocumentReadSourceKind.CONNECTOR,
+        source_reference="drive-file-id-must-not-reach-model",
+        source_domain="drive.google.com",
+        display_name="03. Конспекты и готовые ответы",
+        completed_at=datetime(2026, 8, 24, tzinfo=timezone.utc),
+        evidence=DocumentEvidence(
+            title="Конспекты",
+            page_count=1,
+            pages_read=1,
+            extracted_chars=23,
+            content_sha256="b" * 64,
+            pages=(DocumentPageEvidence(page_number=1, text="SQL plan evidence text."),),
+        ),
+    )
+
+    class Drive:
+        def observe(self, _message, *, conversation_id):
+            return DriveReadOutcome(
+                "read_completed",
+                document_receipt=receipt,
+                resolved_document_request=ResolvedDriveDocumentRequest(
+                    display_name="03. Конспекты и готовые ответы",
+                ),
+            )
+        def human_result(self, _outcome):
+            return "unavailable"
+
+    service = _service(tmp_path, provider)
+    service.google_drive_service = Drive()
+    conversation_id, _ = service.send(user_text, project_id="project_masha_home")
+
+    assert service.history.messages(conversation_id)[0].content == user_text
+    model_current = provider.last_request.messages[-1].content
+    assert "03. Конспекты и готовые ответы" in model_current
+    assert "уже разрешена приложением" in model_current
+    assert "номер раздела" in model_current
+    serialized = provider.last_request.model_dump_json()
+    assert "drive-file-id-must-not-reach-model" not in serialized
+    assert "SQL plan evidence text." in serialized
+    assert "Выбранный файл и смысл чтения уже определены приложением" in provider.last_request.private_context["external_information_contract"]

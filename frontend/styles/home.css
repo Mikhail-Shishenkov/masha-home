@@ -108,7 +108,6 @@ html[data-home-attention="active"] .conversation-surface.is-surface-concealed { 
 .local-document-add:disabled { opacity: .45; cursor: not-allowed; }
 .local-document-chip { display: flex; align-items: center; min-width: 0; gap: 7px; margin: 0 0 3px; color: rgba(236,223,207,.7); font: 500 11px/1.3 system-ui, sans-serif; }
 .local-document-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.local-document-chip button { width: 18px; height: 18px; padding: 0; color: rgba(236,223,207,.72); border: 0; background: transparent; font-size: 18px; line-height: 1; cursor: pointer; }
 .recent-conversations { position: absolute; top: 52px; right: 0; bottom: 0; left: 0; z-index: 6; min-height: 0; padding: 23px 26px 28px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgba(222,181,116,.38) transparent; border: 0; border-top: 1px solid rgba(226,188,126,.25); border-bottom: 1px solid rgba(226,188,126,.2); background: linear-gradient(155deg, rgba(27,20,14,.99), rgba(14,13,12,.98)); box-shadow: 0 34px 76px rgba(0,0,0,.42); }
 .shelf-line { position: absolute; left: 22px; right: 22px; bottom: 18px; height: 1px; background: linear-gradient(90deg, transparent, rgba(216,170,105,.35) 14%, rgba(216,170,105,.16) 84%, transparent); box-shadow: 0 8px 18px rgba(0,0,0,.5); }
 .recent-heading { margin: 0 0 12px; color: #d6ad70; text-transform: uppercase; letter-spacing: .14em; font: 600 10px/1.2 system-ui, sans-serif; }

@@ -10,6 +10,8 @@ const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
 
 assert.match(html, /id="add-local-document"/);
 assert.match(html, /id="local-document-chip"/);
+assert.doesNotMatch(html, /id="clear-local-document"/);
+assert.doesNotMatch(app, /clearLocalDocument|clear-local-document/);
 assert.match(app, /bridge\.chooseLocalDocument\(\)/);
 assert.match(app, /bridge\.submitMessageWithDocument\(content, token\)/);
 assert.match(app, /local_documents/);
