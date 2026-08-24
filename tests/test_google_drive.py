@@ -202,7 +202,7 @@ def test_conversation_scoped_ordinal_and_exact_file_selection():
     assert found.files == (first, second)
     assert service.observe("прочитай второй", conversation_id="conversation-a").status == "read_completed"
     assert reader.reads == ["second"]
-    assert service.observe("прочитай второй", conversation_id="conversation-b").status == "clarification_required"
+    assert service.observe("прочитай второй", conversation_id="conversation-b") is None
     assert service.observe("прочитай файл План обучения", conversation_id="conversation-a").status == "read_completed"
     assert reader.reads == ["second", "first"]
 

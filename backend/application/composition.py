@@ -39,6 +39,7 @@ from backend.external_observation import (
 from backend.document_read import DocumentReadStore, DocumentReader, LocalDocumentInputService
 from backend.connectors.google_calendar import GoogleCalendarConfigStore, GoogleCalendarConversationService, GoogleCalendarReader
 from backend.connectors.google_drive import GoogleDriveConfigStore, GoogleDriveConversationService, GoogleDriveReader
+from backend.connectors.yandex_mail import YandexMailConfigStore, YandexMailConversationService, YandexMailReader
 from backend.secrets import WindowsCredentialManagerSecretStore
 from backend.skills.agent_loop import AgentRunStore
 from backend.skills.autonomy import ActionAutonomyPolicyStore, ActionAutonomyService
@@ -326,6 +327,14 @@ def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
                 config_store=GoogleDriveConfigStore(root / "local-data" / "config" / "google-drive.json"),
                 secret_store=WindowsCredentialManagerSecretStore(),
                 document_store=DocumentReadStore(root / "local-data" / "runtime" / "document-read-receipts.json"),
+                policy_store=InternetAccessPolicyStore(root / "local-data" / "config" / "internet-access.json"),
+                safety_store=AutonomySafetyStore(root / "local-data" / "config" / "autonomy-safety.json"),
+            )
+        ),
+        yandex_mail_service=YandexMailConversationService(
+            reader=YandexMailReader(
+                config_store=YandexMailConfigStore(root / "local-data" / "config" / "yandex-mail.json"),
+                secret_store=WindowsCredentialManagerSecretStore(),
                 policy_store=InternetAccessPolicyStore(root / "local-data" / "config" / "internet-access.json"),
                 safety_store=AutonomySafetyStore(root / "local-data" / "config" / "autonomy-safety.json"),
             )

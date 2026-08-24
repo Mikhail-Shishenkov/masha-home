@@ -47,6 +47,7 @@ V1_STATIC_INVENTORY = (
     StaticInventoryComponent("config_skills", "local-data/config/skills.json", "payload/config/skills.json", False),
     StaticInventoryComponent("config_google_calendar", "local-data/config/google-calendar.json", "payload/config/google-calendar.json", False),
     StaticInventoryComponent("config_google_drive", "local-data/config/google-drive.json", "payload/config/google-drive.json", False),
+    StaticInventoryComponent("config_yandex_mail", "local-data/config/yandex-mail.json", "payload/config/yandex-mail.json", False),
     StaticInventoryComponent("runtime_external_observations", "local-data/runtime/external-observations.json", "payload/runtime/external-observations.json", False),
     StaticInventoryComponent("runtime_document_receipts", "local-data/runtime/document-read-receipts.json", "payload/runtime/document-read-receipts.json", False),
     StaticInventoryComponent("runtime_daily_receipts", "local-data/runtime/daily-runtime-receipts.json", "payload/runtime/daily-runtime-receipts.json", False),

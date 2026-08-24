@@ -62,6 +62,9 @@ def _home(root: Path) -> Path:
             "requested_scope": "https://www.googleapis.com/auth/drive.readonly",
         }), encoding="utf-8",
     )
+    (root / "local-data/config/yandex-mail.json").write_text(
+        json.dumps({"connector_id": "yandex-mail", "provider": "yandex", "client_id": "yandex-client", "account_email": "misha@yandex.ru", "secret_ref": {"value": "yandex-mail-primary"}, "client_secret_ref": {"value": "yandex-mail-client-secret"}, "requested_scope": "mail:imap_ro"}), encoding="utf-8",
+    )
     for name in (
         "external-observations.json", "document-read-receipts.json", "daily-runtime-receipts.json", "agent-runs.json",
     ):
@@ -188,6 +191,10 @@ def test_create_verify_inventory_and_explicit_exclusions(home: Path, tmp_path: P
     drive_client_secret_value = "google-drive-client-secret-never-in-backup"
     secret_store.put(SecretRef(value="google-drive-primary"), drive_secret_value)
     secret_store.put(SecretRef(value="google-drive-client-secret"), drive_client_secret_value)
+    yandex_secret_value = "yandex-refresh-never-in-backup"
+    yandex_client_secret_value = "yandex-client-secret-never-in-backup"
+    secret_store.put(SecretRef(value="yandex-mail-primary"), yandex_secret_value)
+    secret_store.put(SecretRef(value="yandex-mail-client-secret"), yandex_client_secret_value)
     bundle = _backup(home, tmp_path)
     manifest, paths = _archive_paths(bundle, tmp_path)
 
@@ -198,6 +205,7 @@ def test_create_verify_inventory_and_explicit_exclusions(home: Path, tmp_path: P
     assert "payload/skills/backup_skill/fixture_skill.py" in paths
     assert "payload/config/google-calendar.json" in paths
     assert "payload/config/google-drive.json" in paths
+    assert "payload/config/yandex-mail.json" in paths
     assert all("secrets" not in path and "random" not in path for path in paths)
     assert all("skill-install" not in path and "local-document" not in path for path in paths)
     assert manifest["recovery_hold_required"] is True
@@ -207,16 +215,22 @@ def test_create_verify_inventory_and_explicit_exclusions(home: Path, tmp_path: P
     assert client_secret_value.encode("utf-8") not in bundle.read_bytes()
     assert drive_secret_value.encode("utf-8") not in bundle.read_bytes()
     assert drive_client_secret_value.encode("utf-8") not in bundle.read_bytes()
+    assert yandex_secret_value.encode("utf-8") not in bundle.read_bytes()
+    assert yandex_client_secret_value.encode("utf-8") not in bundle.read_bytes()
     inspected_tar = tmp_path / "secret-inspection.tar"
     decrypt_file(bundle, inspected_tar, PASSPHRASE)
     assert secret_value.encode("utf-8") not in inspected_tar.read_bytes()
     assert client_secret_value.encode("utf-8") not in inspected_tar.read_bytes()
     assert drive_secret_value.encode("utf-8") not in inspected_tar.read_bytes()
     assert drive_client_secret_value.encode("utf-8") not in inspected_tar.read_bytes()
+    assert yandex_secret_value.encode("utf-8") not in inspected_tar.read_bytes()
+    assert yandex_client_secret_value.encode("utf-8") not in inspected_tar.read_bytes()
     assert secret_value not in json.dumps(manifest)
     assert client_secret_value not in json.dumps(manifest)
     assert drive_secret_value not in json.dumps(manifest)
     assert drive_client_secret_value not in json.dumps(manifest)
+    assert yandex_secret_value not in json.dumps(manifest)
+    assert yandex_client_secret_value not in json.dumps(manifest)
     assert all(item["format_version"] is None for item in manifest["components"])
     checked = verify_backup(bundle, PASSPHRASE)
     assert checked.components_verified == len(manifest["components"])

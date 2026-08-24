@@ -21,7 +21,10 @@ class GoogleDriveConversationService:
             candidates = self._presented.get(conversation_id, ())
             index = (intent.ordinal or 0) - 1
             if index < 0 or index >= len(candidates):
-                return DriveReadOutcome("clarification_required")
+                # A bare ordinal is deliberately shared by human read surfaces.
+                # If Drive has not presented a candidate list for this conversation,
+                # let the next application-owned resolver (for example Mail) decide.
+                return None
             return self.reader.read_file(candidates[index])
         assert intent.query is not None
         if intent.kind == "read_presented_name":
