@@ -174,7 +174,8 @@ def test_webchannel_bridge_exposes_only_typed_allowlisted_slots():
         "loadAgentRuns",
             "loadProactiveInteractions",
             "refreshProactiveInteractions",
-        "resolveProactiveInteraction",
+            "recordReminderPresented",
+            "resolveProactiveInteraction",
         "loadSharedContinuity",
         "activateContinuityThread",
         "clearContinuityThread",
@@ -478,6 +479,8 @@ def test_static_home_surfaces_keep_attention_actions_and_connection_shelf_human(
     assert "Понял" in renderer and "Убрать" in renderer
     assert "просроченное дело" in renderer and "свежая просрочка" not in renderer
     assert "showReminderToast" in renderer and "playReminderCueOnce" in renderer
+    assert "formatDueAt(reminder.due_at)" in renderer
+    assert "recordReminderPresented" in renderer
     assert 'id="reminder-toast"' in html and 'aria-live="polite"' in html
     assert 'data-attention-level="quiet"' in styles and "animation: none" in styles
 
@@ -991,6 +994,12 @@ def test_open_home_refresh_projects_new_live_reminder_once(tmp_path):
     assert len(live) == 1
     assert live[0]["delivery_origin"] == "local_runtime"
     assert live[0]["interactions"]["items"][0]["message"] == "Миша, пора сказать мяу."
+    assert live[0]["interactions"]["items"][0]["due_at"] == (now + timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
+    trace = application._proactive._trace.list()
+    assert {row["stage"] for row in trace} >= {
+        "runtime_cycle_started", "interaction_delivered", "renderer_delivery_emitted",
+    }
+    assert all(row["at"].endswith("+00:00") for row in trace)
     assert ProactiveInteractionStore(repository).list()[0]["state"] == "delivered"
     assert len(application._proactive._journal.list()) == 2
     assert application.status().proactive_reason_code == "authorised"

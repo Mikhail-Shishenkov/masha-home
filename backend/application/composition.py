@@ -51,6 +51,7 @@ from backend.skills.registry import SkillRegistry
 from backend.temporal.proactive import ProactivePolicyStore
 from backend.temporal.proactive_daemon import ProactiveDaemon, request_proactive_wakeup
 from backend.temporal.proactive_interaction import ProactiveInteractionStore
+from backend.temporal.reminder_trace import ReminderDeliveryTrace
 from backend.temporal.temporal_engine import TemporalEngine
 from backend.temporal.timezone_provider import HomeTimeZoneProvider, HomeTimeZoneStore
 from backend.conversation.response_expression import (
@@ -115,6 +116,7 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
         core.repository,
         home_timezone=core.conversation.temporal_engine.home_timezone.tzinfo,
     )
+    reminder_trace = ReminderDeliveryTrace(runtime / "reminder-delivery-trace.json")
 
     registry = SkillRegistry(
         skills_root=core.project_root / "local-data" / "skills",
@@ -236,6 +238,7 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
             daemon=daemon,
             hold_checker=RecoveryJournal(core.project_root).is_hold,
             wake_path=runtime / "proactive-daemon.wake",
+            trace=reminder_trace,
             runtime=DailyRuntime(
                 history=core.conversation.history,
                 temporal_engine=core.conversation.temporal_engine,
@@ -308,6 +311,7 @@ def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
         repository,
         home_timezone=temporal_engine.home_timezone.tzinfo,
     )
+    reminder_trace = ReminderDeliveryTrace(root / "local-data" / "runtime" / "reminder-delivery-trace.json")
     conversation = ConversationService(
         identity_kernel=identity,
         memory_retriever=MemoryRetriever(repository),
@@ -335,7 +339,10 @@ def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
                 commitment_id,
                 temporal_engine.clock.now_utc(),
             ),
-            on_timed_commitment_changed=lambda: request_proactive_wakeup(root),
+            on_timed_commitment_changed=lambda: (
+                reminder_trace.record("commitment_due_changed"),
+                request_proactive_wakeup(root, trace=reminder_trace),
+            ),
         ),
         model_profiles=profiles,
         proactive_interactions=interactions,

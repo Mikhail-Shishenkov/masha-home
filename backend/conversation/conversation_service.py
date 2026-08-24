@@ -90,6 +90,23 @@ _FALSE_FILES_DENIAL = re.compile(
     r"я\s+не\s+(?:могу|умею)\s+(?:проверить|читать|посмотреть)\s+(?:drive|диск|файлы))",
     re.IGNORECASE,
 )
+_MASCULINE_FIRST_PERSON = {
+    "понял": "поняла", "готов": "готова", "сделал": "сделала", "проверил": "проверила",
+    "нашел": "нашла", "нашёл": "нашла", "прочитал": "прочитала", "увидел": "увидела",
+    "смог": "смогла", "был": "была",
+}
+_FEMININE_ADDRESSEE = {
+    "сделала": "сделал", "проверила": "проверил", "нашла": "нашёл", "прочитала": "прочитал",
+    "готова": "готов", "устала": "устал", "смогла": "смог",
+}
+_CAPABILITY_CLAIMS = (
+    ("web_search", re.compile(r"я\s+(?:могу|умею|готова)\s+(?:поищ(?:у|ать)|найти|проверить|посмотреть).{0,60}(?:интернет|сеть|веб)", re.IGNORECASE)),
+    ("yandex_mail_read", re.compile(r"я\s+(?:могу|умею|готова)\s+(?:проверить|посмотреть|читать).{0,40}почт", re.IGNORECASE)),
+    ("google_calendar_read", re.compile(r"я\s+(?:могу|умею|готова)\s+(?:проверить|посмотреть|читать).{0,40}календар", re.IGNORECASE)),
+    ("google_drive_read", re.compile(r"я\s+(?:могу|умею|готова)\s+(?:проверить|посмотреть|читать).{0,40}(?:drive|диск|файл)", re.IGNORECASE)),
+    ("yandex_disk_read", re.compile(r"я\s+(?:могу|умею|готова)\s+(?:проверить|посмотреть|читать).{0,40}(?:диск|файл)", re.IGNORECASE)),
+    ("proactive_reminders", re.compile(r"я\s+(?:могу|умею|готова)\s+напомн", re.IGNORECASE)),
+)
 _SHARED_CONTINUITY_QUERY = re.compile(
     r"\b(?:между\s+нами|наш(?:а|ей|у)\s+истори(?:я|и|ю)|общ(?:ая|ей|ую)\s+истори(?:я|и|ю)|"
     r"открыт(?:ая|ые|ую)\s+нит(?:ь|и)|что\s+у\s+нас\s+продолжается)\b"
@@ -191,6 +208,18 @@ def ground_completed_capability_claims(
         value = _FALSE_CALENDAR_DENIAL.sub("Я проверила календарь", value)
     if completed_files:
         value = _FALSE_FILES_DENIAL.sub("Я прочитала выбранный файл", value)
+    return value
+
+
+def stabilize_identity_and_capability_truth(value: str, *, capabilities: dict) -> str:
+    """Small output guard for stable Masha voice and local capability truth."""
+    for masculine, feminine in _MASCULINE_FIRST_PERSON.items():
+        value = re.sub(rf"\bя\s+{masculine}\b", f"Я {feminine}", value, flags=re.IGNORECASE)
+    for feminine, masculine in _FEMININE_ADDRESSEE.items():
+        value = re.sub(rf"\bты\s+{feminine}\b", f"ты {masculine}", value, flags=re.IGNORECASE)
+    for capability, pattern in _CAPABILITY_CLAIMS:
+        if capabilities.get(capability) not in {None, "available"}:
+            value = pattern.sub("Сейчас эта возможность в Доме недоступна", value)
     return value
 
 
@@ -384,6 +413,7 @@ class ConversationService:
                     recent_messages=recent_external_context,
                     project_id=project_id,
                     active_continuity_thread_id=active_continuity_thread_id,
+                    conversation_message_ids=conversation_message_ids,
                 )
                 external_observations = () if search is None else (search,)
             self.last_external_observations = external_observations
@@ -600,6 +630,10 @@ class ConversationService:
             ) or (
                 disk_outcome is not None and disk_outcome.status == "read_completed"
             ),
+        )
+        grounded_response = stabilize_identity_and_capability_truth(
+            grounded_response,
+            capabilities=home_capabilities,
         )
         grounded_completed_items = tuple(
             str(item.get("data", {}).get("content") or item.get("data", {}).get("text") or "")

@@ -155,6 +155,12 @@ class MashaApplication:
         """Advance only the existing policy-controlled local runtime."""
         return self._proactive.refresh(limit=limit)
 
+    def record_reminder_renderer_delivery(self, interaction_id: str, rendered_at: datetime) -> None:
+        self._proactive.record_renderer_delivery(interaction_id, rendered_at)
+
+    def record_reminder_renderer_handoff(self, interaction_id: str, emitted_at: datetime) -> None:
+        self._proactive.record_renderer_handoff(interaction_id, emitted_at)
+
     def resolve_proactive(self, interaction_id: str, decision: str) -> ProactiveInteractionView:
         return self._proactive.resolve(interaction_id, decision)
 

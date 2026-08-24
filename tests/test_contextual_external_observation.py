@@ -63,24 +63,23 @@ class _Fetcher:
         )
 
 
-def _evidence() -> SearchEvidence:
-    url = "https://ollama.com/blog/releases"
+def _evidence(*, title: str = "Ollama releases", snippet: str = "Public release details.", url: str = "https://ollama.com/blog/releases") -> SearchEvidence:
     return SearchEvidence(
         source_id="S1", provider_id="fake", search_backend="fake",
-        title="Ollama releases", url=url, canonical_url=canonicalize_https_url(url),
-        domain="ollama.com", snippet="Public release details.", source_time=SourceTime(),
+        title=title, url=url, canonical_url=canonicalize_https_url(url),
+        domain="ollama.com", snippet=snippet, source_time=SourceTime(),
         retrieved_at=NOW, observation_started_at=NOW, provider_rank=1,
         freshness_status=FreshnessStatus.UNKNOWN,
     )
 
 
-def _service(tmp_path, *, hints=None, planner_query="Ollama latest release", fetcher=None):
+def _service(tmp_path, *, hints=None, planner_query="Ollama latest release", fetcher=None, evidence=None):
     config = tmp_path / "local-data" / "config"
     safety = AutonomySafetyService(
         store=AutonomySafetyStore(config / "autonomy-safety.json"),
         clock=lambda: NOW,
     )
-    provider = FakeWebSearchProvider((_evidence(),))
+    provider = FakeWebSearchProvider((evidence or _evidence(),))
     return ExternalObservationService(
         provider=provider,
         policy_store=InternetAccessPolicyStore(config / "internet-access.json"),
@@ -101,7 +100,10 @@ def _service(tmp_path, *, hints=None, planner_query="Ollama latest release", fet
 
 def test_self_contained_explicit_query_skips_w3_context_and_provider_receives_only_query(tmp_path):
     hints = _Hints()
-    service, provider = _service(tmp_path, hints=hints, planner_query="Python")
+    service, provider = _service(
+        tmp_path, hints=hints, planner_query="Python",
+        evidence=_evidence(title="Python latest release", snippet="Python release details."),
+    )
 
     result = service.observe_explicit_request(
         "Найди последнюю версию Python",
@@ -166,6 +168,42 @@ def test_zero_context_referential_search_fails_closed_before_planner_or_provider
     assert result.error_reason == "context_clarification_required"
     assert service.planner.calls == []
     assert provider.requests == []
+
+
+def test_referential_web_follow_up_inherits_only_prior_completed_web_subject(tmp_path):
+    hints = _Hints()
+    service, provider = _service(tmp_path, hints=hints)
+
+    first = service.observe_explicit_request(
+        "Поищи в интернете Ollama", origin_message_id="message-1",
+        conversation_message_ids=("message-1",),
+    )
+    second = service.observe_explicit_request(
+        "А теперь проверь, обновилась ли она", origin_message_id="message-2",
+        conversation_message_ids=("message-1", "message-2"),
+    )
+
+    assert first is not None and first.status is ObservationStatus.COMPLETED
+    assert second is not None and second.status is ObservationStatus.COMPLETED
+    assert [request.query for request in provider.requests] == ["Ollama latest release", "Ollama latest release"]
+    assert hints.calls == []
+
+
+def test_unrelated_but_fresh_evidence_fails_honestly(tmp_path):
+    unrelated = _evidence(
+        title="Fresh weather forecast", snippet="Current weather details.",
+        url="https://weather.example/current",
+    )
+    service, provider = _service(tmp_path, evidence=unrelated)
+
+    result = service.observe_explicit_request(
+        "Поищи в интернете Ollama", origin_message_id="message-1",
+    )
+
+    assert result is not None and result.status is ObservationStatus.UNAVAILABLE
+    assert result.error_reason == "weak_evidence"
+    assert len(provider.requests) == 1
+    assert "не подтвердили именно эту тему" in service.human_failure(result)
 
 
 def test_search_then_fetch_uses_context_once_and_keeps_one_search_one_fetch(tmp_path):

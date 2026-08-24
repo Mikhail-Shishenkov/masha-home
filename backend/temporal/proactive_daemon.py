@@ -17,18 +17,22 @@ from backend.runtime.safety import AutonomySafetyStore
 from backend.backup.recovery_journal import RecoveryJournal
 
 from .proactive import ProactivePolicyStore
+from .proactive_interaction import ProactiveInteractionStore
+from .reminder_trace import ReminderDeliveryTrace
 from .temporal_runtime import due_aware_cycle_delay
 
 
 _WAKE_REVISION_UNSET = object()
 
 
-def request_proactive_wakeup(project_root: Path) -> None:
+def request_proactive_wakeup(project_root: Path, *, trace=None) -> None:
     """Notify the existing runtime that deadline state changed; no domain data lives here."""
     runtime_dir = Path(project_root) / "local-data" / "runtime"
     runtime_dir.mkdir(parents=True, exist_ok=True)
     wake_path = runtime_dir / "proactive-daemon.wake"
     wake_path.touch()
+    if trace is not None:
+        trace.record("wake_signalled")
 
 
 class ProactiveDaemon:
@@ -48,6 +52,7 @@ class ProactiveDaemon:
         self.status_path = self.runtime_dir / "proactive-daemon-status.json"
         self.wake_path = self.runtime_dir / "proactive-daemon.wake"
         self.journal = DailyRuntimeJournal(self.runtime_dir / "daily-runtime-receipts.json")
+        self.trace = ReminderDeliveryTrace(self.runtime_dir / "reminder-delivery-trace.json")
         self.safety_store = AutonomySafetyStore(
             self.project_root / "local-data" / "config" / "autonomy-safety.json"
         )
@@ -82,8 +87,24 @@ class ProactiveDaemon:
                     policy = ProactivePolicyStore(service.model_profiles.path.parent / "proactive-policy.json").load()
                     interval = policy.cycle_interval_seconds
                     if policy.runtime_mode == "background":
+                        repository = service.memory_retriever.memory_store
+                        interaction_store = (
+                            ProactiveInteractionStore(repository)
+                            if hasattr(repository, "_connection") else None
+                        )
+                        delivered_before = set() if interaction_store is None else {
+                            row["event_id"] for row in interaction_store.list() if row["state"] == "delivered"
+                        }
+                        self.trace.record("daemon_runtime_cycle_started")
                         receipt = DailyRuntime(history=service.history, temporal_engine=service.temporal_engine, repository=service.memory_retriever.memory_store, identity_kernel=service.identity_kernel, router=service.router, model_profiles=service.model_profiles, safety_store=self.safety_store).run_cycle(policy)
                         self.journal.append(receipt)
+                        if interaction_store is not None:
+                            for row in interaction_store.list():
+                                if row["state"] == "delivered" and row["event_id"] not in delivered_before:
+                                    self.trace.record(
+                                        "interaction_delivered", interaction_id=row["event_id"],
+                                        at=datetime.fromisoformat(row["delivered_at"]),
+                                    )
                         wait_seconds = due_aware_cycle_delay(
                             service.memory_retriever.memory_store,
                             now=datetime.now(timezone.utc),
@@ -142,11 +163,13 @@ class ProactiveDaemon:
         remaining = seconds
         while remaining > 0 and not self.stop_path.exists() and not self.safety_store.is_engaged():
             if self._wake_revision() != wake_revision:
+                self.trace.record("wake_received")
                 return
             step = min(1, remaining)
             self.sleep(step)
             remaining -= step
             if self._wake_revision() != wake_revision:
+                self.trace.record("wake_received")
                 return
 
     def _wake_revision(self):

@@ -1608,9 +1608,11 @@ function showReminderToast(interactions, interactionId) {
   );
   if (!reminder) return;
   clearTimeout(reminderToastTimer);
-  reminderToastMessage.textContent = reminder.message;
+  const due = reminder.due_at ? ` · ${formatDueAt(reminder.due_at)}` : "";
+  reminderToastMessage.textContent = `${reminder.message}${due}`;
   reminderToast.hidden = false;
   playReminderCueOnce();
+  bridge.recordReminderPresented(reminder.interaction_id, new Date().toISOString());
   reminderToastTimer = window.setTimeout(() => {
     reminderToast.hidden = true;
     reminderToastTimer = null;

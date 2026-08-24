@@ -69,6 +69,27 @@ def test_home_capability_snapshot_reaches_model_as_description_without_execution
     assert "не даёт разрешения" in context["home_capability_contract"]
 
 
+def test_model_reply_keeps_masha_voice_addressee_and_capability_truth(tmp_path):
+    provider = FakeProvider(
+        provider_id="ollama-local",
+        response_text="Я понял, ты сделала всё верно. Я могу проверить почту и интернет.",
+    )
+    service = _service(tmp_path, provider)
+    service.home_capability_provider = lambda: HomeCapabilitySnapshot(
+        web_search="blocked", web_fetch="blocked",
+        google_calendar_read="unavailable", google_drive_read="unavailable",
+        yandex_mail_read="needs_reconnect", yandex_disk_read="unavailable",
+        proactive_reminders="available",
+    )
+
+    _, text = service.send("Как ты?", project_id="project_masha_home")
+
+    assert "Я поняла" in text
+    assert "ты сделал" in text
+    assert "могу проверить почту" not in text.casefold()
+    assert "могу проверить интернет" not in text.casefold()
+
+
 def test_service_returns_controlled_error_for_unavailable_local_model(tmp_path):
     service = _service(tmp_path, FakeProvider(provider_id="ollama-local", available=False))
 

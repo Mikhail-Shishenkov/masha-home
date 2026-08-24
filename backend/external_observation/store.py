@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .models import ExternalObservation, ExternalObservationState
+from .models import ExternalObservation, ExternalObservationState, ObservationKind, ObservationStatus
 
 
 class ExternalObservationStore:
@@ -47,6 +47,24 @@ class ExternalObservationStore:
             item
             for item in reversed(self._load().observations)
             if item.request.origin_message_id in allowed
+        )
+
+    def latest_completed_web_search_for_origin_messages(
+        self,
+        message_ids: tuple[str, ...],
+    ) -> ExternalObservation | None:
+        """Return only a usable prior public subject from this conversation."""
+        allowed = set(message_ids)
+        return next(
+            (
+                item
+                for item in reversed(self._load().observations)
+                if item.request.origin_message_id in allowed
+                and item.request.kind is ObservationKind.WEB_SEARCH
+                and item.status is ObservationStatus.COMPLETED
+                and item.evidence
+            ),
+            None,
         )
 
     def attach_assistant_message(self, observation_id: str, message_id: str) -> ExternalObservation:

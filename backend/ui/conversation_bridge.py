@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 
@@ -269,6 +270,21 @@ class LocalConversationBridge(QObject):
         )
         future.add_done_callback(self._finish_proactive_refresh)
 
+    @Slot(str, str)
+    def recordReminderPresented(self, interaction_id: str, rendered_at: str):  # noqa: N802
+        """Record a renderer acknowledgement through a narrow, data-free bridge."""
+        if self._application is None:
+            return
+        try:
+            timestamp = datetime.fromisoformat(rendered_at.replace("Z", "+00:00"))
+            if timestamp.tzinfo is None:
+                return
+            self._application.record_reminder_renderer_delivery(
+                interaction_id, timestamp.astimezone(timezone.utc)
+            )
+        except (TypeError, ValueError):
+            return
+
     @Slot(bool)
     def setSpecialEvening(self, enabled: bool):  # noqa: N802
         if self._application is None or self._session is None:
@@ -387,6 +403,11 @@ class LocalConversationBridge(QObject):
         if not new_ids:
             return
         first = next(item for item in interactions.items if item.interaction_id in new_ids)
+        # This is the exact bridge-to-renderer handoff time.  The renderer then
+        # records its own acknowledgement after showing the banner and cue.
+        self._application.record_reminder_renderer_handoff(
+            first.interaction_id, datetime.now(timezone.utc)
+        )
         if self._session is None:
             self._session = self._application.open_home_session()
         snapshot = self._session_snapshot(

@@ -188,6 +188,7 @@ class ProactiveInteractionView(UiContract):
     message: str = Field(min_length=1, max_length=500)
     created_at: datetime
     delivered_at: datetime
+    due_at: datetime | None = None
     allowed_actions: tuple[Literal["acknowledge", "dismiss"], ...]
 
 

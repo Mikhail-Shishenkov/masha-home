@@ -83,12 +83,18 @@ class ProactiveInteractionStore:
 
     def get(self, event_id: str):
         with self.repository._connection() as c:
-            row = c.execute("SELECT * FROM proactive_interactions WHERE event_id=?", (event_id,)).fetchone()
+            row = c.execute("""SELECT pi.*, te.due_at AS due_at
+                FROM proactive_interactions pi
+                LEFT JOIN temporal_events te ON te.id=pi.temporal_event_id
+                WHERE pi.event_id=?""", (event_id,)).fetchone()
         return None if row is None else dict(row)
 
     def list(self):
         with self.repository._connection() as c:
-            rows = c.execute("SELECT * FROM proactive_interactions ORDER BY created_at DESC").fetchall()
+            rows = c.execute("""SELECT pi.*, te.due_at AS due_at
+                FROM proactive_interactions pi
+                LEFT JOIN temporal_events te ON te.id=pi.temporal_event_id
+                ORDER BY pi.created_at DESC""").fetchall()
         return [dict(row) for row in rows]
 
     def delivery_stats(self, now: datetime) -> tuple[int, datetime | None]:

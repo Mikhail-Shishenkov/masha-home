@@ -11,7 +11,7 @@ from .contracts import ProactiveInteractionListView, ProactiveInteractionView
 class ProactiveApplicationService:
     """Expose only already-delivered local messages and their existing actions."""
 
-    def __init__(self, *, store: ProactiveInteractionStore, clock, runtime=None, policy_store=None, journal=None, daemon=None, hold_checker=None, wake_path=None):
+    def __init__(self, *, store: ProactiveInteractionStore, clock, runtime=None, policy_store=None, journal=None, daemon=None, hold_checker=None, wake_path=None, trace=None):
         self._store = store
         self._clock = clock
         self._runtime = runtime
@@ -22,6 +22,7 @@ class ProactiveApplicationService:
         self._next_runtime_cycle_at = None
         self._runtime_interval_seconds = None
         self._wake_path = wake_path
+        self._trace = trace
         self._wake_revision = self._current_wake_revision()
 
     def refresh(self, *, limit: int = 6) -> ProactiveInteractionListView:
@@ -58,6 +59,10 @@ class ProactiveApplicationService:
                     self._next_runtime_cycle_at = now + timedelta(
                         seconds=policy.cycle_interval_seconds
                     )
+                    delivered_before = {
+                        row["event_id"] for row in self._store.list() if row["state"] == "delivered"
+                    }
+                    self._record("runtime_cycle_started")
                     receipt = self._runtime.run_cycle(policy)
                     if self._journal is not None:
                         self._journal.append(receipt)
@@ -67,7 +72,24 @@ class ProactiveApplicationService:
                         cadence_seconds=policy.cycle_interval_seconds,
                     )
                     self._next_runtime_cycle_at = self._clock.now_utc() + timedelta(seconds=next_delay)
+                    for row in self._store.list():
+                        if row["state"] == "delivered" and row["event_id"] not in delivered_before:
+                            self._record(
+                                "interaction_delivered",
+                                interaction_id=row["event_id"],
+                                at=datetime.fromisoformat(row["delivered_at"]),
+                            )
         return self.list(limit=limit)
+
+    def record_renderer_delivery(self, interaction_id: str, rendered_at: datetime) -> None:
+        self._record("renderer_banner_presented", interaction_id=interaction_id, at=rendered_at)
+
+    def record_renderer_handoff(self, interaction_id: str, emitted_at: datetime) -> None:
+        self._record("renderer_delivery_emitted", interaction_id=interaction_id, at=emitted_at)
+
+    def _record(self, stage: str, *, interaction_id: str | None = None, at: datetime | None = None) -> None:
+        if self._trace is not None:
+            self._trace.record(stage, interaction_id=interaction_id, at=at)
 
     def _current_wake_revision(self):
         if self._wake_path is None:
@@ -107,5 +129,6 @@ class ProactiveApplicationService:
             message=row["message_text"],
             created_at=datetime.fromisoformat(row["created_at"]),
             delivered_at=datetime.fromisoformat(row["delivered_at"]),
+            due_at=None if row.get("due_at") is None else datetime.fromisoformat(row["due_at"]),
             allowed_actions=("acknowledge", "dismiss") if row["state"] == "delivered" else (),
         )
