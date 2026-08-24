@@ -16,6 +16,8 @@ from backend.memory.memory_retriever import MemoryRetriever
 from backend.memory.memory_store import MemoryStore
 from backend.memory.working_memory import WorkingMemory
 from backend.connectors.google_calendar.reader import CalendarReadOutcome, CalendarEventEvidence
+from backend.connectors.google_drive.reader import DriveReadOutcome
+from backend.document_read import DocumentEvidence, DocumentPageEvidence, DocumentReadReceipt, DocumentReadSourceKind
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -150,3 +152,48 @@ def test_calendar_evidence_reaches_only_local_model_context_and_not_history_or_m
     serialized = provider.last_request.model_dump_json()
     assert "REFRESH_TOKEN" not in serialized and "ACCESS_TOKEN" not in serialized
     assert all("Созвон" not in message.content for message in service.history.messages(conversation_id))
+
+
+def test_drive_document_evidence_reaches_local_model_without_passive_memory(tmp_path):
+    provider = FakeProvider(provider_id="ollama-local", response_text="В документе есть SQL план.")
+    receipt = DocumentReadReceipt(
+        receipt_id="doc-drive-1",
+        source_kind=DocumentReadSourceKind.CONNECTOR,
+        source_reference="drive-file-id-must-not-reach-model",
+        source_domain="drive.google.com",
+        display_name="SQL план",
+        completed_at=datetime(2026, 8, 24, tzinfo=timezone.utc),
+        evidence=DocumentEvidence(
+            title="SQL план",
+            page_count=1,
+            pages_read=1,
+            extracted_chars=23,
+            content_sha256="a" * 64,
+            pages=(DocumentPageEvidence(page_number=1, text="SQL plan evidence text."),),
+        ),
+    )
+
+    class Drive:
+        def observe(self, _message, *, conversation_id):
+            assert conversation_id
+            return DriveReadOutcome("read_completed", document_receipt=receipt)
+        def human_result(self, _outcome):
+            return "unavailable"
+
+    class Passive:
+        def __init__(self): self.calls = []
+        def observe_safely(self, request): self.calls.append(request)
+
+    service = _service(tmp_path, provider)
+    passive = Passive()
+    service.google_drive_service = Drive()
+    service.passive_memory_service = passive
+    conversation_id, response = service.send("прочитай файл SQL план", project_id="project_masha_home")
+
+    assert response == "В документе есть SQL план."
+    assert provider.last_request.private_context["external_information"][0]["kind"] == "document_read"
+    serialized = provider.last_request.model_dump_json()
+    assert "drive-file-id-must-not-reach-model" not in serialized
+    assert "SQL plan evidence text." in serialized
+    assert passive.calls == []
+    assert all("SQL plan evidence text." not in item.content for item in service.history.messages(conversation_id))
