@@ -7,9 +7,21 @@ from .reader import DriveFileCandidate, DriveReadOutcome, GoogleDriveReader
 
 
 class GoogleDriveConversationService:
-    def __init__(self, *, reader: GoogleDriveReader):
+    def __init__(self, *, reader: GoogleDriveReader, presented_read_sets=None):
         self.reader = reader
         self._presented: dict[str, tuple[DriveFileCandidate, ...]] = {}
+        self.presented_read_sets = presented_read_sets
+
+    def _candidates(self, conversation_id: str) -> tuple[DriveFileCandidate, ...] | None:
+        if self.presented_read_sets is not None:
+            rows = self.presented_read_sets.items_for(conversation_id, "google_drive")
+            return None if rows is None else tuple(rows)
+        return self._presented.get(conversation_id, ())
+
+    def _present(self, conversation_id: str, files: tuple[DriveFileCandidate, ...]) -> None:
+        self._presented[conversation_id] = files
+        if self.presented_read_sets is not None:
+            self.presented_read_sets.present(conversation_id, "google_drive", files)
 
     def observe(self, message: str, *, conversation_id: str) -> DriveReadOutcome | None:
         intent = drive_intent(message)
@@ -18,7 +30,9 @@ class GoogleDriveConversationService:
         if intent.kind == "clarify":
             return DriveReadOutcome("clarification_required")
         if intent.kind == "read_ordinal":
-            candidates = self._presented.get(conversation_id, ())
+            candidates = self._candidates(conversation_id)
+            if candidates is None:
+                return None
             index = (intent.ordinal or 0) - 1
             if index < 0 or index >= len(candidates):
                 # A bare ordinal is deliberately shared by human read surfaces.
@@ -29,25 +43,25 @@ class GoogleDriveConversationService:
         assert intent.query is not None
         if intent.kind == "read_presented_name":
             exact = tuple(
-                item for item in self._presented.get(conversation_id, ())
+                item for item in (self._candidates(conversation_id) or ())
                 if _same_name(item.name, intent.query)
             )
             return self.reader.read_file(exact[0]) if len(exact) == 1 else None
         found = self.reader.search(intent.query)
         if intent.kind == "search" or found.status != "search_completed":
             if found.status == "search_completed":
-                self._presented[conversation_id] = found.files
+                self._present(conversation_id, found.files)
             return found
         if intent.kind == "search_read":
             if len(found.files) != 1:
                 if found.files:
-                    self._presented[conversation_id] = found.files
+                    self._present(conversation_id, found.files)
                 return DriveReadOutcome("clarification_required", files=found.files)
             return self.reader.read_file(found.files[0])
         exact = tuple(item for item in found.files if _same_name(item.name, intent.query))
         if len(exact) != 1:
             if found.files:
-                self._presented[conversation_id] = found.files
+                self._present(conversation_id, found.files)
             return DriveReadOutcome("clarification_required", files=found.files)
         return self.reader.read_file(exact[0])
 

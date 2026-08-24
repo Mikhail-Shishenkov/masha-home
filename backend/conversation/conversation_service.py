@@ -181,6 +181,7 @@ class ConversationService:
         google_calendar_service=None,
         google_drive_service=None,
         yandex_mail_service=None,
+        yandex_disk_service=None,
     ):
         self.identity_kernel = identity_kernel
         self.memory_retriever = memory_retriever
@@ -203,6 +204,7 @@ class ConversationService:
         self.google_calendar_service = google_calendar_service
         self.google_drive_service = google_drive_service
         self.yandex_mail_service = yandex_mail_service
+        self.yandex_disk_service = yandex_disk_service
         self.last_recall_result = None
         self.last_external_observation = None
         self.last_external_observations = ()
@@ -297,6 +299,22 @@ class ConversationService:
                     self.history.append(conversation.id, ConversationRole.ASSISTANT, response, origin=ConversationMessageOrigin.APPLICATION)
                     return conversation.id, response
                 resolved_mail_request = mail_outcome.resolved_request
+
+        disk_outcome = None
+        resolved_disk_document_request = None
+        if document_receipt is None and self.yandex_disk_service is not None:
+            disk_outcome = self.yandex_disk_service.observe(user_message, conversation_id=conversation.id)
+            if disk_outcome is not None:
+                if disk_outcome.status != "read_completed":
+                    response = self.yandex_disk_service.human_result(disk_outcome)
+                    self.history.append(conversation.id, ConversationRole.ASSISTANT, response, origin=ConversationMessageOrigin.APPLICATION)
+                    return conversation.id, response
+                document_receipt = disk_outcome.document_receipt
+                resolved_disk_document_request = disk_outcome.resolved_document_request
+                if document_receipt is None:
+                    response = self.yandex_disk_service.human_result(disk_outcome)
+                    self.history.append(conversation.id, ConversationRole.ASSISTANT, response, origin=ConversationMessageOrigin.APPLICATION)
+                    return conversation.id, response
 
         external_observations = ()
         if document_receipt is None and self.external_observation_service is not None:
@@ -456,6 +474,8 @@ class ConversationService:
             )
         if resolved_mail_request is not None:
             model_messages = self._replace_current_model_request(model_messages, resolved_mail_request.model_message())
+        if resolved_disk_document_request is not None:
+            model_messages = self._replace_current_model_request(model_messages, resolved_disk_document_request.model_message())
         request = self.context_compiler.compile(
             messages=model_messages,
             identity_context=self.identity_kernel.build_context(),
@@ -473,7 +493,7 @@ class ConversationService:
                     MAIL_INFORMATION_CONTRACT if mail_outcome is not None and (mail_outcome.content is not None or mail_outcome.status == "important_completed") else (CALENDAR_INFORMATION_CONTRACT if calendar_outcome is not None else (
                         EXTERNAL_INFORMATION_CONTRACT if document_receipt is None else (
                             RESOLVED_DRIVE_DOCUMENT_INFORMATION_CONTRACT
-                            if resolved_drive_document_request is not None
+                            if resolved_drive_document_request is not None or resolved_disk_document_request is not None
                             else DOCUMENT_INFORMATION_CONTRACT
                         )
                     ))
@@ -541,6 +561,12 @@ class ConversationService:
             and hasattr(self.google_drive_service, "attach_assistant_message")
         ):
             self.google_drive_service.attach_assistant_message(drive_outcome, assistant_history_message.id)
+        if (
+            disk_outcome is not None
+            and disk_outcome.status == "read_completed"
+            and hasattr(self.yandex_disk_service, "attach_assistant_message")
+        ):
+            self.yandex_disk_service.attach_assistant_message(disk_outcome, assistant_history_message.id)
         if external_observations:
             attached = tuple(
                 self.external_observation_service.attach_assistant_message(
@@ -554,6 +580,7 @@ class ConversationService:
             not external_observations
             and calendar_outcome is None
             and mail_outcome is None
+            and disk_outcome is None
             and document_receipt is None
             and allow_capability_routing
             and self.passive_memory_service is not None

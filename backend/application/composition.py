@@ -40,6 +40,8 @@ from backend.document_read import DocumentReadStore, DocumentReader, LocalDocume
 from backend.connectors.google_calendar import GoogleCalendarConfigStore, GoogleCalendarConversationService, GoogleCalendarReader
 from backend.connectors.google_drive import GoogleDriveConfigStore, GoogleDriveConversationService, GoogleDriveReader
 from backend.connectors.yandex_mail import YandexMailConfigStore, YandexMailConversationService, YandexMailReader
+from backend.connectors.yandex_disk import YandexDiskConfigStore, YandexDiskConversationService, YandexDiskReader
+from backend.connectors.presented_read_sets import PresentedReadSetRegistry
 from backend.secrets import WindowsCredentialManagerSecretStore
 from backend.skills.agent_loop import AgentRunStore
 from backend.skills.autonomy import ActionAutonomyPolicyStore, ActionAutonomyService
@@ -279,6 +281,7 @@ def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
         detector=PassiveMemoryCandidateDetector(temporal_engine),
         clock=temporal_engine.clock.now_utc,
     )
+    presented_read_sets = PresentedReadSetRegistry()
     conversation = ConversationService(
         identity_kernel=identity,
         memory_retriever=MemoryRetriever(repository),
@@ -329,7 +332,8 @@ def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
                 document_store=DocumentReadStore(root / "local-data" / "runtime" / "document-read-receipts.json"),
                 policy_store=InternetAccessPolicyStore(root / "local-data" / "config" / "internet-access.json"),
                 safety_store=AutonomySafetyStore(root / "local-data" / "config" / "autonomy-safety.json"),
-            )
+            ),
+            presented_read_sets=presented_read_sets,
         ),
         yandex_mail_service=YandexMailConversationService(
             reader=YandexMailReader(
@@ -337,7 +341,18 @@ def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
                 secret_store=WindowsCredentialManagerSecretStore(),
                 policy_store=InternetAccessPolicyStore(root / "local-data" / "config" / "internet-access.json"),
                 safety_store=AutonomySafetyStore(root / "local-data" / "config" / "autonomy-safety.json"),
-            )
+            ),
+            presented_read_sets=presented_read_sets,
+        ),
+        yandex_disk_service=YandexDiskConversationService(
+            reader=YandexDiskReader(
+                config_store=YandexDiskConfigStore(root / "local-data" / "config" / "yandex-disk.json"),
+                secret_store=WindowsCredentialManagerSecretStore(),
+                document_store=DocumentReadStore(root / "local-data" / "runtime" / "document-read-receipts.json"),
+                policy_store=InternetAccessPolicyStore(root / "local-data" / "config" / "internet-access.json"),
+                safety_store=AutonomySafetyStore(root / "local-data" / "config" / "autonomy-safety.json"),
+            ),
+            presented_read_sets=presented_read_sets,
         ),
     )
     return _Core(

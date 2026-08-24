@@ -19,6 +19,7 @@ from backend.connectors.google_calendar.reader import CalendarReadOutcome, Calen
 from backend.connectors.google_drive.reader import DriveReadOutcome, ResolvedDriveDocumentRequest
 from backend.document_read import DocumentEvidence, DocumentPageEvidence, DocumentReadReceipt, DocumentReadSourceKind
 from backend.connectors.yandex_mail.models import MailMessageContent, MailMessageSummary, MailOutcome, ResolvedMailRequest
+from backend.connectors.yandex_disk.reader import DiskReadOutcome, ResolvedYandexDiskDocumentRequest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -264,3 +265,25 @@ def test_resolved_mail_selection_keeps_history_and_gives_only_safe_evidence(tmp_
     assert "Собеседование" in provider.last_request.messages[-1].content and "уже разрешена приложением" in provider.last_request.messages[-1].content
     dumped=provider.last_request.model_dump_json();assert "imap-uid-must-not-reach-model" not in dumped and "Встреча завтра" in dumped
     assert "недоверенное внешнее evidence" in provider.last_request.private_context["external_information_contract"] and passive.calls==[]
+
+
+def test_resolved_yandex_disk_selection_keeps_original_history_and_safe_meaning(tmp_path):
+    provider = FakeProvider(provider_id="ollama-local", response_text="В документе есть условия договора.")
+    receipt = DocumentReadReceipt(
+        receipt_id="doc-yandex-disk", source_kind=DocumentReadSourceKind.CONNECTOR,
+        source_reference="disk:/private/contract.pdf", source_domain="cloud-api.yandex.net",
+        display_name="Договор.pdf", completed_at=datetime(2026, 8, 24, tzinfo=timezone.utc),
+        evidence=DocumentEvidence(title="Договор", page_count=1, pages_read=1, extracted_chars=len("Условия договора"), content_sha256="c" * 64, pages=(DocumentPageEvidence(page_number=1, text="Условия договора"),)),
+    )
+    class Disk:
+        def observe(self, _message, *, conversation_id):
+            return DiskReadOutcome("read_completed", document_receipt=receipt, resolved_document_request=ResolvedYandexDiskDocumentRequest("Договор.pdf"))
+        def human_result(self, _outcome): return "unavailable"
+    class Passive:
+        def __init__(self): self.calls=[]
+        def observe_safely(self, request): self.calls.append(request)
+    service = _service(tmp_path, provider); service.yandex_disk_service=Disk(); passive=Passive(); service.passive_memory_service=passive
+    conversation_id,_=service.send("Прочитай второй", project_id="project_masha_home")
+    assert service.history.messages(conversation_id)[0].content=="Прочитай второй"
+    serialized=provider.last_request.model_dump_json();assert "disk:/private" not in serialized and "Условия договора" in serialized
+    assert "Яндекс Диске" in provider.last_request.messages[-1].content and "номер раздела" in provider.last_request.messages[-1].content and passive.calls==[]
