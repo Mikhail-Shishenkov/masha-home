@@ -34,6 +34,11 @@ class GoogleDriveConversationService:
             if found.status == "search_completed":
                 self._present(conversation_id, found.files)
             return found
+        if intent.kind == "recent":
+            found = self.reader.search("")
+            if found.status == "search_completed":
+                self._present(conversation_id, found.files)
+            return found
         if intent.kind == "read_ordinal":
             candidates = self._candidates(conversation_id)
             if candidates is None:

@@ -99,6 +99,8 @@ def test_explicit_yandex_disk_never_routes_to_google_drive_but_drive_list_still_
     from backend.connectors.google_drive.intent import drive_intent
     assert drive_intent("покажи последние файлы на Яндекс Диске") is None
     assert drive_intent("покажи файлы в Драйве").kind == "list"
+    assert drive_intent("Маша покажи послледние файлы на Гугл Диске").kind == "recent"
+    assert drive_intent("Маша покажи все файлы на Гугл Диске").kind == "list"
     transport = FakeTransport(pages=[_files(("id-1", "Plan", "application/pdf", "100"))])
     reader, _, _ = _reader(tmp_path, transport)
     outcome = reader.search("")

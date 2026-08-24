@@ -1,6 +1,7 @@
 from __future__ import annotations
 import re
 from dataclasses import dataclass
+from backend.connectors.provider_language import normalize_command_prefix
 _ORD={"первое":1,"первый":1,"второе":2,"второй":2,"третье":3,"третий":3}
 @dataclass(frozen=True)
 class MailIntent: kind:str; query:str|None=None; ordinal:int|None=None
@@ -11,7 +12,9 @@ def _request_text(message:str)->str:
     return re.sub(prefix,"",text,count=1)
 
 def mail_intent(message:str):
-    text=_request_text(message)
+    normalized=normalize_command_prefix(message, token_limit=2)
+    if re.fullmatch(r"(?:маш(?:а|енька)? )?(?:проверь (?:мою )?почту|загляни в почту|посмотри почту)",normalized): return MailIntent("unread")
+    text=_request_text(normalized)
     if re.fullmatch(r"(?:маш(?:а|енька)? )?прочитай (?:письмо )?(первое|первый|второе|второй|третье|третий)",text):
         return MailIntent("read_ordinal",ordinal=_ORD[text.split()[-1]])
     if re.fullmatch(r"(?:что важн\w* пришло(?: сегодня)?|есть что(?:\s|-)+нибудь важное)",text): return MailIntent("important")

@@ -129,6 +129,8 @@ def test_policy_and_credential_failures_are_controlled_without_calls(tmp_path):
 
 
 def test_intents_and_latest_presented_owner_win_for_ordinal():
+    assert disk_intent("Маша, найди последние файы на Яндекс диске").kind=="recent"
+    assert disk_intent("Маш, покажи последние файлы на Яндекс Диске").kind=="recent"
     assert disk_intent("Найди на Яндекс Диске файл про договор").kind=="search"
     assert disk_intent("Покажи последние файлы на Яндекс Диске").kind=="recent"
     assert disk_intent("Прочитай файл Договор.pdf").kind=="read_name"

@@ -50,6 +50,8 @@ def test_new_recent_today_and_important_keep_distinct_intents_and_criteria():
  assert mail_intent("что пришло сегодня").kind=="today"
  assert mail_intent("есть что-нибудь важное").kind=="important"
  assert _criteria("unread",None)==("UNSEEN",) and _criteria("recent",None)==("ALL",)
+ for phrase in ("Маша проверь почту", "проверь мою почту", "загляни в почту", "посмотри почту"):
+  assert mail_intent(phrase).kind=="unread"
 
 def test_conversational_lead_ins_route_only_clear_mail_requests():
  for phrase in ("Маша, а теперь что нового в почте?","Маш, посмотри, что нового в почте","Маш, глянь, есть новые письма?","Маш, скажи, что пришло сегодня"):
