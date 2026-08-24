@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import sys
+from collections import deque
 from pathlib import Path
+from typing import Callable
 
 # Hardware compositing is the normal path: the Home scene is 4K bitmap-heavy
 # and software Chromium compositing makes interaction visibly sluggish.  A
@@ -18,7 +20,7 @@ if os.environ.get("MASHA_HOME_SOFTWARE_COMPOSITING") == "1":
         "--disable-gpu --disable-gpu-compositing",
     )
 
-from PySide6.QtCore import QTimer, QUrl
+from PySide6.QtCore import QObject, QTimer, QUrl, Slot
 from PySide6.QtWebEngineCore import (
     QWebEnginePage,
     QWebEngineProfile,
@@ -38,6 +40,50 @@ from .local_origin import HOME_HOST, MashaLocalResourceHandler, SCHEME_NAME, reg
 
 HOME_URL = QUrl("masha://home/index.html")
 QWEBCHANNEL_SCRIPT_PATH = "/qtwebchannel/qwebchannel.js"
+REMINDER_CUE_HISTORY_LIMIT = 256
+
+
+class ReminderCuePlayer(QObject):
+    """Play one native Qt cue for each newly projected reminder receipt."""
+
+    def __init__(
+        self,
+        parent=None,
+        *,
+        cue: Callable[[], None] | None = None,
+        history_limit: int = REMINDER_CUE_HISTORY_LIMIT,
+    ):
+        super().__init__(parent)
+        self._cue = cue or self._qt_system_cue
+        self._history_limit = max(1, history_limit)
+        self._played_order: deque[str] = deque()
+        self._played_ids: set[str] = set()
+
+    @Slot(str)
+    def play_once(self, interaction_id: str) -> bool:
+        """Return whether this receipt caused a cue; failures never replay it."""
+        if not interaction_id or interaction_id in self._played_ids:
+            return False
+        self._remember(interaction_id)
+        try:
+            self._cue()
+        except Exception:
+            # A missing/disabled audio device must not break Home delivery.
+            pass
+        return True
+
+    def _remember(self, interaction_id: str) -> None:
+        if len(self._played_order) >= self._history_limit:
+            oldest = self._played_order.popleft()
+            self._played_ids.discard(oldest)
+        self._played_order.append(interaction_id)
+        self._played_ids.add(interaction_id)
+
+    @staticmethod
+    def _qt_system_cue() -> None:
+        application = QApplication.instance()
+        if application is not None:
+            application.beep()
 
 
 class LocalOnlyInterceptor(QWebEngineUrlRequestInterceptor):
@@ -90,6 +136,8 @@ class MashaHomeWindow(QMainWindow):
         self._page = LocalOnlyPage(self._profile, self)
         self._application = self._build_application()
         self._bridge = LocalConversationBridge(self._application, self)
+        self._reminder_cue = ReminderCuePlayer(self)
+        self._bridge.reminderDelivery.connect(self._reminder_cue.play_once)
         self._channel = QWebChannel(self._page)
         self._channel.registerObject("mashaHome", self._bridge)
         self._page.setWebChannel(self._channel)

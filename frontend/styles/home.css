@@ -135,9 +135,11 @@ html[data-home-attention="active"] .conversation-surface.is-surface-concealed { 
 .send:disabled { color: rgba(231,197,139,.38); cursor: not-allowed; }
 .home-attention-trigger, .safety-trigger { position: absolute; z-index: 8; bottom: 22px; appearance: none; border: 1px solid rgba(239,215,180,.16); color: rgba(244,226,203,.68); background: rgba(22,17,12,.88); box-shadow: 0 12px 38px rgba(0,0,0,.24); cursor: pointer; transition: color 220ms ease, border-color 220ms ease, background 220ms ease, transform 220ms var(--ease-home); }
 .home-attention-trigger { left: 28px; width: 42px; height: 42px; border-radius: 50%; font-size: 17px; }
-.reminder-toast { position: absolute; z-index: 16; left: 28px; bottom: 82px; width: min(360px, calc(100vw - 56px)); padding: 14px 16px; border: 1px solid rgba(231, 188, 126, .28); border-radius: 12px; color: #f4e2cb; background: rgba(29, 21, 14, .94); box-shadow: 0 18px 48px rgba(0,0,0,.34); pointer-events: none; }
-.reminder-toast span { display: block; margin-bottom: 5px; color: rgba(231, 188, 126, .78); text-transform: uppercase; letter-spacing: .12em; font: 600 9px/1 system-ui, sans-serif; }
-.reminder-toast strong { font: 500 14px/1.45 system-ui, sans-serif; }
+.reminder-toast { position: absolute; z-index: 16; left: 28px; bottom: 82px; width: min(430px, calc(100vw - 56px)); padding: 18px 20px; border: 1px solid rgba(241, 198, 132, .46); border-radius: 14px; color: #fff0dd; background: linear-gradient(130deg, rgba(43, 30, 19, .97), rgba(25, 20, 15, .96)); box-shadow: 0 22px 62px rgba(0,0,0,.46), 0 0 0 1px rgba(244,206,148,.08) inset; pointer-events: none; animation: reminder-toast-arrive 520ms var(--ease-home) both; }
+.reminder-toast span { display: block; margin-bottom: 7px; color: rgba(242, 199, 134, .9); text-transform: uppercase; letter-spacing: .13em; font: 650 10px/1 system-ui, sans-serif; }
+.reminder-toast strong { display: block; font: 500 16px/1.5 system-ui, sans-serif; }
+@keyframes reminder-toast-arrive { 0% { opacity: 0; transform: translateY(10px) scale(.985); } 58% { opacity: 1; transform: translateY(-2px) scale(1.008); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+@media (prefers-reduced-motion: reduce) { .reminder-toast { animation: none; } }
 .home-attention-glyph {
   position: relative;
   z-index: 3;

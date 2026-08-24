@@ -1582,41 +1582,21 @@ if (freshOverdue > 0) {
   );
 }
 
-function playReminderCueOnce() {
-  const AudioContext = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContext) return;
-  try {
-    const audio = new AudioContext();
-    const oscillator = audio.createOscillator();
-    const gain = audio.createGain();
-    oscillator.frequency.value = 660;
-    gain.gain.setValueAtTime(0.0001, audio.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.035, audio.currentTime + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + 0.16);
-    oscillator.connect(gain).connect(audio.destination);
-    oscillator.start();
-    oscillator.stop(audio.currentTime + 0.17);
-    oscillator.addEventListener("ended", () => audio.close(), { once: true });
-  } catch {
-    // Browser/OS audio policy may block sound; visual delivery remains valid.
-  }
-}
-
 function showReminderToast(interactions, interactionId) {
-  const reminder = (interactions?.items || []).find((item) =>
-    item.interaction_id === interactionId && item.interaction_type === "reminder"
+  const reminder = interactionSafety.reminderToastProjection(
+    interactions,
+    interactionId,
   );
   if (!reminder) return;
   clearTimeout(reminderToastTimer);
-  const due = reminder.due_at ? ` · ${formatDueAt(reminder.due_at)}` : "";
+  const due = reminder.dueAt ? ` · ${formatDueAt(reminder.dueAt)}` : "";
   reminderToastMessage.textContent = `${reminder.message}${due}`;
   reminderToast.hidden = false;
-  playReminderCueOnce();
-  bridge.recordReminderPresented(reminder.interaction_id, new Date().toISOString());
+  bridge.recordReminderPresented(reminder.interactionId, new Date().toISOString());
   reminderToastTimer = window.setTimeout(() => {
     reminderToast.hidden = true;
     reminderToastTimer = null;
-  }, 6500);
+  }, reminder.durationMs);
 }
 
 if (upcoming > 0) {

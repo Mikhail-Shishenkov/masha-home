@@ -478,11 +478,28 @@ def test_static_home_surfaces_keep_attention_actions_and_connection_shelf_human(
     styles = (root / "frontend" / "styles" / "home.css").read_text(encoding="utf-8")
     assert "Понял" in renderer and "Убрать" in renderer
     assert "просроченное дело" in renderer and "свежая просрочка" not in renderer
-    assert "showReminderToast" in renderer and "playReminderCueOnce" in renderer
-    assert "formatDueAt(reminder.due_at)" in renderer
+    assert "showReminderToast" in renderer and "AudioContext" not in renderer
+    assert "reminderToastProjection" in renderer
+    assert "formatDueAt(reminder.dueAt)" in renderer
     assert "recordReminderPresented" in renderer
-    assert 'id="reminder-toast"' in html and 'aria-live="polite"' in html
+    assert 'id="reminder-toast"' in html and 'role="status"' in html
+    assert 'aria-live="polite"' in html and 'aria-atomic="true"' in html
+    assert "reminder-toast-arrive" in styles and "pointer-events: none" in styles
+    assert "z-index: 16" in styles and "home-attention-spark" in html
     assert 'data-attention-level="quiet"' in styles and "animation: none" in styles
+
+
+def test_desktop_reminder_cue_plays_once_for_each_new_interaction_id():
+    from backend.ui.desktop_host import ReminderCuePlayer
+
+    played: list[str] = []
+    player = ReminderCuePlayer(cue=lambda: played.append("cue"))
+
+    assert player.play_once("reminder-1") is True
+    assert player.play_once("reminder-1") is False
+    assert player.play_once("reminder-2") is True
+    assert player.play_once("") is False
+    assert played == ["cue", "cue"]
 
 def test_desktop_bridge_loads_bounded_memory_and_continuity_without_mutation(tmp_path):
     from backend.application import build_masha_application
@@ -954,7 +971,9 @@ def test_open_home_refresh_projects_new_live_reminder_once(tmp_path):
     )
     bridge = LocalConversationBridge(application)
     emitted: list[dict] = []
+    sound_requests: list[str] = []
     bridge.event.connect(lambda encoded: emitted.append(json.loads(encoded)))
+    bridge.reminderDelivery.connect(sound_requests.append)
     bridge.loadInitialState()
     # Home is already open and its fast projection pulse has observed one
     # policy cycle before the new reminder exists.
@@ -963,6 +982,8 @@ def test_open_home_refresh_projects_new_live_reminder_once(tmp_path):
     while bridge._proactive_refresh_in_flight and time.monotonic() < deadline:
         app.processEvents()
         time.sleep(0.01)
+
+    assert sound_requests == []
 
     proposed = application.send_message(
         "Напомни через две минуты сказать мяу",
@@ -995,14 +1016,52 @@ def test_open_home_refresh_projects_new_live_reminder_once(tmp_path):
     assert live[0]["delivery_origin"] == "local_runtime"
     assert live[0]["interactions"]["items"][0]["message"] == "Миша, пора сказать мяу."
     assert live[0]["interactions"]["items"][0]["due_at"] == (now + timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
+    interaction_id = live[0]["interactions"]["items"][0]["interaction_id"]
+    assert sound_requests == [interaction_id]
+    bridge.loadHomeAttention()
+    attention = [item for item in emitted if item["kind"] == "home_attention"][-1]
+    assert any(
+        item.get("interaction_id") == interaction_id
+        for item in attention["attention"]["attention_items"]
+    )
+    assert sound_requests == [interaction_id]
+    assert application.status().proactive_reason_code == "explicit_user_reminder"
+
+    second = application.send_message(
+        "Напомни через две минуты проверить дверь",
+        project_id="project_masha_home",
+    )
+    application.resolve_confirmation(
+        conversation_id=second.conversation_id,
+        proposal_id=second.pending_confirmation.proposal_id,
+        decision="confirm",
+        project_id="project_masha_home",
+    )
+    second_commitment = next(
+        item for item in repository.read_document().commitments
+        if "дверь" in item.text
+    )
+    clock.value = second_commitment.due_at + timedelta(minutes=1)
+    bridge.refreshProactiveInteractions()
+    deadline = time.monotonic() + 3
+    while len(sound_requests) < 2 and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    bridge.refreshProactiveInteractions()
+    deadline = time.monotonic() + 1
+    while bridge._proactive_refresh_in_flight and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+
+    assert len(sound_requests) == 2
+    assert sound_requests[0] != sound_requests[1]
     trace = application._proactive._trace.list()
     assert {row["stage"] for row in trace} >= {
         "runtime_cycle_started", "interaction_delivered", "renderer_delivery_emitted",
     }
     assert all(row["at"].endswith("+00:00") for row in trace)
     assert ProactiveInteractionStore(repository).list()[0]["state"] == "delivered"
-    assert len(application._proactive._journal.list()) == 2
-    assert application.status().proactive_reason_code == "explicit_user_reminder"
+    assert len(application._proactive._journal.list()) == 3
     bridge.close()
 
 

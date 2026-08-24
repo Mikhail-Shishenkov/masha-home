@@ -30,6 +30,7 @@ class LocalConversationBridge(QObject):
     """A tiny allowlisted bridge; it never exposes application services to JavaScript."""
 
     event = Signal(str)
+    reminderDelivery = Signal(str)
 
     def __init__(self, application: MashaApplication | None, parent=None):
         super().__init__(parent)
@@ -408,6 +409,10 @@ class LocalConversationBridge(QObject):
         self._application.record_reminder_renderer_handoff(
             first.interaction_id, datetime.now(timezone.utc)
         )
+        if first.interaction_type == "reminder":
+            # Sound belongs to the trusted desktop boundary.  Reopening and
+            # ordinary projections never reach this new-delivery branch.
+            self.reminderDelivery.emit(first.interaction_id)
         if self._session is None:
             self._session = self._application.open_home_session()
         snapshot = self._session_snapshot(
