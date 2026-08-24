@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from .config import GoogleCalendarConfig
+from .network import assert_google_network_allowed
 
 
 AUTHORIZATION_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -39,11 +40,14 @@ class OAuthTokens:
 
 
 class GoogleDesktopOAuthFlow:
-    def __init__(self, *, browser_open: Callable[[str], bool] = webbrowser.open, token_post=None):
+    def __init__(self, *, browser_open: Callable[[str], bool] = webbrowser.open, token_post=None, policy_store=None, safety_store=None):
         self.browser_open = browser_open
         self.token_post = token_post or _token_post
+        self.policy_store = policy_store
+        self.safety_store = safety_store
 
     def authorize(self, config: GoogleCalendarConfig, *, timeout_seconds: float = 180.0) -> OAuthTokens:
+        assert_google_network_allowed(policy_store=self.policy_store, safety_store=self.safety_store)
         verifier, state = pkce_verifier(), oauth_state()
         callback = _LoopbackCallback(state)
         server = HTTPServer(("127.0.0.1", 0), callback.handler())
@@ -67,6 +71,7 @@ class GoogleDesktopOAuthFlow:
         fields = {"code": callback.code, "client_id": config.client_id, "redirect_uri": redirect_uri, "grant_type": "authorization_code", "code_verifier": verifier}
         if config.client_secret is not None:
             fields["client_secret"] = config.client_secret
+        assert_google_network_allowed(policy_store=self.policy_store, safety_store=self.safety_store)
         payload = self.token_post(fields)
         refresh_token = payload.get("refresh_token")
         if not isinstance(refresh_token, str) or not refresh_token:

@@ -1,16 +1,21 @@
 import json
+import io
 import threading
+import pytest
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from urllib.request import urlopen
+from urllib.error import HTTPError
 
 from backend.connectors.google_calendar.config import GoogleCalendarConfig, GoogleCalendarConfigStore
 from backend.connectors.google_calendar.intent import calendar_intent
 from backend.connectors.google_calendar.oauth import GoogleDesktopOAuthFlow, pkce_challenge, pkce_verifier
-from backend.connectors.google_calendar.reader import GoogleCalendarReader
+from backend.connectors.google_calendar.reader import GoogleCalendarReader, GoogleCalendarUnavailable, GoogleTokenInvalidGrant, UrllibGoogleCalendarTransport
 from backend.connectors.google_calendar.service import GoogleCalendarConversationService
 from backend.secrets import InMemorySecretStore
+from backend.external_observation.policy import InternetAccessMode, InternetAccessPolicy, InternetAccessPolicyStore
+from backend.runtime.safety import AutonomySafetyService, AutonomySafetyStore
 
 
 class FakeTransport:
@@ -91,8 +96,7 @@ def test_invalid_refresh_marks_reconnect_and_never_sends_network_when_disconnect
     reader, config_store, secrets = _reader(tmp_path)
     class InvalidTransport(FakeTransport):
         def request(self, *args, **kwargs):
-            from backend.connectors.google_calendar.reader import GoogleCalendarReconnectRequired
-            raise GoogleCalendarReconnectRequired("invalid_grant")
+            raise GoogleTokenInvalidGrant("invalid_grant")
     reader.transport = InvalidTransport()
     result = reader.read(start=datetime(2026, 8, 24, tzinfo=timezone.utc), end=datetime(2026, 8, 25, tzinfo=timezone.utc))
     assert result.status == "needs_reconnect"
@@ -100,6 +104,58 @@ def test_invalid_refresh_marks_reconnect_and_never_sends_network_when_disconnect
     reader.transport.calls.clear()
     assert reader.read(start=datetime(2026, 8, 24, tzinfo=timezone.utc), end=datetime(2026, 8, 25, tzinfo=timezone.utc)).status == "needs_reconnect"
     assert reader.transport.calls == []
+
+
+def test_network_off_and_emergency_stop_make_zero_google_transport_calls(tmp_path: Path):
+    transport = FakeTransport()
+    reader, _, _ = _reader(tmp_path, transport)
+    policy = InternetAccessPolicyStore(tmp_path / "local-data/config/internet-access.json")
+    reader.policy_store = policy
+    policy.save(InternetAccessPolicy(mode=InternetAccessMode.OFF))
+    window = dict(start=datetime(2026, 8, 24, tzinfo=timezone.utc), end=datetime(2026, 8, 25, tzinfo=timezone.utc))
+    assert reader.read(**window).status == "unavailable"
+    assert transport.calls == []
+    policy.save(InternetAccessPolicy())
+    safety = AutonomySafetyStore(tmp_path / "local-data/config/autonomy-safety.json")
+    reader.safety_store = safety
+    AutonomySafetyService(store=safety).engage()
+    assert reader.read(**window).status == "unavailable"
+    assert transport.calls == []
+
+
+def test_only_invalid_grant_deletes_refresh_token_and_calendar_400_does_not(tmp_path: Path, monkeypatch):
+    token_url = "https://oauth2.googleapis.com/token"
+    invalid = HTTPError(token_url, 400, "Bad Request", hdrs=None, fp=io.BytesIO(b'{"error":"invalid_grant"}'))
+    monkeypatch.setattr("backend.connectors.google_calendar.reader.urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(invalid))
+    with pytest.raises(GoogleTokenInvalidGrant):
+        UrllibGoogleCalendarTransport().request(token_url, method="POST")
+    calendar_url = "https://www.googleapis.com/calendar/v3/users/me/calendarList"
+    calendar_bad_request = HTTPError(calendar_url, 400, "Bad Request", hdrs=None, fp=io.BytesIO(b'{"error":{"message":"bad request"}}'))
+    monkeypatch.setattr("backend.connectors.google_calendar.reader.urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(calendar_bad_request))
+    with pytest.raises(GoogleCalendarUnavailable):
+        UrllibGoogleCalendarTransport().request(calendar_url)
+
+    reader, config_store, secrets = _reader(tmp_path)
+    class InvalidGrantTransport(FakeTransport):
+        def request(self, url, **kwargs):
+            if "token" in url:
+                raise GoogleTokenInvalidGrant("invalid_grant")
+            return super().request(url, **kwargs)
+    reader.transport = InvalidGrantTransport()
+    outcome = reader.read(start=datetime(2026, 8, 24, tzinfo=timezone.utc), end=datetime(2026, 8, 25, tzinfo=timezone.utc))
+    assert outcome.status == "needs_reconnect"
+    assert secrets.exists(config_store.load().secret_ref) is False
+
+    reader, config_store, secrets = _reader(tmp_path / "calendar-400")
+    class Calendar400Transport(FakeTransport):
+        def request(self, url, **kwargs):
+            if "calendarList" in url:
+                raise GoogleCalendarUnavailable("calendar_http_400")
+            return super().request(url, **kwargs)
+    reader.transport = Calendar400Transport()
+    outcome = reader.read(start=datetime(2026, 8, 24, tzinfo=timezone.utc), end=datetime(2026, 8, 25, tzinfo=timezone.utc))
+    assert outcome.status == "unavailable"
+    assert secrets.exists(config_store.load().secret_ref) is True
 
 
 def test_conversation_calendar_intents_and_safe_model_context(tmp_path: Path):

@@ -6,6 +6,8 @@ import argparse
 from pathlib import Path
 
 from backend.secrets import WindowsCredentialManagerSecretStore
+from backend.external_observation.policy import InternetAccessPolicyStore
+from backend.runtime.safety import AutonomySafetyStore
 
 from .google_calendar.config import GoogleCalendarConfig, GoogleCalendarConfigStore
 from .google_calendar.oauth import GoogleDesktopOAuthFlow
@@ -24,6 +26,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     store = GoogleCalendarConfigStore(args.project_root / "local-data/config/google-calendar.json")
     secrets = WindowsCredentialManagerSecretStore()
+    policy_store = InternetAccessPolicyStore(args.project_root / "local-data/config/internet-access.json")
+    safety_store = AutonomySafetyStore(args.project_root / "local-data/config/autonomy-safety.json")
     if args.command == "status":
         config = store.load()
         print("DISCONNECTED" if config is None else config.credential_metadata().credential_state(secrets).value.upper())
@@ -36,7 +40,7 @@ def main(argv: list[str] | None = None) -> int:
         print("DISCONNECTED")
         return 0
     config = GoogleCalendarConfig(client_id=args.client_id, client_secret=args.client_secret, account_label=args.account_label)
-    tokens = GoogleDesktopOAuthFlow().authorize(config)
+    tokens = GoogleDesktopOAuthFlow(policy_store=policy_store, safety_store=safety_store).authorize(config)
     secrets.put(config.secret_ref, tokens.refresh_token)
     store.save(config)
     print("READY")

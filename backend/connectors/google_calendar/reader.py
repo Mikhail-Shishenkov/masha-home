@@ -11,6 +11,7 @@ from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from .config import GoogleCalendarConfig, GoogleCalendarConfigStore
+from .network import GoogleCalendarNetworkBlocked, assert_google_network_allowed
 
 
 class GoogleCalendarTransport(Protocol):
@@ -25,6 +26,10 @@ class GoogleCalendarReconnectRequired(RuntimeError):
     pass
 
 
+class GoogleTokenInvalidGrant(GoogleCalendarReconnectRequired):
+    pass
+
+
 class UrllibGoogleCalendarTransport:
     """Small bounded JSON-only HTTPS transport; it never logs request headers."""
 
@@ -34,8 +39,8 @@ class UrllibGoogleCalendarTransport:
             with urlopen(request, timeout=12) as response:
                 raw = response.read(2 * 1024 * 1024 + 1)
         except HTTPError as error:
-            if error.code == 400:
-                raise GoogleCalendarReconnectRequired("google_reconnect_required") from error
+            if "/token" in url and error.code == 400 and _token_error_is_invalid_grant(error):
+                raise GoogleTokenInvalidGrant("google_reconnect_required") from error
             raise GoogleCalendarUnavailable("google_calendar_unavailable") from error
         except (URLError, OSError) as error:
             raise GoogleCalendarUnavailable("google_calendar_unavailable") from error
@@ -99,10 +104,12 @@ class GoogleCalendarReader:
     API_ROOT = "https://www.googleapis.com/calendar/v3"
     MAX_EVENTS = 50
 
-    def __init__(self, *, config_store: GoogleCalendarConfigStore, secret_store, transport: GoogleCalendarTransport | None = None):
+    def __init__(self, *, config_store: GoogleCalendarConfigStore, secret_store, transport: GoogleCalendarTransport | None = None, policy_store=None, safety_store=None):
         self.config_store = config_store
         self.secret_store = secret_store
         self.transport = transport or UrllibGoogleCalendarTransport()
+        self.policy_store = policy_store
+        self.safety_store = safety_store
 
     def read(self, *, start: datetime, end: datetime) -> CalendarReadOutcome:
         config = self.config_store.load()
@@ -116,17 +123,17 @@ class GoogleCalendarReader:
             calendars = self._calendars(access_token)
             events = self._events(access_token, calendars, start, end)
             return CalendarReadOutcome("completed", tuple(events), start, end)
-        except GoogleCalendarReconnectRequired:
+        except GoogleTokenInvalidGrant:
             self.secret_store.delete(config.secret_ref)
             return CalendarReadOutcome("needs_reconnect", start=start, end=end)
-        except GoogleCalendarUnavailable:
+        except (GoogleCalendarUnavailable, GoogleCalendarNetworkBlocked):
             return CalendarReadOutcome("unavailable", start=start, end=end)
 
     def _access_token(self, config: GoogleCalendarConfig, refresh_token: str) -> str:
         fields = {"client_id": config.client_id, "refresh_token": refresh_token, "grant_type": "refresh_token"}
         if config.client_secret is not None:
             fields["client_secret"] = config.client_secret
-        payload = self.transport.request(
+        payload = self._request(
             self.TOKEN_URL, method="POST", headers={"Content-Type": "application/x-www-form-urlencoded"},
             body=urlencode(fields).encode("ascii"),
         )
@@ -136,7 +143,7 @@ class GoogleCalendarReader:
         return token
 
     def _calendars(self, access_token: str) -> tuple[tuple[str, str], ...]:
-        payload = self.transport.request(
+        payload = self._request(
             f"{self.API_ROOT}/users/me/calendarList?" + urlencode({"minAccessRole": "reader", "maxResults": 50}),
             headers={"Authorization": f"Bearer {access_token}"},
         )
@@ -157,7 +164,7 @@ class GoogleCalendarReader:
                 params = {"timeMin": start.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"), "timeMax": end.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"), "singleEvents": "true", "orderBy": "startTime", "maxResults": str(min(50, self.MAX_EVENTS - len(events)))}
                 if page_token is not None:
                     params["pageToken"] = page_token
-                payload = self.transport.request(
+                payload = self._request(
                     f"{self.API_ROOT}/calendars/{quote(calendar_id, safe='')}/events?" + urlencode(params),
                     headers={"Authorization": f"Bearer {access_token}"},
                 )
@@ -171,6 +178,10 @@ class GoogleCalendarReader:
                 if page_token is None:
                     break
         return sorted(events, key=lambda event: (event.start.isoformat(), event.event_id))[:self.MAX_EVENTS]
+
+    def _request(self, url: str, *, method: str = "GET", headers: dict[str, str] | None = None, body: bytes | None = None) -> dict:
+        assert_google_network_allowed(policy_store=self.policy_store, safety_store=self.safety_store)
+        return self.transport.request(url, method=method, headers=headers, body=body)
 
 
 def _normalize_event(item: object, calendar_id: str, calendar_name: str, home_timezone) -> CalendarEventEvidence | None:
@@ -198,3 +209,11 @@ def _normalize_event(item: object, calendar_id: str, calendar_name: str, home_ti
 
 def _bounded(value: object) -> str | None:
     return value.strip()[:300] or None if isinstance(value, str) else None
+
+
+def _token_error_is_invalid_grant(error: HTTPError) -> bool:
+    try:
+        payload = json.loads(error.read(64 * 1024 + 1))
+    except Exception:
+        return False
+    return isinstance(payload, dict) and payload.get("error") == "invalid_grant"

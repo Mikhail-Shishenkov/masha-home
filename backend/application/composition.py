@@ -316,6 +316,8 @@ def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
             reader=GoogleCalendarReader(
                 config_store=GoogleCalendarConfigStore(root / "local-data" / "config" / "google-calendar.json"),
                 secret_store=WindowsCredentialManagerSecretStore(),
+                policy_store=InternetAccessPolicyStore(root / "local-data" / "config" / "internet-access.json"),
+                safety_store=AutonomySafetyStore(root / "local-data" / "config" / "autonomy-safety.json"),
             )
         ),
     )
