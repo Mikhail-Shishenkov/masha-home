@@ -8,11 +8,17 @@ from urllib.parse import parse_qs, urlparse
 from urllib.request import urlopen
 from urllib.error import HTTPError
 
-from backend.connectors.google_calendar.config import GoogleCalendarConfig, GoogleCalendarConfigStore
+from backend.connectors.google_calendar.config import (
+    GoogleCalendarConfig,
+    GoogleCalendarConfigStore,
+    read_google_desktop_client_json,
+)
 from backend.connectors.google_calendar.intent import calendar_intent
-from backend.connectors.google_calendar.oauth import GoogleDesktopOAuthFlow, pkce_challenge, pkce_verifier
+from backend.connectors.google_calendar.oauth import GoogleDesktopOAuthFlow, GoogleOAuthTokenError, OAuthTokens, _token_post, pkce_challenge, pkce_verifier
 from backend.connectors.google_calendar.reader import GoogleCalendarReader, GoogleCalendarUnavailable, GoogleTokenInvalidGrant, UrllibGoogleCalendarTransport
 from backend.connectors.google_calendar.service import GoogleCalendarConversationService
+from backend.connectors import google_calendar_cli
+from backend.connectors.google_calendar_cli import disconnect_google_calendar
 from backend.secrets import InMemorySecretStore
 from backend.external_observation.policy import InternetAccessMode, InternetAccessPolicy, InternetAccessPolicyStore
 from backend.runtime.safety import AutonomySafetyService, AutonomySafetyStore
@@ -45,10 +51,11 @@ def _reader(tmp_path: Path, transport=None):
     config_store.save(config)
     secrets = InMemorySecretStore()
     secrets.put(config.secret_ref, "REFRESH_TOKEN_MUST_NOT_ESCAPE")
+    secrets.put(config.client_secret_ref, "CLIENT_SECRET_MUST_NOT_ESCAPE")
     return GoogleCalendarReader(config_store=config_store, secret_store=secrets, transport=transport or FakeTransport()), config_store, secrets
 
 
-def test_pkce_is_s256_and_oauth_callback_writes_only_refresh_token(tmp_path: Path):
+def test_pkce_is_s256_and_oauth_callback_stores_credentials_only_in_secret_store(tmp_path: Path):
     verifier = pkce_verifier()
     assert 43 <= len(verifier) <= 128
     assert pkce_challenge(verifier) != verifier
@@ -63,20 +70,83 @@ def test_pkce_is_s256_and_oauth_callback_writes_only_refresh_token(tmp_path: Pat
         threading.Thread(target=lambda: urlopen(callback, timeout=5).read(), daemon=True).start()
         return True
 
-    flow = GoogleDesktopOAuthFlow(browser_open=browser, token_post=lambda fields: ({"refresh_token": "REFRESH_TOKEN_MUST_NOT_ESCAPE"} if fields["code"] == "auth-code" else {}))
-    tokens = flow.authorize(config, timeout_seconds=5)
+    captured_fields = {}
+    def token_post(fields):
+        captured_fields.update(fields)
+        return {"refresh_token": "REFRESH_TOKEN_MUST_NOT_ESCAPE"} if fields["code"] == "auth-code" else {}
+
+    flow = GoogleDesktopOAuthFlow(browser_open=browser, token_post=token_post)
+    tokens = flow.authorize(config, client_secret="CLIENT_SECRET_MUST_NOT_ESCAPE", timeout_seconds=5)
     secrets.put(config.secret_ref, tokens.refresh_token)
+    secrets.put(config.client_secret_ref, "CLIENT_SECRET_MUST_NOT_ESCAPE")
     assert secrets.get(config.secret_ref) == "REFRESH_TOKEN_MUST_NOT_ESCAPE"
+    assert secrets.get(config.client_secret_ref) == "CLIENT_SECRET_MUST_NOT_ESCAPE"
+    assert captured_fields["client_secret"] == "CLIENT_SECRET_MUST_NOT_ESCAPE"
     assert "REFRESH_TOKEN_MUST_NOT_ESCAPE" not in config.model_dump_json()
+    assert "CLIENT_SECRET_MUST_NOT_ESCAPE" not in config.model_dump_json()
 
 
-def test_disconnect_deletes_credential_and_config(tmp_path: Path):
+def test_disconnect_deletes_both_credentials_and_config(tmp_path: Path):
     reader, config_store, secrets = _reader(tmp_path)
     config = config_store.load()
-    secrets.delete(config.secret_ref)
-    config_store.delete()
+    disconnect_google_calendar(config_store=config_store, secret_store=secrets)
     assert config_store.load() is None
     assert secrets.exists(config.secret_ref) is False
+    assert secrets.exists(config.client_secret_ref) is False
+
+
+def test_google_desktop_client_json_is_parsed_without_persisting_secret(tmp_path: Path):
+    client_json = tmp_path / "desktop-client.json"
+    client_json.write_text(json.dumps({"installed": {
+        "client_id": "desktop-client-identifier",
+        "client_secret": "CLIENT_SECRET_MUST_NOT_ESCAPE",
+    }}), encoding="utf-8")
+    credentials = read_google_desktop_client_json(client_json)
+    config = GoogleCalendarConfig(client_id=credentials.client_id)
+    assert credentials.client_id == "desktop-client-identifier"
+    assert credentials.client_secret == "CLIENT_SECRET_MUST_NOT_ESCAPE"
+    assert "CLIENT_SECRET_MUST_NOT_ESCAPE" not in config.model_dump_json()
+
+
+def test_cli_connect_uses_downloaded_client_json_and_persists_only_refs(tmp_path: Path, monkeypatch):
+    client_json = tmp_path / "desktop-client.json"
+    client_json.write_text(json.dumps({"installed": {
+        "client_id": "desktop-client-identifier",
+        "client_secret": "CLIENT_SECRET_MUST_NOT_ESCAPE",
+    }}), encoding="utf-8")
+    secrets = InMemorySecretStore()
+    captured = {}
+
+    class FakeOAuthFlow:
+        def __init__(self, **_kwargs):
+            pass
+
+        def authorize(self, config, *, client_secret, timeout_seconds=180.0):
+            captured["client_id"] = config.client_id
+            captured["client_secret"] = client_secret
+            return OAuthTokens(refresh_token="REFRESH_TOKEN_MUST_NOT_ESCAPE")
+
+    monkeypatch.setattr(google_calendar_cli, "WindowsCredentialManagerSecretStore", lambda: secrets)
+    monkeypatch.setattr(google_calendar_cli, "GoogleDesktopOAuthFlow", FakeOAuthFlow)
+    assert google_calendar_cli.main([
+        "--project-root", str(tmp_path), "connect", "--client-json", str(client_json),
+    ]) == 0
+    saved = (tmp_path / "local-data/config/google-calendar.json").read_text(encoding="utf-8")
+    assert captured == {"client_id": "desktop-client-identifier", "client_secret": "CLIENT_SECRET_MUST_NOT_ESCAPE"}
+    assert secrets.get(GoogleCalendarConfig(client_id="desktop-client-identifier").secret_ref) == "REFRESH_TOKEN_MUST_NOT_ESCAPE"
+    assert secrets.get(GoogleCalendarConfig(client_id="desktop-client-identifier").client_secret_ref) == "CLIENT_SECRET_MUST_NOT_ESCAPE"
+    assert "REFRESH_TOKEN_MUST_NOT_ESCAPE" not in saved
+    assert "CLIENT_SECRET_MUST_NOT_ESCAPE" not in saved
+
+
+def test_oauth_token_error_is_controlled_and_never_contains_error_body(monkeypatch):
+    response_body = b'{"error":"invalid_grant","error_description":"authorization-code-must-not-escape"}'
+    error = HTTPError("https://oauth2.googleapis.com/token", 400, "Bad Request", hdrs=None, fp=io.BytesIO(response_body))
+    monkeypatch.setattr("backend.connectors.google_calendar.oauth.urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(error))
+    with pytest.raises(GoogleOAuthTokenError, match="google_oauth_invalid_grant") as raised:
+        _token_post({"code": "auth-code", "client_id": "desktop-client-identifier", "client_secret": "CLIENT_SECRET_MUST_NOT_ESCAPE"})
+    assert "authorization-code-must-not-escape" not in str(raised.value)
+    assert "CLIENT_SECRET_MUST_NOT_ESCAPE" not in str(raised.value)
 
 
 def test_calendar_reader_normalizes_timezones_all_day_and_pagination(tmp_path: Path):
@@ -90,6 +160,8 @@ def test_calendar_reader_normalizes_timezones_all_day_and_pagination(tmp_path: P
     assert outcome.events[0].all_day is False and outcome.events[0].start.tzinfo is timezone.utc
     assert outcome.events[1].all_day is True and outcome.events[1].start.isoformat() == "2026-08-25"
     assert not any("hidden" in call[0] for call in transport.calls)
+    token_body = next(call[3] for call in transport.calls if "oauth2.googleapis.com/token" in call[0])
+    assert parse_qs(token_body.decode("ascii"))["client_secret"] == ["CLIENT_SECRET_MUST_NOT_ESCAPE"]
 
 
 def test_invalid_refresh_marks_reconnect_and_never_sends_network_when_disconnected(tmp_path: Path):

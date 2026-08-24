@@ -116,10 +116,11 @@ class GoogleCalendarReader:
         if config is None:
             return CalendarReadOutcome("disconnected", start=start, end=end)
         refresh_token = self.secret_store.get(config.secret_ref)
-        if refresh_token is None:
+        client_secret = self.secret_store.get(config.client_secret_ref)
+        if refresh_token is None or client_secret is None:
             return CalendarReadOutcome("needs_reconnect", start=start, end=end)
         try:
-            access_token = self._access_token(config, refresh_token)
+            access_token = self._access_token(config, refresh_token, client_secret)
             calendars = self._calendars(access_token)
             events = self._events(access_token, calendars, start, end)
             return CalendarReadOutcome("completed", tuple(events), start, end)
@@ -129,10 +130,11 @@ class GoogleCalendarReader:
         except (GoogleCalendarUnavailable, GoogleCalendarNetworkBlocked):
             return CalendarReadOutcome("unavailable", start=start, end=end)
 
-    def _access_token(self, config: GoogleCalendarConfig, refresh_token: str) -> str:
-        fields = {"client_id": config.client_id, "refresh_token": refresh_token, "grant_type": "refresh_token"}
-        if config.client_secret is not None:
-            fields["client_secret"] = config.client_secret
+    def _access_token(self, config: GoogleCalendarConfig, refresh_token: str, client_secret: str) -> str:
+        fields = {
+            "client_id": config.client_id, "client_secret": client_secret,
+            "refresh_token": refresh_token, "grant_type": "refresh_token",
+        }
         payload = self._request(
             self.TOKEN_URL, method="POST", headers={"Content-Type": "application/x-www-form-urlencoded"},
             body=urlencode(fields).encode("ascii"),

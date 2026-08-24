@@ -10,6 +10,7 @@ import webbrowser
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Callable
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import Request, urlopen
 
@@ -39,6 +40,12 @@ class OAuthTokens:
     account_label: str | None = None
 
 
+class GoogleOAuthTokenError(RuntimeError):
+    """Controlled token-exchange failure; never carries an HTTP response body."""
+
+    pass
+
+
 class GoogleDesktopOAuthFlow:
     def __init__(self, *, browser_open: Callable[[str], bool] = webbrowser.open, token_post=None, policy_store=None, safety_store=None):
         self.browser_open = browser_open
@@ -46,7 +53,7 @@ class GoogleDesktopOAuthFlow:
         self.policy_store = policy_store
         self.safety_store = safety_store
 
-    def authorize(self, config: GoogleCalendarConfig, *, timeout_seconds: float = 180.0) -> OAuthTokens:
+    def authorize(self, config: GoogleCalendarConfig, *, client_secret: str, timeout_seconds: float = 180.0) -> OAuthTokens:
         assert_google_network_allowed(policy_store=self.policy_store, safety_store=self.safety_store)
         verifier, state = pkce_verifier(), oauth_state()
         callback = _LoopbackCallback(state)
@@ -68,9 +75,14 @@ class GoogleDesktopOAuthFlow:
             server.server_close()
         if callback.error is not None or callback.code is None:
             raise RuntimeError("google_authorization_failed")
-        fields = {"code": callback.code, "client_id": config.client_id, "redirect_uri": redirect_uri, "grant_type": "authorization_code", "code_verifier": verifier}
-        if config.client_secret is not None:
-            fields["client_secret"] = config.client_secret
+        fields = {
+            "code": callback.code,
+            "client_id": config.client_id,
+            "client_secret": client_secret,
+            "redirect_uri": redirect_uri,
+            "grant_type": "authorization_code",
+            "code_verifier": verifier,
+        }
         assert_google_network_allowed(policy_store=self.policy_store, safety_store=self.safety_store)
         payload = self.token_post(fields)
         refresh_token = payload.get("refresh_token")
@@ -113,8 +125,36 @@ class _LoopbackCallback:
 
 def _token_post(fields: dict[str, str]) -> dict:
     request = Request(TOKEN_URL, data=urlencode(fields).encode("ascii"), headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST")
-    with urlopen(request, timeout=20) as response:
-        payload = json.loads(response.read(2 * 1024 * 1024 + 1))
+    try:
+        with urlopen(request, timeout=20) as response:
+            raw = response.read(2 * 1024 * 1024 + 1)
+    except HTTPError as error:
+        raise GoogleOAuthTokenError(_safe_oauth_error_code(error)) from error
+    except (URLError, OSError) as error:
+        raise GoogleOAuthTokenError("google_token_exchange_unavailable") from error
+    if len(raw) > 2 * 1024 * 1024:
+        raise GoogleOAuthTokenError("google_token_response_invalid")
+    try:
+        payload = json.loads(raw)
+    except (UnicodeDecodeError, ValueError) as error:
+        raise GoogleOAuthTokenError("google_token_response_invalid") from error
     if not isinstance(payload, dict):
-        raise RuntimeError("google_token_response_invalid")
+        raise GoogleOAuthTokenError("google_token_response_invalid")
     return payload
+
+
+def _safe_oauth_error_code(error: HTTPError) -> str:
+    """Classify only bounded OAuth error metadata; never retain or print its body."""
+
+    try:
+        payload = json.loads(error.read(8 * 1024))
+        value = payload.get("error") if isinstance(payload, dict) else None
+        # Reading description is deliberately bounded but it is not surfaced in errors.
+        _description = payload.get("error_description") if isinstance(payload, dict) else None
+        if isinstance(_description, str):
+            _description[:512]
+        if isinstance(value, str) and value.replace("_", "").isalnum() and len(value) <= 80:
+            return f"google_oauth_{value}"
+    except (OSError, UnicodeDecodeError, ValueError):
+        pass
+    return "google_token_exchange_failed"

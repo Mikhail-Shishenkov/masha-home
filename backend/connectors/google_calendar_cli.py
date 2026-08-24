@@ -9,7 +9,13 @@ from backend.secrets import WindowsCredentialManagerSecretStore
 from backend.external_observation.policy import InternetAccessPolicyStore
 from backend.runtime.safety import AutonomySafetyStore
 
-from .google_calendar.config import GoogleCalendarConfig, GoogleCalendarConfigStore
+from .google_calendar.config import (
+    GOOGLE_CALENDAR_CLIENT_SECRET_REF,
+    GOOGLE_CALENDAR_SECRET_REF,
+    GoogleCalendarConfig,
+    GoogleCalendarConfigStore,
+    read_google_desktop_client_json,
+)
 from .google_calendar.oauth import GoogleDesktopOAuthFlow
 
 
@@ -18,8 +24,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--project-root", type=Path, default=Path.cwd())
     commands = parser.add_subparsers(dest="command", required=True)
     connect = commands.add_parser("connect")
-    connect.add_argument("--client-id", required=True)
-    connect.add_argument("--client-secret")
+    connect.add_argument("--client-json", type=Path, required=True)
     connect.add_argument("--account-label")
     commands.add_parser("status")
     commands.add_parser("disconnect")
@@ -30,21 +35,35 @@ def main(argv: list[str] | None = None) -> int:
     safety_store = AutonomySafetyStore(args.project_root / "local-data/config/autonomy-safety.json")
     if args.command == "status":
         config = store.load()
-        print("DISCONNECTED" if config is None else config.credential_metadata().credential_state(secrets).value.upper())
+        print("DISCONNECTED" if config is None else config.credential_state(secrets).value.upper())
         return 0
     if args.command == "disconnect":
-        config = store.load()
-        if config is not None:
-            secrets.delete(config.secret_ref)
-        store.delete()
+        disconnect_google_calendar(config_store=store, secret_store=secrets)
         print("DISCONNECTED")
         return 0
-    config = GoogleCalendarConfig(client_id=args.client_id, client_secret=args.client_secret, account_label=args.account_label)
-    tokens = GoogleDesktopOAuthFlow(policy_store=policy_store, safety_store=safety_store).authorize(config)
+    desktop_client = read_google_desktop_client_json(args.client_json)
+    config = GoogleCalendarConfig(client_id=desktop_client.client_id, account_label=args.account_label)
+    tokens = GoogleDesktopOAuthFlow(policy_store=policy_store, safety_store=safety_store).authorize(
+        config, client_secret=desktop_client.client_secret,
+    )
+    secrets.put(config.client_secret_ref, desktop_client.client_secret)
     secrets.put(config.secret_ref, tokens.refresh_token)
     store.save(config)
     print("READY")
     return 0
+
+
+def disconnect_google_calendar(*, config_store: GoogleCalendarConfigStore, secret_store) -> None:
+    """Remove both stored Google credentials; config refs are diagnostic only."""
+
+    config = config_store.load()
+    if config is None:
+        secret_store.delete(GOOGLE_CALENDAR_SECRET_REF)
+        secret_store.delete(GOOGLE_CALENDAR_CLIENT_SECRET_REF)
+    else:
+        secret_store.delete(config.secret_ref)
+        secret_store.delete(config.client_secret_ref)
+    config_store.delete()
 
 
 if __name__ == "__main__":

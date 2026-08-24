@@ -50,6 +50,7 @@ def _home(root: Path) -> Path:
         json.dumps({
             "connector_id": "google-calendar", "client_id": "desktop-client-identifier",
             "secret_ref": {"value": "google-calendar-primary"},
+            "client_secret_ref": {"value": "google-calendar-client-secret"},
             "requested_scope": "https://www.googleapis.com/auth/calendar.readonly",
         }), encoding="utf-8",
     )
@@ -171,8 +172,10 @@ def _component(manifest: dict, component_id: str) -> dict:
 
 def test_create_verify_inventory_and_explicit_exclusions(home: Path, tmp_path: Path):
     secret_value = "credential-value-never-in-backup"
+    client_secret_value = "google-client-secret-never-in-backup"
     secret_store = InMemorySecretStore()
     secret_store.put(SecretRef(value="google-calendar-primary"), secret_value)
+    secret_store.put(SecretRef(value="google-calendar-client-secret"), client_secret_value)
     bundle = _backup(home, tmp_path)
     manifest, paths = _archive_paths(bundle, tmp_path)
 
@@ -188,10 +191,13 @@ def test_create_verify_inventory_and_explicit_exclusions(home: Path, tmp_path: P
     assert manifest["snapshot_requires_quiescence"] is True
     assert manifest["secrets_included"] is False
     assert secret_value.encode("utf-8") not in bundle.read_bytes()
+    assert client_secret_value.encode("utf-8") not in bundle.read_bytes()
     inspected_tar = tmp_path / "secret-inspection.tar"
     decrypt_file(bundle, inspected_tar, PASSPHRASE)
     assert secret_value.encode("utf-8") not in inspected_tar.read_bytes()
+    assert client_secret_value.encode("utf-8") not in inspected_tar.read_bytes()
     assert secret_value not in json.dumps(manifest)
+    assert client_secret_value not in json.dumps(manifest)
     assert all(item["format_version"] is None for item in manifest["components"])
     checked = verify_backup(bundle, PASSPHRASE)
     assert checked.components_verified == len(manifest["components"])
