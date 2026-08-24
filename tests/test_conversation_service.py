@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import datetime, timezone
 
 import pytest
 
@@ -14,6 +15,7 @@ from backend.llm.model_router import ModelRouter
 from backend.memory.memory_retriever import MemoryRetriever
 from backend.memory.memory_store import MemoryStore
 from backend.memory.working_memory import WorkingMemory
+from backend.connectors.google_calendar.reader import CalendarReadOutcome, CalendarEventEvidence
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -126,3 +128,25 @@ def test_service_does_not_create_memory_from_an_ordinary_message(tmp_path, memor
 
     assert response == "ordinary reply"
     assert Path(memory_path).read_bytes() == original_memory
+
+
+def test_calendar_evidence_reaches_only_local_model_context_and_not_history_or_memory(tmp_path):
+    provider = FakeProvider(provider_id="ollama-local", response_text="Сегодня одна встреча.")
+
+    class Calendar:
+        def observe(self, _message, *, now_local):
+            return CalendarReadOutcome("completed", (
+                CalendarEventEvidence("primary", "Личный", "event-1", "Созвон", now_local, now_local, False, None, "confirmed"),
+            ), now_local, now_local)
+        def human_failure(self, _outcome):
+            return "unavailable"
+
+    service = _service(tmp_path, provider)
+    service.google_calendar_service = Calendar()
+    conversation_id, response = service.send("что у меня сегодня?", project_id="project_masha_home")
+
+    assert response == "Сегодня одна встреча."
+    assert provider.last_request.private_context["external_information"][0]["kind"] == "google_calendar"
+    serialized = provider.last_request.model_dump_json()
+    assert "REFRESH_TOKEN" not in serialized and "ACCESS_TOKEN" not in serialized
+    assert all("Созвон" not in message.content for message in service.history.messages(conversation_id))

@@ -46,6 +46,13 @@ def _home(root: Path) -> Path:
         file = root / "local-data/config" / name
         file.parent.mkdir(parents=True, exist_ok=True)
         file.write_text('{"version":"fixture"}', encoding="utf-8")
+    (root / "local-data/config/google-calendar.json").write_text(
+        json.dumps({
+            "connector_id": "google-calendar", "client_id": "desktop-client-identifier",
+            "secret_ref": {"value": "google-calendar-primary"},
+            "requested_scope": "https://www.googleapis.com/auth/calendar.readonly",
+        }), encoding="utf-8",
+    )
     for name in (
         "external-observations.json", "document-read-receipts.json", "daily-runtime-receipts.json", "agent-runs.json",
     ):
@@ -174,6 +181,7 @@ def test_create_verify_inventory_and_explicit_exclusions(home: Path, tmp_path: P
     )
     assert "payload/skills/backup_skill/skill.json" in paths
     assert "payload/skills/backup_skill/fixture_skill.py" in paths
+    assert "payload/config/google-calendar.json" in paths
     assert all("secrets" not in path and "random" not in path for path in paths)
     assert all("skill-install" not in path and "local-document" not in path for path in paths)
     assert manifest["recovery_hold_required"] is True

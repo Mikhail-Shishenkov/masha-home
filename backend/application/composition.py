@@ -37,6 +37,8 @@ from backend.external_observation import (
     LocalSourceSelector,
 )
 from backend.document_read import DocumentReadStore, DocumentReader, LocalDocumentInputService
+from backend.connectors.google_calendar import GoogleCalendarConfigStore, GoogleCalendarConversationService, GoogleCalendarReader
+from backend.secrets import WindowsCredentialManagerSecretStore
 from backend.skills.agent_loop import AgentRunStore
 from backend.skills.autonomy import ActionAutonomyPolicyStore, ActionAutonomyService
 from backend.skills.installer import SkillInstallProposalStore, SkillInstallerService
@@ -310,6 +312,12 @@ def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
         reflection_service=reflection,
         passive_memory_service=passive_memory,
         human_information=human_information,
+        google_calendar_service=GoogleCalendarConversationService(
+            reader=GoogleCalendarReader(
+                config_store=GoogleCalendarConfigStore(root / "local-data" / "config" / "google-calendar.json"),
+                secret_store=WindowsCredentialManagerSecretStore(),
+            )
+        ),
     )
     return _Core(
         project_root=root,
