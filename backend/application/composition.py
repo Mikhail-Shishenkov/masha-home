@@ -41,6 +41,7 @@ from backend.connectors.google_calendar import (
     CalendarCreateReceiptStore, GoogleCalendarConfigStore,
     GoogleCalendarConversationService, GoogleCalendarCreateConversationService,
     GoogleCalendarReader, GoogleCalendarWriter,
+    CalendarUpdateReceiptStore, GoogleCalendarUpdater, GoogleCalendarUpdateConversationService,
 )
 from backend.connectors.google_drive import GoogleDriveConfigStore, GoogleDriveConversationService, GoogleDriveReader
 from backend.connectors.yandex_mail import YandexMailConfigStore, YandexMailConversationService, YandexMailReader
@@ -154,6 +155,18 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
             config_store=connector_config_stores["google-calendar"],
             secret_store=connector_secret_store,
             receipt_store=CalendarCreateReceiptStore(runtime / "google-calendar-create-receipts.json"),
+            policy_store=internet_policy,
+            safety_store=safety.store,
+            recovery_journal=RecoveryJournal(core.project_root),
+            clock=core.conversation.temporal_engine.clock.now_utc,
+        ),
+    )
+    core.conversation.google_calendar_update_service = GoogleCalendarUpdateConversationService(
+        proposal_store=core.conversation.memory_intent_handler.proposal_store,
+        updater=GoogleCalendarUpdater(
+            config_store=connector_config_stores["google-calendar"],
+            secret_store=connector_secret_store,
+            receipt_store=CalendarUpdateReceiptStore(runtime / "google-calendar-update-receipts.json"),
             policy_store=internet_policy,
             safety_store=safety.store,
             recovery_journal=RecoveryJournal(core.project_root),

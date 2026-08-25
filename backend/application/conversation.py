@@ -217,6 +217,10 @@ class ConversationApplicationService:
             title = str(payload.get("title") or "Событие")
             start = str(payload.get("start") or "")
             return "google_calendar_create", "Поставить событие в Основной календарь?", f"{title} · {start}"[:500]
+        if proposal.operation == "google_calendar_update":
+            before = payload.get("before") if isinstance(payload.get("before"), dict) else {}
+            desired = payload.get("desired") if isinstance(payload.get("desired"), dict) else {}
+            return "google_calendar_update", "Изменить событие в Основном календаре?", f"{before.get('title', 'Событие')} · {before.get('start', '')} → {desired.get('start', '')}"[:500]
         if proposal.operation == "forget":
             return "memory_forget", "Убрать воспоминание?", ConversationApplicationService._proposal_subject(proposal)
         if proposal.operation == "restore":

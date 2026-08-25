@@ -104,6 +104,7 @@ _CAPABILITY_CLAIMS = (
     ("yandex_mail_read", re.compile(r"я\s+(?:могу|умею|готова)\s+(?:проверить|посмотреть|читать).{0,40}почт", re.IGNORECASE)),
     ("google_calendar_read", re.compile(r"я\s+(?:могу|умею|готова)\s+(?:проверить|посмотреть|читать).{0,40}календар", re.IGNORECASE)),
     ("google_calendar_create", re.compile(r"я\s+(?:могу|умею|готова)\s+(?:добавить|создать|поставить|запланировать).{0,50}(?:событи|встреч|календар)", re.IGNORECASE)),
+    ("google_calendar_update", re.compile(r"я\s+(?:могу|умею|готова)\s+(?:изменить|перенести|переименовать).{0,50}(?:событи|встреч|календар)", re.IGNORECASE)),
     ("google_drive_read", re.compile(r"я\s+(?:могу|умею|готова)\s+(?:проверить|посмотреть|читать).{0,40}(?:drive|диск|файл)", re.IGNORECASE)),
     ("yandex_disk_read", re.compile(r"я\s+(?:могу|умею|готова)\s+(?:проверить|посмотреть|читать).{0,40}(?:диск|файл)", re.IGNORECASE)),
     ("proactive_reminders", re.compile(r"я\s+(?:могу|умею|готова)\s+напомн", re.IGNORECASE)),
@@ -248,6 +249,7 @@ class ConversationService:
         external_observation_service=None,
         google_calendar_service=None,
         google_calendar_create_service=None,
+        google_calendar_update_service=None,
         google_drive_service=None,
         yandex_mail_service=None,
         yandex_disk_service=None,
@@ -273,6 +275,7 @@ class ConversationService:
         self.external_observation_service = external_observation_service
         self.google_calendar_service = google_calendar_service
         self.google_calendar_create_service = google_calendar_create_service
+        self.google_calendar_update_service = google_calendar_update_service
         self.google_drive_service = google_drive_service
         self.yandex_mail_service = yandex_mail_service
         self.yandex_disk_service = yandex_disk_service
@@ -314,6 +317,13 @@ class ConversationService:
             if calendar_confirmation is not None:
                 self.history.append(conversation.id, ConversationRole.ASSISTANT, calendar_confirmation, origin=ConversationMessageOrigin.APPLICATION)
                 return conversation.id, calendar_confirmation
+        if document_receipt is None and self.google_calendar_update_service is not None:
+            calendar_confirmation = self.google_calendar_update_service.resolve(
+                user_message, conversation_id=conversation.id,
+            )
+            if calendar_confirmation is not None:
+                self.history.append(conversation.id, ConversationRole.ASSISTANT, calendar_confirmation, origin=ConversationMessageOrigin.APPLICATION)
+                return conversation.id, calendar_confirmation
 
         readout = temporal_readout(user_message, temporal_context)
         if readout is not None and document_receipt is None:
@@ -347,6 +357,14 @@ class ConversationService:
                 return conversation.id, reflection_intent.response
 
         calendar_outcome = None
+        if document_receipt is None and self.google_calendar_update_service is not None:
+            calendar_update_response = self.google_calendar_update_service.propose(
+                user_message, conversation_id=conversation.id,
+                now_local=temporal_context.current_local_time,
+            )
+            if calendar_update_response is not None:
+                self.history.append(conversation.id, ConversationRole.ASSISTANT, calendar_update_response, origin=ConversationMessageOrigin.APPLICATION)
+                return conversation.id, calendar_update_response
         if document_receipt is None and self.google_calendar_create_service is not None:
             calendar_create_response = self.google_calendar_create_service.propose(
                 user_message, conversation_id=conversation.id,
@@ -793,6 +811,11 @@ class ConversationService:
             )
         else:
             response = None
+        if response is None:
+            if self.google_calendar_update_service is not None:
+                response = self.google_calendar_update_service.resolve(
+                    command, conversation_id=conversation_id, proposal_id=proposal_id,
+                )
         if response is None:
             result = self.memory_intent_handler.handle(
                 command,

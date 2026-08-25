@@ -341,6 +341,7 @@ class PendingConfirmationView(UiContract):
         "shared_moment_create",
         "continuity_update",
         "google_calendar_create",
+        "google_calendar_update",
     ]
     title: str = Field(min_length=1, max_length=160)
     subject: str = Field(min_length=1, max_length=500)

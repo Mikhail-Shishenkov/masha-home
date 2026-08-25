@@ -16,6 +16,7 @@ class HomeCapabilitySnapshot(BaseModel):
     web_fetch: str
     google_calendar_read: str
     google_calendar_create: str = "unavailable"
+    google_calendar_update: str = "unavailable"
     google_drive_read: str
     yandex_mail_read: str
     yandex_disk_read: str
@@ -59,6 +60,7 @@ class HomeCapabilityApplicationService:
             web_fetch=web_state,
             google_calendar_read=connector_states["google-calendar"],
             google_calendar_create=calendar_create,
+            google_calendar_update=calendar_create,
             google_drive_read=connector_states["google-drive"],
             yandex_mail_read=connector_states["yandex-mail"],
             yandex_disk_read=connector_states["yandex-disk"],

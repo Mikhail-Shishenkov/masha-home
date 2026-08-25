@@ -686,7 +686,7 @@ function renderWorkbench(view) {
   const connectionAccess = {
     read_only: "Только чтение",
     read_with_create_setup: "Чтение · создание после отдельного подключения",
-    read_and_create: "Чтение · создание событий",
+    read_and_create: "Чтение · создание и изменение событий",
   };
   for (const connection of view?.connections || []) {
     workbenchConnections.append(workbenchItem(
