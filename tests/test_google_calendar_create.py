@@ -11,6 +11,8 @@ from backend.connectors.google_calendar.writer import (
     CalendarCreateOperation, CalendarCreateReceipt, CalendarCreateReceiptStore, GoogleCalendarWriter,
 )
 from backend.connectors.google_calendar.reader import GoogleCalendarHttpFailure, GoogleCalendarUnavailable
+from backend.backup.recovery_journal import RecoveryJournal
+from backend.backup.recovery_models import RecoveryPhase, RecoveryState, RestoreMode
 from backend.conversation.memory_intent import MemoryProposalStore
 from backend.external_observation.policy import InternetAccessMode, InternetAccessPolicy, InternetAccessPolicyStore
 from backend.runtime.safety import AutonomySafetyService, AutonomySafetyStore
@@ -66,6 +68,23 @@ def _service(tmp_path: Path, transport=None):
     return GoogleCalendarCreateConversationService(
         proposal_store=MemoryProposalStore(tmp_path / "local-data/memory-proposals.json"), writer=writer,
     ), transport, writer
+
+
+def _operation(suffix: str) -> CalendarCreateOperation:
+    return CalendarCreateOperation(
+        operation_id=f"00000000-0000-4000-8000-0000000000{suffix}", title="Встреча",
+        start=datetime(2026, 8, 26, 19, tzinfo=timezone.utc),
+        end=datetime(2026, 8, 26, 20, tzinfo=timezone.utc), home_timezone="UTC",
+    )
+
+
+def _recovery_state(phase: RecoveryPhase) -> RecoveryState:
+    now = datetime(2026, 8, 25, 12, tzinfo=timezone.utc)
+    return RecoveryState(
+        recovery_id="recovery-test-01", backup_id="backup-test-001",
+        restore_mode=RestoreMode.REPLACE, phase=phase,
+        created_at=now, updated_at=now,
+    )
 
 
 def test_create_intent_parses_narrow_complete_request():
@@ -143,6 +162,41 @@ def test_reject_and_policy_safety_perform_zero_mutations(tmp_path: Path):
     writer.safety_store = safety
     service.propose("поставь встречу завтра в 19:00 на час", conversation_id="c3", now_local=now)
     assert "внешние действия" in service.resolve("да", conversation_id="c3")
+    assert transport.calls == []
+
+
+def test_recovery_journal_blocks_only_hold_and_not_absent_or_released_state(tmp_path: Path):
+    _, transport, writer = _service(tmp_path)
+    journal = RecoveryJournal(tmp_path)
+    writer.recovery_journal = journal
+    # No recovery state file is the normal live state and must not turn the
+    # bound `is_hold` method itself into a truthy block.
+    assert writer._blocked() is False
+    assert writer.create_and_verify(_operation("05"))[0] == "verified"
+    journal.save(_recovery_state(RecoveryPhase.HOLD))
+    assert writer._blocked() is True
+    before = len(transport.calls)
+    assert writer.create_and_verify(_operation("06"))[0] == "blocked"
+    assert len(transport.calls) == before
+    journal.save(_recovery_state(RecoveryPhase.RELEASED))
+    assert writer._blocked() is False
+
+
+def test_emergency_stop_and_internet_off_still_block_with_recovery_journal(tmp_path: Path):
+    _, transport, writer = _service(tmp_path)
+    writer.recovery_journal = RecoveryJournal(tmp_path)
+    policy = InternetAccessPolicyStore(tmp_path / "local-data/config/internet-access.json")
+    writer.policy_store = policy
+    policy.save(InternetAccessPolicy(mode=InternetAccessMode.OFF))
+    assert writer._blocked() is True
+    assert writer.create_and_verify(_operation("07"))[0] == "blocked"
+    assert transport.calls == []
+    policy.save(InternetAccessPolicy())
+    safety = AutonomySafetyStore(tmp_path / "local-data/config/autonomy-safety.json")
+    AutonomySafetyService(store=safety).engage()
+    writer.safety_store = safety
+    assert writer._blocked() is True
+    assert writer.create_and_verify(_operation("08"))[0] == "blocked"
     assert transport.calls == []
 
 

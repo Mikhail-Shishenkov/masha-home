@@ -272,7 +272,7 @@ class GoogleCalendarWriter:
         if self.policy_store is not None:
             from backend.external_observation.policy import InternetAccessMode
             internet_off = self.policy_store.load().mode is InternetAccessMode.OFF
-        return bool(internet_off or (self.safety_store is not None and self.safety_store.is_engaged()) or (self.recovery_journal is not None and self.recovery_journal.is_hold))
+        return bool(internet_off or (self.safety_store is not None and self.safety_store.is_engaged()) or (self.recovery_journal is not None and self.recovery_journal.is_hold()))
 
     @staticmethod
     def _matches(operation: CalendarCreateOperation, evidence: CalendarEventEvidence) -> bool:
