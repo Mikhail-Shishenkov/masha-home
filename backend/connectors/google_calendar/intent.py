@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from uuid import uuid4
 from datetime import datetime, time, timedelta
 
 
@@ -31,8 +30,8 @@ class CalendarCreateIntent:
     clarification: str | None = None
 
 
-_CREATE_VERB = re.compile(r"^(?:маша\s*,?\s*)?(?:поставь|запланируй|создай)\b", re.IGNORECASE)
-_CREATE_WITH_CALENDAR = re.compile(r"^(?:маша\s*,?\s*)?добавь\b.*\b(?:в\s+)?календар", re.IGNORECASE)
+_CREATE_VERB = re.compile(r"^(?:маш(?:а)?\s*,?\s*)?(?:поставь|запланируй|создай)\b", re.IGNORECASE)
+_CREATE_WITH_CALENDAR = re.compile(r"^(?:маш(?:а)?\s*,?\s*)?добавь\b.*\b(?:в\s+)?календар", re.IGNORECASE)
 _TIME_RANGE = re.compile(r"\bс\s*(\d{1,2})(?::(\d{2}))?\s*(?:до|по)\s*(\d{1,2})(?::(\d{2}))?\b", re.IGNORECASE)
 _TIME_AT = re.compile(r"\b(?:в|на)\s*(\d{1,2})(?::(\d{2}))?\b", re.IGNORECASE)
 _DURATION = re.compile(r"\bна\s*(?:(\d{1,2})\s*)?(час(?:а|ов)?|минут(?:у|ы)?)\b", re.IGNORECASE)
@@ -103,7 +102,7 @@ def _duration(text: str) -> timedelta | None:
 
 def _create_title(message: str) -> str:
     text = message.strip(" .,!?")
-    text = re.sub(r"^\s*(?:маша\s*,?\s*)?(?:поставь|запланируй|создай)\s+", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"^\s*(?:маш(?:а)?\s*,?\s*)?(?:поставь|запланируй|создай)\s+", "", text, flags=re.IGNORECASE)
     text = re.sub(r"^\s*добавь\s+(?:в\s+)?календар(?:ь|е)\s+", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\b(?:сегодня|завтра|в\s+(?:понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье))\b", "", text, flags=re.IGNORECASE)
     text = _TIME_RANGE.sub("", text)

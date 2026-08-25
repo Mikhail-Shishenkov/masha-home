@@ -119,7 +119,7 @@ class GoogleCalendarWriter:
             if existing.status == "verified":
                 return "verified", existing
             if existing.status in {"created_unverified", "executing"}:
-                return self._verify_only(existing)
+                return self._reconcile_uncertain(existing)
         if self._blocked():
             receipt = CalendarCreateReceipt(operation=operation, status="blocked", provider_event_id=operation.provider_event_id())
             return "blocked", self.receipt_store.put(receipt)
@@ -136,6 +136,14 @@ class GoogleCalendarWriter:
         self.receipt_store.put(executing)
         try:
             token = self._access_token(config.client_id, refresh_token, client_secret)
+        except GoogleTokenInvalidGrant:
+            self.secret_store.delete(config.write_secret_ref)
+            return "needs_reconnect", self.receipt_store.put(executing.model_copy(update={"status": "failed"}))
+        except (GoogleCalendarUnavailable, GoogleCalendarReconnectRequired, GoogleCalendarNetworkBlocked):
+            # No event POST was attempted: this is a known pre-mutation
+            # failure and may safely be retried with the same operation id.
+            return "failed", self.receipt_store.put(executing.model_copy(update={"status": "failed"}))
+        try:
             # Re-check at the immediate mutation boundary, after token work.
             if self._blocked():
                 return "blocked", self.receipt_store.put(executing.model_copy(update={"status": "blocked"}))
@@ -150,13 +158,45 @@ class GoogleCalendarWriter:
                 if error.status_code != 409:
                     return "failed", self.receipt_store.put(executing.model_copy(update={"status": "failed"}))
             return self._verify_only(executing, token=token)
-        except GoogleTokenInvalidGrant:
-            self.secret_store.delete(config.write_secret_ref)
-            return "needs_reconnect", self.receipt_store.put(executing.model_copy(update={"status": "failed"}))
         except (GoogleCalendarUnavailable, GoogleCalendarReconnectRequired, GoogleCalendarNetworkBlocked):
             # The POST might have reached Google.  Preserve the operation id
             # and only ever attempt verification on a later retry.
             return "created_unverified", self.receipt_store.put(executing.model_copy(update={"status": "created_unverified"}))
+
+    def _reconcile_uncertain(self, receipt: CalendarCreateReceipt) -> tuple[str, CalendarCreateReceipt]:
+        """Reconcile a possibly-sent POST, then safely finish it only on 404.
+
+        The deterministic Google event id is the idempotency key.  A positive
+        fetch never posts again; only an explicit not-found result permits the
+        same create request to be retried.
+        """
+        if self._blocked():
+            return "blocked", self.receipt_store.put(receipt.model_copy(update={"status": "blocked"}))
+        config = self.config_store.load()
+        if config is None or config.write_secret_ref is None:
+            return "needs_reconnect", receipt
+        refresh_token = self.secret_store.get(config.write_secret_ref)
+        client_secret = self.secret_store.get(config.client_secret_ref)
+        if refresh_token is None or client_secret is None:
+            return "needs_reconnect", receipt
+        try:
+            token = self._access_token(config.client_id, refresh_token, client_secret)
+        except GoogleTokenInvalidGrant:
+            self.secret_store.delete(config.write_secret_ref)
+            return "needs_reconnect", self.receipt_store.put(receipt.model_copy(update={"status": "failed"}))
+        except (GoogleCalendarUnavailable, GoogleCalendarReconnectRequired, GoogleCalendarNetworkBlocked):
+            return "created_unverified", self.receipt_store.put(receipt.model_copy(update={"status": "created_unverified"}))
+        try:
+            item = self._get_event(receipt, token)
+        except GoogleCalendarHttpFailure as error:
+            if error.status_code != 404:
+                return "created_unverified", self.receipt_store.put(receipt.model_copy(update={"status": "created_unverified"}))
+            # Google has authoritatively said that the id does not exist, so a
+            # retry with that exact id cannot duplicate a successful prior POST.
+            return self._post_and_verify(receipt, token)
+        except (GoogleCalendarUnavailable, GoogleCalendarNetworkBlocked):
+            return "created_unverified", self.receipt_store.put(receipt.model_copy(update={"status": "created_unverified"}))
+        return self._validate_fetched(receipt, item)
 
     def _verify_only(self, receipt: CalendarCreateReceipt, *, token: str | None = None) -> tuple[str, CalendarCreateReceipt]:
         if self._blocked():
@@ -177,16 +217,40 @@ class GoogleCalendarWriter:
             except (GoogleCalendarUnavailable, GoogleCalendarReconnectRequired, GoogleCalendarNetworkBlocked):
                 return "created_unverified", self.receipt_store.put(receipt.model_copy(update={"status": "created_unverified"}))
         try:
-            item = self._request(f"{self.API_ROOT}/calendars/primary/events/{quote(receipt.provider_event_id, safe='')}", headers={"Authorization": f"Bearer {token}"})
-            evidence = _normalize_event(item, "primary", "Основной календарь", receipt.operation.start.tzinfo)
-            if evidence is not None and self._matches(receipt.operation, evidence):
-                verified = receipt.model_copy(update={"status": "verified", "verified_at": self.clock()})
-                return "verified", self.receipt_store.put(verified)
-            failed = receipt.model_copy(update={"status": "failed"})
-            return "failed", self.receipt_store.put(failed)
+            return self._validate_fetched(receipt, self._get_event(receipt, token))
         except (GoogleCalendarUnavailable, GoogleCalendarNetworkBlocked):
             unverified = receipt.model_copy(update={"status": "created_unverified"})
             return "created_unverified", self.receipt_store.put(unverified)
+
+    def _post_and_verify(self, receipt: CalendarCreateReceipt, token: str) -> tuple[str, CalendarCreateReceipt]:
+        operation = receipt.operation
+        body = json.dumps({
+            "id": receipt.provider_event_id, "summary": operation.title,
+            "start": {"dateTime": operation.start.isoformat(), "timeZone": operation.home_timezone},
+            "end": {"dateTime": operation.end.isoformat(), "timeZone": operation.home_timezone},
+        }, separators=(",", ":")).encode("utf-8")
+        try:
+            self._request(f"{self.API_ROOT}/calendars/primary/events", method="POST", headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, body=body)
+        except GoogleCalendarHttpFailure as error:
+            if error.status_code != 409:
+                return "failed", self.receipt_store.put(receipt.model_copy(update={"status": "failed"}))
+        except (GoogleCalendarUnavailable, GoogleCalendarNetworkBlocked):
+            return "created_unverified", self.receipt_store.put(receipt.model_copy(update={"status": "created_unverified"}))
+        return self._verify_only(receipt, token=token)
+
+    def _get_event(self, receipt: CalendarCreateReceipt, token: str) -> dict:
+        return self._request(
+            f"{self.API_ROOT}/calendars/primary/events/{quote(receipt.provider_event_id, safe='')}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    def _validate_fetched(self, receipt: CalendarCreateReceipt, item: dict) -> tuple[str, CalendarCreateReceipt]:
+        evidence = _normalize_event(item, "primary", "Основной календарь", receipt.operation.start.tzinfo)
+        if evidence is not None and self._matches(receipt.operation, evidence):
+            verified = receipt.model_copy(update={"status": "verified", "verified_at": self.clock()})
+            return "verified", self.receipt_store.put(verified)
+        failed = receipt.model_copy(update={"status": "failed"})
+        return "failed", self.receipt_store.put(failed)
 
     def reject(self, operation: CalendarCreateOperation) -> CalendarCreateReceipt:
         return self.receipt_store.put(CalendarCreateReceipt(operation=operation, status="rejected", provider_event_id=operation.provider_event_id()))
