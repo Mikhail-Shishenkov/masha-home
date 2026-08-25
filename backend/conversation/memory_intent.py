@@ -164,6 +164,7 @@ _CREATE_COMMITMENT = re.compile(
     r"запиши\s+(?:нам\s+)?(?:дело|задачу|обязательство)|"
     r"(?:дело|задачу|обязательство)\s+(?:добавь|запиши)|"
     r"(?:и\s+)?ещ[её]\s+(?:одн[ау]\s+)?(?:задача|дело|обязательство)|"
+    r"(?:поставь|создай)\s+напоминани\w*|"
     r"напомни\s+(?:мне\s+)?"
     r")\s*[:,—-]?\s*(?P<body>.+?)\s*$",
     re.IGNORECASE,
@@ -2260,7 +2261,10 @@ class MemoryIntentHandler:
     @classmethod
     def _is_explicit_reminder_request(cls, message: str) -> bool:
         """Classify provenance at request time; delivery never re-reads prose."""
-        return re.match(r"^напомни(?:\s+мне)?\b", normalize_utterance(message)) is not None
+        return re.match(
+            r"^(?:напомни(?:\s+мне)?|(?:поставь|создай)\s+напоминани\w*)\b",
+            normalize_utterance(message),
+        ) is not None
 
     @classmethod
     def _make_record(

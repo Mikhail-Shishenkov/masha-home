@@ -322,6 +322,21 @@ def test_natural_minute_reminder_uses_temporal_engine_and_existing_commitment_co
     assert recovered.events[0].source_commitment_id == commitment.id
 
 
+def test_put_reminder_uses_existing_commitment_proposal_boundary(tmp_path, memory_path):
+    service, _ = _service(tmp_path, memory_path)
+    now = datetime(2026, 8, 12, 10, 0, tzinfo=timezone.utc)
+    service.temporal_engine = TemporalEngine(FixedClock(now))
+    service.memory_intent_handler.temporal_engine = service.temporal_engine
+
+    conversation_id, preview = _send(
+        service,
+        "Маша, поставь напоминание на завтра, что мне в 14:00 получать права",
+    )
+    pending = service.memory_intent_handler.proposal_store.current_for_conversation(conversation_id)
+    assert "как обязательство" in preview
+    assert pending is not None and pending.record_type == "commitment"
+
+
 def test_terminal_minute_reminder_flows_from_confirmation_to_due_event(tmp_path, memory_path):
     service, store = _service(tmp_path, memory_path)
     now = datetime(2026, 8, 12, 10, 0, tzinfo=timezone.utc)

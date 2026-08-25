@@ -32,15 +32,20 @@ class CalendarCreateIntent:
 
 _CREATE_VERB = re.compile(r"^(?:маш(?:а)?\s*,?\s*)?(?:поставь|запланируй|создай)\b", re.IGNORECASE)
 _CREATE_WITH_CALENDAR = re.compile(r"^(?:маш(?:а)?\s*,?\s*)?добавь\b.*\b(?:в\s+)?календар", re.IGNORECASE)
+_REMINDER_OWNERSHIP = re.compile(r"\b(?:напомни|напоминани\w*)\b", re.IGNORECASE)
 _TIME_RANGE = re.compile(r"\bс\s*(\d{1,2})(?::(\d{2}))?\s*(?:до|по)\s*(\d{1,2})(?::(\d{2}))?\b", re.IGNORECASE)
 _TIME_AT = re.compile(r"\b(?:в|на)\s*(\d{1,2})(?::(\d{2}))?\b", re.IGNORECASE)
-_DURATION = re.compile(r"\bна\s*(?:(\d{1,2})\s*)?(час(?:а|ов)?|минут(?:у|ы)?)\b", re.IGNORECASE)
+_DURATION = re.compile(r"\bна\s*(?:(\d{1,2}|два|две)\s*)?(час(?:а|ов)?|минут(?:у|ы)?)\b", re.IGNORECASE)
 
 
 def calendar_create_intent(message: str, now_local: datetime) -> CalendarCreateIntent | None:
     """A deliberately narrow deterministic create parser; unknown parts clarify."""
     # Keep ':' intact until the bounded time grammar has parsed it.
     normalized = _SPACE.sub(" ", re.sub(r"[^\w\s:'-]+", " ", message.casefold().replace("ё", "е"))).strip()
+    # A reminder is an explicit Home commitment entity, not a generic
+    # scheduling verb.  Leave it for the established reminder pipeline.
+    if _REMINDER_OWNERSHIP.search(normalized):
+        return None
     if not (_CREATE_VERB.search(normalized) or _CREATE_WITH_CALENDAR.search(normalized)):
         return None
     if not any(token in normalized for token in ("сегодня", "завтра", "понедель", "вторник", "сред", "четверг", "пятниц", "суббот", "воскрес", " в ", " на ")):
@@ -96,7 +101,8 @@ def _duration(text: str) -> timedelta | None:
     match = _DURATION.search(text)
     if match is None:
         return None
-    value, unit = int(match.group(1) or "1"), match.group(2)
+    amount = (match.group(1) or "1").casefold()
+    value, unit = (2 if amount in {"два", "две"} else int(amount)), match.group(2)
     return timedelta(minutes=value if unit.startswith("мин") else value * 60)
 
 

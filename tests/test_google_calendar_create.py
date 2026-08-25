@@ -87,6 +87,30 @@ def test_canonical_a1_phrase_creates_the_same_human_preview(tmp_path: Path):
     assert transport.calls == []
 
 
+def test_explicit_reminder_words_are_never_claimed_by_calendar_create(tmp_path: Path):
+    service, transport, _ = _service(tmp_path)
+    now = datetime(2026, 8, 25, 12, tzinfo=timezone.utc)
+    for message in (
+        "Маша, поставь напоминание на завтра, что мне в 14:00 получать права",
+        "Маш, напомни мне в среду в 13:00 сходить на собеседование",
+        "Поставь напоминание завтра в 10:00",
+    ):
+        assert calendar_create_intent(message, now) is None
+        assert service.propose(message, conversation_id=f"c-{len(transport.calls)}", now_local=now) is None
+    assert transport.calls == []
+
+
+def test_explicit_calendar_event_and_ordinary_statement_keep_distinct_ownership(tmp_path: Path):
+    service, transport, _ = _service(tmp_path)
+    now = datetime(2026, 8, 25, 12, tzinfo=timezone.utc)
+    event = "Маша, создай событие в календаре завтра в 18:00 на два часа"
+    assert calendar_create_intent(event, now) is not None
+    assert "Поставить" in service.propose(event, conversation_id="calendar", now_local=now)
+    assert calendar_create_intent("У меня концерт во вторник в 20:00", now) is None
+    assert service.propose("У меня концерт во вторник в 20:00", conversation_id="statement", now_local=now) is None
+    assert transport.calls == []
+
+
 def test_create_requires_human_confirmation_then_verifies_once(tmp_path: Path):
     service, transport, writer = _service(tmp_path)
     now = datetime(2026, 8, 25, 12, tzinfo=timezone.utc)
