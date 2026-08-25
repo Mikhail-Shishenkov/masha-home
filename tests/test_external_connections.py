@@ -1,5 +1,8 @@
 from backend.application.external_connections import ExternalConnectionApplicationService
-from backend.connectors.google_calendar.config import GoogleCalendarConfig, GoogleCalendarConfigStore
+from backend.connectors.google_calendar.config import (
+    GOOGLE_CALENDAR_WRITE_SCOPE, GOOGLE_CALENDAR_WRITE_SECRET_REF,
+    GoogleCalendarConfig, GoogleCalendarConfigStore,
+)
 from backend.connectors.google_drive.config import GoogleDriveConfig, GoogleDriveConfigStore
 from backend.connectors.yandex_disk.config import YandexDiskConfig, YandexDiskConfigStore
 from backend.connectors.yandex_mail.config import YandexMailConfig, YandexMailConfigStore
@@ -47,3 +50,25 @@ def test_connection_shelf_is_local_safe_and_keeps_every_service_separate(tmp_pat
     states = {item.connector_id: item.state for item in service.view()}
     assert states["google-drive"] == "needs_reconnect"
     assert states["google-calendar"] == "ready"
+
+
+def test_calendar_connection_projects_separate_read_and_create_truth(tmp_path):
+    secrets = InMemorySecretStore()
+    service, stores = _service(tmp_path, secrets)
+    calendar = GoogleCalendarConfig(client_id="calendar-client-identifier")
+    stores["google-calendar"].save(calendar)
+    secrets.put(calendar.secret_ref, "READ_TOKEN")
+    secrets.put(calendar.client_secret_ref, "CLIENT_SECRET")
+    row = next(item for item in service.view() if item.connector_id == "google-calendar")
+    assert (row.state, row.access) == ("ready", "read_with_create_setup")
+    configured = calendar.model_copy(update={
+        "write_secret_ref": GOOGLE_CALENDAR_WRITE_SECRET_REF,
+        "write_requested_scope": GOOGLE_CALENDAR_WRITE_SCOPE,
+    })
+    stores["google-calendar"].save(configured)
+    secrets.put(GOOGLE_CALENDAR_WRITE_SECRET_REF, "WRITE_TOKEN")
+    row = next(item for item in service.view() if item.connector_id == "google-calendar")
+    assert (row.state, row.access) == ("ready", "read_and_create")
+    secrets.delete(GOOGLE_CALENDAR_WRITE_SECRET_REF)
+    row = next(item for item in service.view() if item.connector_id == "google-calendar")
+    assert (row.state, row.access) == ("ready", "read_with_create_setup")

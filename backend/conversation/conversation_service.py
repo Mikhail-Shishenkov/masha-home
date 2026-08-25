@@ -103,6 +103,7 @@ _CAPABILITY_CLAIMS = (
     ("web_search", re.compile(r"я\s+(?:могу|умею|готова)\s+(?:поищ(?:у|ать)|найти|проверить|посмотреть).{0,60}(?:интернет|сеть|веб)", re.IGNORECASE)),
     ("yandex_mail_read", re.compile(r"я\s+(?:могу|умею|готова)\s+(?:проверить|посмотреть|читать).{0,40}почт", re.IGNORECASE)),
     ("google_calendar_read", re.compile(r"я\s+(?:могу|умею|готова)\s+(?:проверить|посмотреть|читать).{0,40}календар", re.IGNORECASE)),
+    ("google_calendar_create", re.compile(r"я\s+(?:могу|умею|готова)\s+(?:добавить|создать|поставить|запланировать).{0,50}(?:событи|встреч|календар)", re.IGNORECASE)),
     ("google_drive_read", re.compile(r"я\s+(?:могу|умею|готова)\s+(?:проверить|посмотреть|читать).{0,40}(?:drive|диск|файл)", re.IGNORECASE)),
     ("yandex_disk_read", re.compile(r"я\s+(?:могу|умею|готова)\s+(?:проверить|посмотреть|читать).{0,40}(?:диск|файл)", re.IGNORECASE)),
     ("proactive_reminders", re.compile(r"я\s+(?:могу|умею|готова)\s+напомн", re.IGNORECASE)),
@@ -246,6 +247,7 @@ class ConversationService:
         human_information=None,
         external_observation_service=None,
         google_calendar_service=None,
+        google_calendar_create_service=None,
         google_drive_service=None,
         yandex_mail_service=None,
         yandex_disk_service=None,
@@ -270,6 +272,7 @@ class ConversationService:
         self.human_information = human_information
         self.external_observation_service = external_observation_service
         self.google_calendar_service = google_calendar_service
+        self.google_calendar_create_service = google_calendar_create_service
         self.google_drive_service = google_drive_service
         self.yandex_mail_service = yandex_mail_service
         self.yandex_disk_service = yandex_disk_service
@@ -300,6 +303,17 @@ class ConversationService:
         user_history_message = self.history.append(conversation.id, ConversationRole.USER, user_message)
         if self.proactive_interactions is not None:
             self.proactive_interactions.resolve_check_ins_for_user_message(user_history_message.created_at)
+
+        # Confirmations are application-owned.  Calendar creation has its own
+        # write boundary and must resolve before the generic memory handler
+        # sees a plain "да".
+        if document_receipt is None and self.google_calendar_create_service is not None:
+            calendar_confirmation = self.google_calendar_create_service.resolve(
+                user_message, conversation_id=conversation.id,
+            )
+            if calendar_confirmation is not None:
+                self.history.append(conversation.id, ConversationRole.ASSISTANT, calendar_confirmation, origin=ConversationMessageOrigin.APPLICATION)
+                return conversation.id, calendar_confirmation
 
         readout = temporal_readout(user_message, temporal_context)
         if readout is not None and document_receipt is None:
@@ -333,6 +347,14 @@ class ConversationService:
                 return conversation.id, reflection_intent.response
 
         calendar_outcome = None
+        if document_receipt is None and self.google_calendar_create_service is not None:
+            calendar_create_response = self.google_calendar_create_service.propose(
+                user_message, conversation_id=conversation.id,
+                now_local=temporal_context.current_local_time,
+            )
+            if calendar_create_response is not None:
+                self.history.append(conversation.id, ConversationRole.ASSISTANT, calendar_create_response, origin=ConversationMessageOrigin.APPLICATION)
+                return conversation.id, calendar_create_response
         if document_receipt is None and self.google_calendar_service is not None:
             calendar_outcome = self.google_calendar_service.observe(
                 user_message, now_local=temporal_context.current_local_time,
@@ -765,17 +787,25 @@ class ConversationService:
         user_text = "Подтверждаю." if confirm else "Не сейчас."
         command = f"{'да' if confirm else 'нет'} {proposal_id}"
         self.history.append(conversation_id, ConversationRole.USER, user_text)
-        result = self.memory_intent_handler.handle(
-            command,
-            conversation_id=conversation_id,
-            project_id=project_id,
-        )
-        if not result.handled or result.response is None:
-            raise RuntimeError("proposal resolution was not handled")
+        if self.google_calendar_create_service is not None:
+            response = self.google_calendar_create_service.resolve(
+                command, conversation_id=conversation_id, proposal_id=proposal_id,
+            )
+        else:
+            response = None
+        if response is None:
+            result = self.memory_intent_handler.handle(
+                command,
+                conversation_id=conversation_id,
+                project_id=project_id,
+            )
+            if not result.handled or result.response is None:
+                raise RuntimeError("proposal resolution was not handled")
+            response = result.response
         assistant = self.history.append(
             conversation_id,
             ConversationRole.ASSISTANT,
-            result.response,
+            response,
             origin=ConversationMessageOrigin.APPLICATION,
         )
         proposal = self.memory_intent_handler.proposal_store.get(proposal_id)

@@ -53,7 +53,7 @@ class GoogleDesktopOAuthFlow:
         self.policy_store = policy_store
         self.safety_store = safety_store
 
-    def authorize(self, config: GoogleCalendarConfig, *, client_secret: str, timeout_seconds: float = 180.0) -> OAuthTokens:
+    def authorize(self, config: GoogleCalendarConfig, *, client_secret: str, timeout_seconds: float = 180.0, scope: str | None = None) -> OAuthTokens:
         assert_google_network_allowed(policy_store=self.policy_store, safety_store=self.safety_store)
         verifier, state = pkce_verifier(), oauth_state()
         callback = _LoopbackCallback(state)
@@ -62,7 +62,7 @@ class GoogleDesktopOAuthFlow:
         redirect_uri = f"http://127.0.0.1:{server.server_port}/oauth/callback"
         query = {
             "client_id": config.client_id, "redirect_uri": redirect_uri, "response_type": "code",
-            "scope": config.requested_scope, "access_type": "offline", "prompt": "consent",
+            "scope": scope or config.requested_scope, "access_type": "offline", "prompt": "consent",
             "state": state, "code_challenge": pkce_challenge(verifier), "code_challenge_method": "S256",
         }
         url = AUTHORIZATION_URL + "?" + urlencode(query)

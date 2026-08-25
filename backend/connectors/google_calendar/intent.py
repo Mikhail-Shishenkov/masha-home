@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from uuid import uuid4
 from datetime import datetime, time, timedelta
 
 
@@ -20,6 +21,96 @@ class CalendarIntent:
     kind: str
     start: datetime
     end: datetime
+
+
+@dataclass(frozen=True)
+class CalendarCreateIntent:
+    title: str | None
+    start: datetime | None
+    end: datetime | None
+    clarification: str | None = None
+
+
+_CREATE_VERB = re.compile(r"^(?:маша\s*,?\s*)?(?:поставь|запланируй|создай)\b", re.IGNORECASE)
+_CREATE_WITH_CALENDAR = re.compile(r"^(?:маша\s*,?\s*)?добавь\b.*\b(?:в\s+)?календар", re.IGNORECASE)
+_TIME_RANGE = re.compile(r"\bс\s*(\d{1,2})(?::(\d{2}))?\s*(?:до|по)\s*(\d{1,2})(?::(\d{2}))?\b", re.IGNORECASE)
+_TIME_AT = re.compile(r"\b(?:в|на)\s*(\d{1,2})(?::(\d{2}))?\b", re.IGNORECASE)
+_DURATION = re.compile(r"\bна\s*(?:(\d{1,2})\s*)?(час(?:а|ов)?|минут(?:у|ы)?)\b", re.IGNORECASE)
+
+
+def calendar_create_intent(message: str, now_local: datetime) -> CalendarCreateIntent | None:
+    """A deliberately narrow deterministic create parser; unknown parts clarify."""
+    # Keep ':' intact until the bounded time grammar has parsed it.
+    normalized = _SPACE.sub(" ", re.sub(r"[^\w\s:'-]+", " ", message.casefold().replace("ё", "е"))).strip()
+    if not (_CREATE_VERB.search(normalized) or _CREATE_WITH_CALENDAR.search(normalized)):
+        return None
+    if not any(token in normalized for token in ("сегодня", "завтра", "понедель", "вторник", "сред", "четверг", "пятниц", "суббот", "воскрес", " в ", " на ")):
+        return CalendarCreateIntent(None, None, None, "На какой день поставить?")
+    date_value = _create_date(normalized, now_local)
+    if date_value is None:
+        return CalendarCreateIntent(None, None, None, "На какой день поставить?")
+    range_match = _TIME_RANGE.search(normalized)
+    at_match = None if range_match else _TIME_AT.search(normalized)
+    if range_match:
+        start = _at(date_value, range_match.group(1), range_match.group(2), now_local)
+        end = _at(date_value, range_match.group(3), range_match.group(4), now_local)
+    elif at_match:
+        start = _at(date_value, at_match.group(1), at_match.group(2), now_local)
+        duration = _duration(normalized)
+        end = None if duration is None else start + duration
+    else:
+        return CalendarCreateIntent(None, None, None, "Во сколько поставить?")
+    if end is None:
+        return CalendarCreateIntent(None, start, None, "На сколько времени поставить?")
+    if end <= start:
+        return CalendarCreateIntent(None, None, None, "Время окончания должно быть позже начала.")
+    title = _create_title(message)
+    if not title:
+        return CalendarCreateIntent(None, start, end, "Что поставить в календарь?")
+    return CalendarCreateIntent(title, start, end)
+
+
+def _create_date(text: str, now_local: datetime):
+    today = now_local.date()
+    if "завтра" in text:
+        return today + timedelta(days=1)
+    if "сегодня" in text:
+        return today
+    for word, weekday in _WEEKDAYS.items():
+        if re.search(rf"\b{word}\b", text):
+            delta = (weekday - today.weekday()) % 7
+            # Same-weekday without an explicit relative marker is ambiguous.
+            if delta == 0 and "эту" not in text and "сегодня" not in text:
+                return None
+            return today + timedelta(days=delta)
+    return None
+
+
+def _at(day, hours: str, minutes: str | None, now_local: datetime) -> datetime:
+    hour, minute = int(hours), int(minutes or 0)
+    if hour > 23 or minute > 59:
+        raise ValueError("calendar_time_invalid")
+    return datetime.combine(day, time(hour, minute), tzinfo=now_local.tzinfo)
+
+
+def _duration(text: str) -> timedelta | None:
+    match = _DURATION.search(text)
+    if match is None:
+        return None
+    value, unit = int(match.group(1) or "1"), match.group(2)
+    return timedelta(minutes=value if unit.startswith("мин") else value * 60)
+
+
+def _create_title(message: str) -> str:
+    text = message.strip(" .,!?")
+    text = re.sub(r"^\s*(?:маша\s*,?\s*)?(?:поставь|запланируй|создай)\s+", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"^\s*добавь\s+(?:в\s+)?календар(?:ь|е)\s+", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(?:сегодня|завтра|в\s+(?:понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье))\b", "", text, flags=re.IGNORECASE)
+    text = _TIME_RANGE.sub("", text)
+    text = _TIME_AT.sub("", text)
+    text = _DURATION.sub("", text)
+    text = re.sub(r"\b(?:на|в)\s+(?:календарь|календаре)\b", "", text, flags=re.IGNORECASE)
+    return _SPACE.sub(" ", text).strip(" ,.-")[:500]
 
 
 def calendar_intent(message: str, now_local: datetime) -> CalendarIntent | None:

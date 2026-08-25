@@ -11,7 +11,9 @@ from backend.secrets import ConnectorCredentialMetadata, ConnectorCredentialStat
 
 
 GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
+GOOGLE_CALENDAR_WRITE_SCOPE = "https://www.googleapis.com/auth/calendar.events.owned"
 GOOGLE_CALENDAR_SECRET_REF = SecretRef(value="google-calendar-primary")
+GOOGLE_CALENDAR_WRITE_SECRET_REF = SecretRef(value="google-calendar-write-primary")
 GOOGLE_CALENDAR_CLIENT_SECRET_REF = SecretRef(value="google-calendar-client-secret")
 
 
@@ -32,6 +34,14 @@ class GoogleCalendarConfig(BaseModel):
     secret_ref: SecretRef = GOOGLE_CALENDAR_SECRET_REF
     client_secret_ref: SecretRef = GOOGLE_CALENDAR_CLIENT_SECRET_REF
     requested_scope: str = Field(default=GOOGLE_CALENDAR_SCOPE, pattern=r"^https://www\.googleapis\.com/auth/calendar\.readonly$")
+    # The read grant remains deliberately independent from the narrowly scoped
+    # event-create grant.  A failed re-consent can therefore never replace a
+    # working read connection.
+    write_secret_ref: SecretRef | None = None
+    write_requested_scope: str | None = Field(
+        default=None,
+        pattern=r"^https://www\.googleapis\.com/auth/calendar\.events\.owned$",
+    )
     account_label: str | None = Field(default=None, max_length=200)
 
     def credential_metadata(self) -> ConnectorCredentialMetadata:
@@ -39,6 +49,13 @@ class GoogleCalendarConfig(BaseModel):
 
     def credential_state(self, secret_store) -> ConnectorCredentialState:
         if not secret_store.exists(self.secret_ref) or not secret_store.exists(self.client_secret_ref):
+            return ConnectorCredentialState.NEEDS_RECONNECT
+        return ConnectorCredentialState.READY
+
+    def write_credential_state(self, secret_store) -> ConnectorCredentialState:
+        if self.write_secret_ref is None or self.write_requested_scope is None:
+            return ConnectorCredentialState.DISCONNECTED
+        if not secret_store.exists(self.write_secret_ref) or not secret_store.exists(self.client_secret_ref):
             return ConnectorCredentialState.NEEDS_RECONNECT
         return ConnectorCredentialState.READY
 

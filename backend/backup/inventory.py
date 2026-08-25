@@ -53,6 +53,7 @@ V1_STATIC_INVENTORY = (
     StaticInventoryComponent("runtime_document_receipts", "local-data/runtime/document-read-receipts.json", "payload/runtime/document-read-receipts.json", False),
     StaticInventoryComponent("runtime_daily_receipts", "local-data/runtime/daily-runtime-receipts.json", "payload/runtime/daily-runtime-receipts.json", False),
     StaticInventoryComponent("runtime_agent_runs", "local-data/runtime/agent-runs.json", "payload/runtime/agent-runs.json", False),
+    StaticInventoryComponent("runtime_google_calendar_create_receipts", "local-data/runtime/google-calendar-create-receipts.json", "payload/runtime/google-calendar-create-receipts.json", False),
 )
 V1_STATIC_COMPONENTS_BY_ID = {item.component_id: item for item in V1_STATIC_INVENTORY}
 V1_REQUIRED_COMPONENT_IDS = frozenset(item.component_id for item in V1_STATIC_INVENTORY if item.required)

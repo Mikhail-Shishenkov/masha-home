@@ -9,6 +9,8 @@ from urllib.request import urlopen
 from urllib.error import HTTPError
 
 from backend.connectors.google_calendar.config import (
+    GOOGLE_CALENDAR_WRITE_SCOPE,
+    GOOGLE_CALENDAR_WRITE_SECRET_REF,
     GoogleCalendarConfig,
     GoogleCalendarConfigStore,
     read_google_desktop_client_json,
@@ -93,6 +95,41 @@ def test_disconnect_deletes_both_credentials_and_config(tmp_path: Path):
     assert config_store.load() is None
     assert secrets.exists(config.secret_ref) is False
     assert secrets.exists(config.client_secret_ref) is False
+
+
+def test_cli_connect_write_keeps_read_grant_and_stores_write_grant_separately(tmp_path: Path, monkeypatch):
+    client_json = tmp_path / "desktop-client.json"
+    client_json.write_text(json.dumps({"installed": {
+        "client_id": "desktop-client-identifier", "client_secret": "CLIENT_SECRET_MUST_NOT_ESCAPE",
+    }}), encoding="utf-8")
+    config_store = GoogleCalendarConfigStore(tmp_path / "local-data/config/google-calendar.json")
+    original = GoogleCalendarConfig(client_id="desktop-client-identifier")
+    config_store.save(original)
+    secrets = InMemorySecretStore()
+    secrets.put(original.secret_ref, "READ_REFRESH_MUST_NOT_ESCAPE")
+
+    class FakeOAuthFlow:
+        def __init__(self, **_kwargs):
+            pass
+        def authorize(self, config, *, client_secret, timeout_seconds=180.0, scope=None):
+            assert scope == GOOGLE_CALENDAR_WRITE_SCOPE
+            assert client_secret == "CLIENT_SECRET_MUST_NOT_ESCAPE"
+            return OAuthTokens(refresh_token="WRITE_REFRESH_MUST_NOT_ESCAPE")
+
+    monkeypatch.setattr(google_calendar_cli, "WindowsCredentialManagerSecretStore", lambda: secrets)
+    monkeypatch.setattr(google_calendar_cli, "GoogleDesktopOAuthFlow", FakeOAuthFlow)
+    assert google_calendar_cli.main(["--project-root", str(tmp_path), "connect-write", "--client-json", str(client_json)]) == 0
+    saved = config_store.load()
+    assert saved.write_secret_ref == GOOGLE_CALENDAR_WRITE_SECRET_REF
+    assert saved.write_requested_scope == GOOGLE_CALENDAR_WRITE_SCOPE
+    assert secrets.get(original.secret_ref) == "READ_REFRESH_MUST_NOT_ESCAPE"
+    assert secrets.get(GOOGLE_CALENDAR_WRITE_SECRET_REF) == "WRITE_REFRESH_MUST_NOT_ESCAPE"
+    rendered = (tmp_path / "local-data/config/google-calendar.json").read_text(encoding="utf-8")
+    assert "CLIENT_SECRET_MUST_NOT_ESCAPE" not in rendered and "WRITE_REFRESH_MUST_NOT_ESCAPE" not in rendered
+
+    disconnect_google_calendar(config_store=config_store, secret_store=secrets)
+    assert secrets.exists(original.secret_ref) is False
+    assert secrets.exists(GOOGLE_CALENDAR_WRITE_SECRET_REF) is False
 
 
 def test_google_desktop_client_json_is_parsed_without_persisting_secret(tmp_path: Path):

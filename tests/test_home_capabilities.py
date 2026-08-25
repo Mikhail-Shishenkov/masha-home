@@ -87,18 +87,27 @@ def test_completed_web_receipt_overrides_false_model_denial():
     ) == "У меня нет доступа к интернету."
 
 
+def test_calendar_create_claim_cannot_exceed_snapshot_truth():
+    from backend.conversation.conversation_service import stabilize_identity_and_capability_truth
+    assert "недоступна" in stabilize_identity_and_capability_truth(
+        "Я могу создать событие в календаре",
+        capabilities={"google_calendar_create": "needs_reconnect"},
+    )
+
+
 def test_snapshot_contract_contains_only_allowlisted_states():
     snapshot = HomeCapabilitySnapshot(
         web_search="available",
         web_fetch="available",
         google_calendar_read="unavailable",
+        google_calendar_create="unavailable",
         google_drive_read="needs_reconnect",
         yandex_mail_read="blocked",
         yandex_disk_read="available",
         proactive_reminders="available",
     )
     assert set(snapshot.model_dump()) == {
-        "web_search", "web_fetch", "google_calendar_read", "google_drive_read",
+        "web_search", "web_fetch", "google_calendar_read", "google_calendar_create", "google_drive_read",
         "yandex_mail_read", "yandex_disk_read", "commitments", "timed_commitments",
         "proactive_reminders",
     }

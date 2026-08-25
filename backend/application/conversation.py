@@ -213,6 +213,10 @@ class ConversationApplicationService:
 
     def _confirmation_copy(self, proposal):
         payload = proposal.record_payload
+        if proposal.operation == "google_calendar_create":
+            title = str(payload.get("title") or "Событие")
+            start = str(payload.get("start") or "")
+            return "google_calendar_create", "Поставить событие в Основной календарь?", f"{title} · {start}"[:500]
         if proposal.operation == "forget":
             return "memory_forget", "Убрать воспоминание?", ConversationApplicationService._proposal_subject(proposal)
         if proposal.operation == "restore":

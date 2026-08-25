@@ -22,6 +22,14 @@ class GoogleCalendarUnavailable(RuntimeError):
     pass
 
 
+class GoogleCalendarHttpFailure(GoogleCalendarUnavailable):
+    """A bounded HTTP status, retained only for application-side decisions."""
+
+    def __init__(self, status_code: int):
+        super().__init__("google_calendar_unavailable")
+        self.status_code = status_code
+
+
 class GoogleCalendarReconnectRequired(RuntimeError):
     pass
 
@@ -41,7 +49,7 @@ class UrllibGoogleCalendarTransport:
         except HTTPError as error:
             if "/token" in url and error.code == 400 and _token_error_is_invalid_grant(error):
                 raise GoogleTokenInvalidGrant("google_reconnect_required") from error
-            raise GoogleCalendarUnavailable("google_calendar_unavailable") from error
+            raise GoogleCalendarHttpFailure(error.code) from error
         except (URLError, OSError) as error:
             raise GoogleCalendarUnavailable("google_calendar_unavailable") from error
         if len(raw) > 2 * 1024 * 1024:

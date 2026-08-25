@@ -683,10 +683,15 @@ function renderWorkbench(view) {
     needs_reconnect: "Нужно переподключить",
     disconnected: "Не подключён",
   };
+  const connectionAccess = {
+    read_only: "Только чтение",
+    read_with_create_setup: "Чтение · создание после отдельного подключения",
+    read_and_create: "Чтение · создание событий",
+  };
   for (const connection of view?.connections || []) {
     workbenchConnections.append(workbenchItem(
       connection.display_name,
-      `Только чтение · ${connectionState[connection.state] || "Не подключён"}`,
+      `${connectionAccess[connection.access] || "Только чтение"} · ${connectionState[connection.state] || "Не подключён"}`,
     ));
   }
   const familiarProfiles = profiles.filter((profile) => profile.profile_id === "primary" || profile.profile_id === "fast");

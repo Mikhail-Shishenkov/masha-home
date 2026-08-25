@@ -15,6 +15,7 @@ class HomeCapabilitySnapshot(BaseModel):
     web_search: str
     web_fetch: str
     google_calendar_read: str
+    google_calendar_create: str = "unavailable"
     google_drive_read: str
     yandex_mail_read: str
     yandex_disk_read: str
@@ -36,10 +37,17 @@ class HomeCapabilityApplicationService:
         safety_blocked = self._safety_store.is_engaged()
         internet_off = self._internet_policy.load().mode is InternetAccessMode.OFF
         web_state = "blocked" if safety_blocked or internet_off else "available"
+        connection_rows = self._connections.view()
         connector_states = {
             row.connector_id: self._connector_capability_state(row.state, safety_blocked, internet_off)
-            for row in self._connections.view()
+            for row in connection_rows
         }
+        calendar_connection = next(row for row in connection_rows if row.connector_id == "google-calendar")
+        calendar_create = self._connector_capability_state(
+            "ready" if getattr(calendar_connection, "access", "read_only") == "read_and_create" else "needs_reconnect",
+            safety_blocked,
+            internet_off,
+        )
         proactive = self._proactive_policy.load()
         reminder_state = (
             "blocked"
@@ -50,6 +58,7 @@ class HomeCapabilityApplicationService:
             web_search=web_state,
             web_fetch=web_state,
             google_calendar_read=connector_states["google-calendar"],
+            google_calendar_create=calendar_create,
             google_drive_read=connector_states["google-drive"],
             yandex_mail_read=connector_states["yandex-mail"],
             yandex_disk_read=connector_states["yandex-disk"],

@@ -118,6 +118,22 @@ def test_workbench_projects_four_local_read_connections_without_network(tmp_path
     assert "secret_ref" not in rendered and "oauth" not in rendered.casefold()
 
 
+def test_calendar_create_is_a_pending_application_confirmation_before_any_network_or_model(tmp_path, monkeypatch):
+    import socket
+
+    _, provider, application = _application(tmp_path)
+    monkeypatch.setattr(socket, "create_connection", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("network")))
+    turn = application.send_message(
+        "Маша, поставь занятие по AI завтра в 19:00 на час",
+        project_id=PROJECT_ID,
+    )
+    pending = application.pending_confirmation(turn.conversation_id)
+    assert turn.status is ConversationTurnStatus.COMPLETED
+    assert pending is not None and pending.confirmation_type == "google_calendar_create"
+    assert "занятие по AI" in pending.subject
+    assert provider.requests == []
+
+
 def test_typed_human_information_api_searches_and_proposes_restore_without_fake_command(tmp_path):
     root, _, application = _application(tmp_path)
     repository = MemorySqliteRepository(root / "local-data" / "memory" / "masha.sqlite3")

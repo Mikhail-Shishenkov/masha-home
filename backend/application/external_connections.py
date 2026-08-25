@@ -27,6 +27,7 @@ class ExternalConnectionApplicationService:
                 connector_id=connector_id,
                 display_name=display_name,
                 state=self._state(connector_id),
+                access=self._access(connector_id),
             )
             for connector_id, display_name in self._ROWS
         )
@@ -47,3 +48,18 @@ class ExternalConnectionApplicationService:
             if state is ConnectorCredentialState.READY
             else "needs_reconnect"
         )
+
+    def _access(self, connector_id: str) -> str:
+        if connector_id != "google-calendar":
+            return "read_only"
+        try:
+            config = self._config_stores[connector_id].load()
+            if config is None:
+                return "read_only"
+            return (
+                "read_and_create"
+                if config.write_credential_state(self._secret_store) is ConnectorCredentialState.READY
+                else "read_with_create_setup"
+            )
+        except Exception:
+            return "read_with_create_setup"

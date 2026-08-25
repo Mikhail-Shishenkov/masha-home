@@ -37,7 +37,11 @@ from backend.external_observation import (
     LocalSourceSelector,
 )
 from backend.document_read import DocumentReadStore, DocumentReader, LocalDocumentInputService
-from backend.connectors.google_calendar import GoogleCalendarConfigStore, GoogleCalendarConversationService, GoogleCalendarReader
+from backend.connectors.google_calendar import (
+    CalendarCreateReceiptStore, GoogleCalendarConfigStore,
+    GoogleCalendarConversationService, GoogleCalendarCreateConversationService,
+    GoogleCalendarReader, GoogleCalendarWriter,
+)
 from backend.connectors.google_drive import GoogleDriveConfigStore, GoogleDriveConversationService, GoogleDriveReader
 from backend.connectors.yandex_mail import YandexMailConfigStore, YandexMailConversationService, YandexMailReader
 from backend.connectors.yandex_disk import YandexDiskConfigStore, YandexDiskConversationService, YandexDiskReader
@@ -144,6 +148,18 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
         proactive_policy=proactive_policy,
     )
     core.conversation.home_capability_provider = capabilities.snapshot
+    core.conversation.google_calendar_create_service = GoogleCalendarCreateConversationService(
+        proposal_store=core.conversation.memory_intent_handler.proposal_store,
+        writer=GoogleCalendarWriter(
+            config_store=connector_config_stores["google-calendar"],
+            secret_store=connector_secret_store,
+            receipt_store=CalendarCreateReceiptStore(runtime / "google-calendar-create-receipts.json"),
+            policy_store=internet_policy,
+            safety_store=safety.store,
+            recovery_journal=RecoveryJournal(core.project_root),
+            clock=core.conversation.temporal_engine.clock.now_utc,
+        ),
+    )
     document_store = DocumentReadStore(runtime / "document-read-receipts.json")
     core.conversation.external_observation_service = ExternalObservationService(
         provider=DDGSWebSearchProvider(
