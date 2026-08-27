@@ -111,7 +111,7 @@ class LocalDocumentDraftBuilder:
                 )),
                 ModelMessage(role=MessageRole.USER, content="Недавний локальный контекст:\n" + "\n".join(recent_messages[-8:]) + "\n\nЗапрос:\n" + message),
             ),
-            identity_context=self.identity_kernel.context(), private_context={"task": "google_drive_document_draft"},
+            identity_context=self.identity_kernel.build_context(), private_context={"task": "google_drive_document_draft"},
             required_capabilities=ModelCapabilities(structured_output=True, tools=False), privacy_scope=PrivacyScope.LOCAL_ONLY,
             preferred_provider_id=None if profile is None else profile.provider_id,
             execution_model_id=None if profile is None else profile.model_id,

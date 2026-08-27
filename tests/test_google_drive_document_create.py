@@ -12,12 +12,20 @@ from backend.connectors.google_drive.config import (
 from backend.connectors.google_drive.document_create import (
     DocumentDraft, DriveDocumentCreateOperation, DriveDocumentCreateReceiptStore,
     GoogleDriveDocumentCreateConversationService, GoogleDriveDocumentWriter,
-    drive_document_create_intent,
+    LocalDocumentDraftBuilder, drive_document_create_intent,
 )
 from backend.conversation.memory_intent import MemoryProposalStore
 from backend.external_observation.policy import InternetAccessMode, InternetAccessPolicy, InternetAccessPolicyStore
 from backend.runtime.safety import AutonomySafetyService, AutonomySafetyStore
+from backend.identity.identity_kernel import IdentityKernel
+from backend.identity.identity_store import IdentityStore
+from backend.llm.fake_provider import FakeProvider
+from backend.llm.model_models import ModelCapabilities, PrivacyScope
+from backend.llm.model_router import ModelRouter
 from backend.secrets import InMemorySecretStore
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class Drafts:
@@ -68,6 +76,26 @@ def _writer(tmp_path: Path, *, transport=None, policy=None, safety=None, recover
 
 
 def _operation(): return DriveDocumentCreateOperation.from_draft(DocumentDraft(title="Итоги занятия по AI", body="Обсудили локальные модели."))
+
+
+def test_local_draft_builder_uses_public_identity_context_and_returns_valid_draft():
+    identity = IdentityKernel(IdentityStore(ROOT / "identity" / "masha.identity.json"))
+    assert not hasattr(identity, "context")
+    provider = FakeProvider(
+        response_text='{"title":"AI notes","body":"Qwen was selected."}',
+        capabilities=ModelCapabilities(structured_output=True),
+    )
+    builder = LocalDocumentDraftBuilder(
+        router=ModelRouter([provider]), identity_kernel=identity,
+    )
+
+    draft = builder.build("Create a document in Drive", ("We discussed Qwen.",))
+
+    assert draft == DocumentDraft(title="AI notes", body="Qwen was selected.")
+    assert provider.last_request is not None
+    assert provider.last_request.identity_context == identity.build_context()
+    assert provider.last_request.privacy_scope is PrivacyScope.LOCAL_ONLY
+    assert provider.last_request.required_capabilities.tools is False
 
 
 def test_exact_canonical_phrase_creates_preview_but_no_provider_call(tmp_path):
