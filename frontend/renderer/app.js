@@ -140,6 +140,8 @@ let ready = false;
 let inFlight = false;
 let provisionalUser = null;
 let activeSceneId = "scene.home.idle";
+let lastPresentation = null;
+let cornerSceneActive = false;
 let activeSceneLayer = 0;
 let activeConversationId = null;
 let homeTimeZone = "UTC";
@@ -370,8 +372,20 @@ function fitComposer() {
   input.classList.toggle("is-scrollable", input.scrollHeight > COMPOSER_MAX_HEIGHT);
 }
 
+function setCornerSceneActive(active) {
+  const nextActive = Boolean(active);
+  if (cornerSceneActive === nextActive) return;
+
+  cornerSceneActive = nextActive;
+  if (lastPresentation) applyScene(lastPresentation);
+}
+
 function applyScene(presentation) {
-  const next = window.MashaSceneMap.resolveScene(presentation);
+  if (presentation) lastPresentation = presentation;
+  const sourcePresentation = presentation || lastPresentation;
+  const next = cornerSceneActive
+    ? window.MashaSceneMap.resolveCornerScene(sourcePresentation)
+    : window.MashaSceneMap.resolveScene(sourcePresentation);
   document.documentElement.dataset.scene = next.id;
   const revision = ++sceneTransitionRevision;
   const transition = window.MashaSceneMap.resolveTransition({
@@ -576,6 +590,8 @@ function closeTemporarySurfaces() {
 }
 
 function transitionToSurface(open, { preserveCandidate = false } = {}) {
+  // Any non-Workbench surface returns to the normal Presence scene first.
+  setCornerSceneActive(false);
   if (!preserveCandidate) candidatePresentation.defer();
   clearTimeout(surfaceTransitionTimer);
   const visible = [
@@ -608,6 +624,7 @@ function transitionToSurface(open, { preserveCandidate = false } = {}) {
 }
 
 function returnToConversation() {
+  setCornerSceneActive(false);
   candidatePresentation.defer();
   clearTimeout(surfaceTransitionTimer);
   const visible = [commitmentsSurface, activitySurface, proactiveSurface, continuitySurface, commitmentRescheduleSurface, reflectionsSurface, workbenchSurface, operationSurface]
@@ -2670,8 +2687,13 @@ reflectionsTrigger.addEventListener("click", () => {
 workbenchTrigger.addEventListener("click", () => {
   if (!ready || inFlight || pendingConfirmation) return;
   const opening = workbenchSurface.hidden;
-  if (opening) transitionToSurface(() => bridge.loadWorkbench());
-  else returnToConversation();
+  if (opening) {
+    transitionToSurface(() => bridge.loadWorkbench());
+    // Workbench owns a distinct visual state while keeping the same Home.
+    setCornerSceneActive(true);
+  } else {
+    returnToConversation();
+  }
 });
 
 closeActivity.addEventListener("click", () => {

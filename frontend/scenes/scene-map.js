@@ -86,6 +86,23 @@ specialThoughtful: scene(
 
   const SCENES = Object.freeze({ day: DAY_SCENES, evening: EVENING_SCENES });
 
+  // The Workbench ("Уголок") is a place, not a conversational activity.
+  // It keeps Home's day/evening clock but owns its own visual assets.
+  const CORNER_SCENES = Object.freeze({
+    day: scene(
+      "day",
+      "corner",
+      "assets/presence/day/corner/corner_day.png",
+      "Маша в своём дневном рабочем уголке"
+    ),
+    evening: scene(
+      "evening",
+      "corner",
+      "assets/presence/evening/corner/corner_evening.png",
+      "Маша в своём вечернем рабочем уголке"
+    ),
+  });
+
   function resolveHomePeriod(presentation) {
     // observed_at belongs to the Presentation Runtime and already carries Home's
     // local offset. The renderer never substitutes a browser clock.
@@ -93,6 +110,11 @@ specialThoughtful: scene(
     if (!match) return "evening";
     const hour = Number(match[1]);
     return hour >= 7 && hour < 18 ? "day" : "evening";
+  }
+
+  function resolveCornerScene(presentation) {
+    const period = resolveHomePeriod(presentation);
+    return CORNER_SCENES[period];
   }
 
   function chooseVariant(presentation, primary, alternate) {
@@ -266,13 +288,16 @@ if (specialEvening) {
 
   function preload() {
     if (typeof Image !== "function") return;
-    Object.values(SCENES).flatMap((family) => Object.values(family)).forEach((item) => {
+    [
+      ...Object.values(SCENES).flatMap((family) => Object.values(family)),
+      ...Object.values(CORNER_SCENES),
+    ].forEach((item) => {
       const image = new Image();
       image.src = item.source;
     });
   }
 
-  const api = Object.freeze({ SCENES, TRANSITION_POLICY, resolveHomePeriod, resolveScene, resolveTransition, preload });
+  const api = Object.freeze({ SCENES, CORNER_SCENES, TRANSITION_POLICY, resolveHomePeriod, resolveScene, resolveCornerScene, resolveTransition, preload });
   global.MashaSceneMap = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);
