@@ -1,0 +1,65 @@
+{
+  "schema_version": "1.0",
+  "cases": [
+    {
+      "case_id": "schedule_choose_calendar",
+      "turn1": "Запиши занятие завтра в 10",
+      "clarification_kind": "capability",
+      "turn2": "В календарь",
+      "expected_outcome": "resolved",
+      "expected_operation_id": "google_calendar.event.create",
+      "expected_known_slots": {"date": "завтра", "time": "10:00", "subject": "занятие"},
+      "comment": "Короткий ответ выбирает календарь в исходном frame."
+    },
+    {
+      "case_id": "schedule_choose_reminder",
+      "turn1": "Запиши занятие завтра в 10",
+      "clarification_kind": "capability",
+      "turn2": "Просто напомни",
+      "expected_outcome": "resolved",
+      "expected_operation_id": "home.timed_commitments",
+      "expected_known_slots": {"date": "завтра", "time": "10:00", "subject": "занятие"},
+      "comment": "Короткий ответ выбирает домашнее напоминание."
+    },
+    {
+      "case_id": "calendar_fill_subject",
+      "turn1": "Поставь завтра в 19",
+      "clarification_kind": "slot",
+      "turn2": "Занятие по AI",
+      "expected_outcome": "resolved",
+      "expected_operation_id": "google_calendar.event.create",
+      "expected_known_slots": {"date": "завтра", "time": "19:00", "subject": "Занятие по AI"},
+      "comment": "Follow-up заполняет только отсутствующий subject."
+    },
+    {
+      "case_id": "save_pronoun_stays_unresolved",
+      "turn1": "Сохрани это",
+      "clarification_kind": "referent",
+      "turn2": "это",
+      "expected_outcome": "still_unresolved",
+      "expected_operation_id": null,
+      "expected_known_slots": {},
+      "comment": "Повтор неопределённого местоимения не создаёт значение."
+    },
+    {
+      "case_id": "independent_weather_question",
+      "turn1": "Запиши занятие завтра в 10",
+      "clarification_kind": "capability",
+      "turn2": "Маш, а какая завтра погода?",
+      "expected_outcome": "not_a_follow_up",
+      "expected_operation_id": null,
+      "expected_known_slots": {"date": "завтра", "time": "10:00", "subject": "занятие"},
+      "comment": "Новый вопрос не присваивается pending resolution."
+    },
+    {
+      "case_id": "pending_user_cancel",
+      "turn1": "Запиши занятие завтра в 10",
+      "clarification_kind": "capability",
+      "turn2": "не надо",
+      "expected_outcome": "cancelled",
+      "expected_operation_id": null,
+      "expected_known_slots": {"date": "завтра", "time": "10:00", "subject": "занятие"},
+      "comment": "Отмена касается только pending meaning."
+    }
+  ]
+}
