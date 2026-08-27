@@ -98,6 +98,19 @@ def test_local_draft_builder_uses_public_identity_context_and_returns_valid_draf
     assert provider.last_request.required_capabilities.tools is False
 
 
+def test_local_draft_builder_rejects_malformed_structured_response():
+    identity = IdentityKernel(IdentityStore(ROOT / "identity" / "masha.identity.json"))
+    provider = FakeProvider(
+        response_text="not-json",
+        capabilities=ModelCapabilities(structured_output=True),
+    )
+    builder = LocalDocumentDraftBuilder(
+        router=ModelRouter([provider]), identity_kernel=identity,
+    )
+
+    assert builder.build("Create a document in Drive", ()) is None
+
+
 def test_exact_canonical_phrase_creates_preview_but_no_provider_call(tmp_path):
     proposals = MemoryProposalStore(tmp_path / "proposals.json"); writer, _, _ = _writer(tmp_path); drafts = Drafts()
     service = GoogleDriveDocumentCreateConversationService(proposal_store=proposals, writer=writer, draft_builder=drafts)

@@ -18,7 +18,7 @@ from .model_provider import ModelProvider, ModelProviderUnavailableError, ModelT
 class OllamaProvider(ModelProvider):
     provider_id = "ollama-local"
     model_id = ""
-    capabilities = ModelCapabilities(tools=True, vision=True)
+    capabilities = ModelCapabilities(structured_output=True, tools=True, vision=True)
     is_local = True
 
     def __init__(
@@ -61,6 +61,8 @@ class OllamaProvider(ModelProvider):
             "think": request.execution_think,
             "stream": False,
         }
+        if request.required_capabilities.structured_output:
+            payload["format"] = "json"
         http_request = Request(
             f"{self.endpoint}/api/chat",
             data=json.dumps(payload).encode("utf-8"),

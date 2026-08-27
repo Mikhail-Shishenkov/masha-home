@@ -5,8 +5,9 @@ import pytest
 
 from backend.identity.identity_kernel import IdentityKernel
 from backend.identity.identity_store import IdentityStore
-from backend.llm.model_models import ModelMessage, ModelRequest
+from backend.llm.model_models import ModelCapabilities, ModelMessage, ModelRequest
 from backend.llm.model_provider import ModelProviderUnavailableError
+from backend.llm.model_router import ModelRouter
 from backend.llm.ollama_provider import OllamaProvider
 
 
@@ -42,6 +43,8 @@ def test_provider_sends_local_identity_context_and_disables_thinking(monkeypatch
     captured = {}
 
     def fake_urlopen(request, timeout):
+        if isinstance(request, str):
+            return _Response({"models": []})
         captured["payload"] = json.loads(request.data.decode("utf-8"))
         return _Response({"model": "qwen3.5:9b", "message": {"content": "Привет."}, "done": True})
 
@@ -51,8 +54,31 @@ def test_provider_sends_local_identity_context_and_disables_thinking(monkeypatch
     assert response.text == "Привет."
     assert captured["payload"]["model"] == "qwen3.5:9b"
     assert captured["payload"]["think"] is False
+    assert "format" not in captured["payload"]
     assert "Identity Context" in captured["payload"]["messages"][0]["content"]
     assert "current_local_time" in captured["payload"]["messages"][0]["content"]
+
+
+def test_provider_sends_json_format_only_for_required_structured_output(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        if isinstance(request, str):
+            return _Response({"models": []})
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        return _Response({"model": "qwen3.5:9b", "message": {"content": '{"ok":true}'}, "done": True})
+
+    monkeypatch.setattr("backend.llm.ollama_provider.urlopen", fake_urlopen)
+    provider = OllamaProvider()
+    request = _request().model_copy(update={
+        "required_capabilities": ModelCapabilities(structured_output=True),
+    })
+
+    response = ModelRouter([provider]).generate(request)
+
+    assert provider.capabilities.structured_output is True
+    assert captured["payload"]["format"] == "json"
+    assert response.text == '{"ok":true}'
 
 
 def test_provider_uses_selected_execution_model_without_fallback(monkeypatch):
