@@ -32,6 +32,17 @@ _CREATE = re.compile(
     "\\u0441\\u043e\\u0431\\u0435\\u0440\\u0438\\s+\\u044d\\u0442\\u043e\\s+\\u0432\\s+\\u0437\\u0430\\u043c\\u0435\\u0442\\u043a\\w*)", re.I,
 )
 _DRIVE = re.compile("\\b(?:google\\s*drive|drive|\\u0433\\u0443\\u0433\\u043b\\s*\\u0434\\u0438\\u0441\\u043a|\\u0434\\u0440\\u0430\\u0439\\u0432)\\b", re.I)
+_REFERENTIAL_MATERIAL = re.compile(r"\b(?:это|этот\s+текст|эту\s+заметку|выше)\b", re.I)
+_INLINE_MATERIAL = re.compile(
+    r"(?:^|\s)(?:с\s+текстом|с\s+содержимым|содержимое|текст)\s*[:—-]\s*(?P<body>.+)$|"
+    r"^[^:]{1,300}:\s*(?P<after_colon>.+)$",
+    re.I | re.S,
+)
+_CONFIRMATION_ONLY = re.compile(r"^\s*(?:да|нет|подтверждаю|не\s+надо|отмена)\s*[.!]?\s*$", re.I)
+_CLARIFICATION_TEXT = re.compile(
+    r"\b(?:что\s+именно\s+(?:надо\s+)?(?:записать|сохранить)|какой\s+материал\s+(?:взять|сохранить)|пришли\s+текст|уточни\s*,?\s+что)\b",
+    re.I,
+)
 
 
 class DocumentDraft(BaseModel):
@@ -127,6 +138,35 @@ class LocalDocumentDraftBuilder:
 def drive_document_create_intent(message: str) -> bool:
     """Only explicit create/save language owns this turn; Drive read remains separate."""
     return bool(_CREATE.search(message) and _DRIVE.search(message))
+
+
+def document_source_material(message: str, recent_messages: tuple[str, ...]) -> tuple[str, ...] | None:
+    """Resolve bounded source text before an LLM may format a document.
+
+    The model can shape supplied material but cannot turn its own clarification
+    into document content.  Conservative uncertainty therefore returns None.
+    """
+    inline = _INLINE_MATERIAL.search(message.strip())
+    if inline is not None:
+        body = (inline.group("body") or inline.group("after_colon") or "").strip()
+        if _substantial_material(body):
+            return (body,)
+    if not _REFERENTIAL_MATERIAL.search(message):
+        return None
+    candidates = tuple(
+        value
+        for value in (item.strip() for item in recent_messages[-8:])
+        if _substantial_material(value)
+        and not _CONFIRMATION_ONLY.match(value)
+        and not _CLARIFICATION_TEXT.search(value)
+        and not drive_document_create_intent(value)
+    )
+    return candidates[-4:] or None
+
+
+def _substantial_material(value: str) -> bool:
+    words = re.findall(r"[\w'-]+", value, re.UNICODE)
+    return len(value) >= 12 and len(words) >= 3
 
 
 class GoogleDriveDocumentWriter:
@@ -253,9 +293,14 @@ class GoogleDriveDocumentCreateConversationService:
 
     def propose(self, message: str, *, conversation_id: str, recent_messages: tuple[str, ...], now_local: datetime):
         if not drive_document_create_intent(message): return None
-        draft = self.draft_builder.build(message, recent_messages)
         self._attempted.add(conversation_id)
+        source_material = document_source_material(message, recent_messages)
+        if source_material is None:
+            return "Что именно сохранить в документе? Пришли текст или напомни, какой материал взять."
+        draft = self.draft_builder.build(message, source_material)
         if draft is None: return "Не смогла безопасно собрать заметку. Ничего в Drive не создаю."
+        if _CLARIFICATION_TEXT.search(f"{draft.title}\n{draft.body}"):
+            return "Что именно сохранить в документе? Пришли текст или напомни, какой материал взять."
         operation = DriveDocumentCreateOperation.from_draft(draft)
         proposal = MemoryProposal(id=str(uuid4()), conversation_id=conversation_id, record_type="google_drive_document", record_payload=operation.model_dump(mode="json"), created_at=now_local, status=ProposalStatus.PENDING, operation="google_drive_document_create")
         try: self.proposal_store.create(proposal)

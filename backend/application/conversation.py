@@ -169,6 +169,8 @@ class ConversationApplicationService:
             confirmation_type=confirmation_type,
             title=title,
             subject=subject,
+            preview_title=str(payload.get("title")) if proposal.operation == "google_drive_document_create" else None,
+            preview_body=str(payload.get("body")) if proposal.operation == "google_drive_document_create" else None,
             due_at=payload.get("due_at"),
             created_at=proposal.created_at,
         )

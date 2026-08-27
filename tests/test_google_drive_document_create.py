@@ -13,7 +13,9 @@ from backend.connectors.google_drive.document_create import (
     DocumentDraft, DriveDocumentCreateOperation, DriveDocumentCreateReceiptStore,
     GoogleDriveDocumentCreateConversationService, GoogleDriveDocumentWriter,
     LocalDocumentDraftBuilder, drive_document_create_intent,
+    document_source_material,
 )
+from backend.application.conversation import ConversationApplicationService
 from backend.conversation.memory_intent import MemoryProposalStore
 from backend.external_observation.policy import InternetAccessMode, InternetAccessPolicy, InternetAccessPolicyStore
 from backend.runtime.safety import AutonomySafetyService, AutonomySafetyStore
@@ -128,11 +130,51 @@ def test_requires_explicit_write_and_does_not_claim_read_or_factual_phrases():
 
 def test_reject_is_non_mutating_and_confirmation_creates_then_verifies(tmp_path):
     proposals = MemoryProposalStore(tmp_path / "proposals.json"); writer, _, _ = _writer(tmp_path); service = GoogleDriveDocumentCreateConversationService(proposal_store=proposals, writer=writer, draft_builder=Drafts())
-    service.propose("\u0441\u043e\u0437\u0434\u0430\u0439 \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442 \u0432 Drive", conversation_id="one", recent_messages=(), now_local=datetime.now(timezone.utc))
+    service.propose("\u0441\u043e\u0437\u0434\u0430\u0439 \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442 \u0432 Drive: AI notes for the team", conversation_id="one", recent_messages=(), now_local=datetime.now(timezone.utc))
     assert service.resolve("\u043d\u0435\u0442", conversation_id="one") is not None and not writer.transport.calls
-    service.propose("\u0441\u043e\u0437\u0434\u0430\u0439 \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442 \u0432 Drive", conversation_id="two", recent_messages=(), now_local=datetime.now(timezone.utc))
+    service.propose("\u0441\u043e\u0437\u0434\u0430\u0439 \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442 \u0432 Drive: AI notes for the team", conversation_id="two", recent_messages=(), now_local=datetime.now(timezone.utc))
     assert service.resolve("\u0434\u0430", conversation_id="two") is not None
     assert sum(method == "POST" and url.endswith("/v1/documents") for url, method, _ in writer.transport.calls) == 1
+
+
+def test_missing_referent_clarifies_without_draft_proposal_receipt_or_provider(tmp_path):
+    proposals = MemoryProposalStore(tmp_path / "proposals.json"); writer, _, _ = _writer(tmp_path); drafts = Drafts()
+    service = GoogleDriveDocumentCreateConversationService(proposal_store=proposals, writer=writer, draft_builder=drafts)
+
+    answer = service.propose("\u041c\u0430\u0448, \u0441\u043e\u0431\u0435\u0440\u0438 \u044d\u0442\u043e \u0432 \u0437\u0430\u043c\u0435\u0442\u043a\u0443 \u0438 \u0441\u043e\u0437\u0434\u0430\u0439 \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442 \u0432 Drive.", conversation_id="missing", recent_messages=(), now_local=datetime.now(timezone.utc))
+
+    assert "\u0427\u0442\u043e \u0438\u043c\u0435\u043d\u043d\u043e" in answer
+    assert drafts.calls == []
+    assert proposals.current_for_conversation("missing") is None
+    assert not writer.receipt_store.path.exists()
+    assert writer.transport.calls == []
+
+
+def test_model_clarification_cannot_become_body_even_with_source_material(tmp_path):
+    clarification = DocumentDraft(title="Question", body="\u0427\u0442\u043e \u0438\u043c\u0435\u043d\u043d\u043e \u043d\u0430\u0434\u043e \u0437\u0430\u043f\u0438\u0441\u0430\u0442\u044c? \u041f\u0440\u0438\u0448\u043b\u0438 \u0442\u0435\u043a\u0441\u0442.")
+    drafts = Drafts(clarification); proposals = MemoryProposalStore(tmp_path / "proposals.json"); writer, _, _ = _writer(tmp_path)
+    service = GoogleDriveDocumentCreateConversationService(proposal_store=proposals, writer=writer, draft_builder=drafts)
+
+    answer = service.propose("\u0441\u043e\u0431\u0435\u0440\u0438 \u044d\u0442\u043e \u0432 \u0437\u0430\u043c\u0435\u0442\u043a\u0443 \u0438 \u0441\u043e\u0437\u0434\u0430\u0439 \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442 \u0432 Drive", conversation_id="missing", recent_messages=("Qwen was selected as the local model.",), now_local=datetime.now(timezone.utc))
+
+    assert "\u0427\u0442\u043e \u0438\u043c\u0435\u043d\u043d\u043e" in answer
+    assert len(drafts.calls) == 1
+    assert proposals.current_for_conversation("missing") is None
+
+
+def test_valid_material_is_frozen_into_exact_preview_without_second_draft_call(tmp_path):
+    drafts = Drafts(DocumentDraft(title="Exact title", body="Exact body from source.")); proposals = MemoryProposalStore(tmp_path / "proposals.json"); writer, _, _ = _writer(tmp_path)
+    service = GoogleDriveDocumentCreateConversationService(proposal_store=proposals, writer=writer, draft_builder=drafts)
+    service.propose("\u0441\u043e\u0431\u0435\u0440\u0438 \u044d\u0442\u043e \u0432 \u0437\u0430\u043c\u0435\u0442\u043a\u0443 \u0438 \u0441\u043e\u0437\u0434\u0430\u0439 \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442 \u0432 Drive", conversation_id="valid", recent_messages=("Qwen was selected as the local model.",), now_local=datetime.now(timezone.utc))
+    proposal = proposals.current_for_conversation("valid")
+    application = object.__new__(ConversationApplicationService)
+    application._conversation = type("Conversation", (), {"memory_intent_handler": type("Handler", (), {"proposal_store": proposals})()})()
+
+    preview = application.pending_confirmation("valid")
+
+    assert proposal.record_payload["title"] == preview.preview_title == "Exact title"
+    assert proposal.record_payload["body"] == preview.preview_body == "Exact body from source."
+    assert len(drafts.calls) == 1 and writer.transport.calls == []
 
 
 def test_pre_mutation_failure_is_retryable_but_does_not_claim_success(tmp_path):

@@ -346,6 +346,8 @@ class PendingConfirmationView(UiContract):
     ]
     title: str = Field(min_length=1, max_length=160)
     subject: str = Field(min_length=1, max_length=500)
+    preview_title: str | None = Field(default=None, max_length=300)
+    preview_body: str | None = Field(default=None, max_length=20_000)
     due_at: datetime | None
     created_at: datetime
     allowed_actions: tuple[Literal["confirm", "reject"], ...] = ("confirm", "reject")

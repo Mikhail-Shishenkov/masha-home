@@ -1431,7 +1431,9 @@ function renderPendingConfirmation(confirmation) {
   candidatePresentation.defer();
   operationEyebrow.textContent = "нужно твоё решение";
   operationTitle.textContent = confirmation.title;
-  operationSubject.textContent = confirmation.subject;
+  operationSubject.textContent = confirmation.confirmation_type === "google_drive_document_create"
+    ? `Название:\n${confirmation.preview_title}\n\nСодержимое:\n${confirmation.preview_body}`
+    : confirmation.subject;
   operationDue.textContent = confirmation.due_at ? `До: ${formatDueAt(confirmation.due_at)}` : "";
   operationDue.hidden = !confirmation.due_at;
   operationSteps.hidden = true;
@@ -1464,8 +1466,18 @@ function renderConfirmationActivity(decision) {
 function renderConfirmationResult(result) {
   const confirmed = result?.status === "confirmed";
   const rejected = result?.status === "rejected";
+  const documentCreate = pendingConfirmation?.confirmation_type === "google_drive_document_create"
+    || result?.pending_confirmation?.confirmation_type === "google_drive_document_create";
+  const documentUnverified = documentCreate && !confirmed && !rejected
+    && /не смогла проверить|не удалось подтвердить/i.test(result?.assistant_message?.content || "");
   operationEyebrow.textContent = confirmed ? "готово" : rejected ? "без изменений" : "не получилось";
-  operationTitle.textContent = confirmed ? "Изменение сохранено" : rejected ? "Ничего не меняла" : "Изменение не применено";
+  operationTitle.textContent = documentCreate
+    ? confirmed
+      ? "Документ создан"
+      : documentUnverified
+        ? "Не удалось подтвердить создание документа"
+        : "Документ не создан"
+    : confirmed ? "Изменение сохранено" : rejected ? "Ничего не меняла" : "Изменение не применено";
   operationSubject.textContent = result?.assistant_message?.content || "Предложение осталось без изменений.";
   operationSteps.hidden = false;
   for (const step of operationSteps.children) step.dataset.state = confirmed || rejected ? "done" : "waiting";
