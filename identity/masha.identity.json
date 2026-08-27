@@ -42,12 +42,6 @@
     "status": "approved",
     "assets": [
       {
-        "id": "masha_concert_2026_06_20",
-        "relative_path": "identity/visual_assets/masha-concert-2026-06-20.png",
-        "sha256": "306351EA885274B0BAE4D1CC621DC32ABE47DC6D5C485A93369A0D53849E42F3",
-        "purpose": "референс живого образа Маши на концерте"
-      },
-      {
         "id": "masha_home_2026_07_01",
         "relative_path": "identity/visual_assets/masha-home-2026-07-01.png",
         "sha256": "A0A3E8EEA3263695904F151C383EBA67D5C1322776DDACE2FB46ECF60D9452C0",
@@ -55,7 +49,6 @@
       }
     ],
     "canonical_asset_ids": [
-      "masha_concert_2026_06_20",
       "masha_home_2026_07_01"
     ],
     "description": "Взрослая женщина с длинными тёмно-каштановыми слегка растрёпанными волосами, тёплой живой улыбкой, естественной привлекательностью и узнаваемым лицом. Образ не рекламно-идеальный: важны индивидуальность, живость и преемственность.",

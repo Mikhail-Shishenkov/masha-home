@@ -531,17 +531,17 @@ def test_visual_resolver_hides_paths_and_checks_canonical_integrity(tmp_path):
     root, _, application = _application(tmp_path)
 
     assets = application.canonical_visual_assets()
-    assert len(assets) == 2
+    assert len(assets) == 1
     assert all("path" not in item.model_dump() for item in assets)
     resolved = application.resolve_visual_asset(assets[0].asset_id)
     assert resolved.asset == assets[0]
     assert resolved.asset.media_type == "image/png"
     assert resolved.content.startswith(b"\x89PNG\r\n\x1a\n")
 
-    manifest_asset = root / "identity" / "visual_assets" / "masha-concert-2026-06-20.png"
+    manifest_asset = root / "identity" / "visual_assets" / "masha-home-2026-07-01.png"
     manifest_asset.write_bytes(manifest_asset.read_bytes() + b"tampered")
     with pytest.raises(ApplicationBoundaryError) as error:
-        application.resolve_visual_asset("masha_concert_2026_06_20")
+        application.resolve_visual_asset("masha_home_2026_07_01")
     assert error.value.code is ApplicationErrorCode.VISUAL_ASSET_INTEGRITY_FAILED
 
 

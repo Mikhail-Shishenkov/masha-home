@@ -29,7 +29,7 @@ def test_approved_manifest_builds_stable_model_independent_context():
     assert first.manifest_status == "approved"
     assert "честность важнее удобства" in first.core_traits
     assert first.visual_status == "approved"
-    assert len(first.canonical_asset_ids) == 2
+    assert len(first.canonical_asset_ids) == 1
 
 
 def test_draft_manifest_cannot_claim_approval_without_traits():
