@@ -8,7 +8,11 @@ from dataclasses import dataclass
 
 _SPACE = re.compile(r"\s+")
 _PUNCT = re.compile(r"[^\w\s'-]+", re.UNICODE)
-_GOOGLE = re.compile(r"\b(?:google\s*drive|гугл\s+диск\w*|google\s+диск\w*|drive|драйв\w*)\b", re.IGNORECASE)
+_GOOGLE = re.compile(
+    r"\b(?:google\s*drive|google\s*docs?|гугл\s+(?:диск\w*|док(?:с\w*)?)|"
+    r"google\s+диск\w*|drive|драйв\w*)\b",
+    re.IGNORECASE,
+)
 _YANDEX = re.compile(r"\b(?:yandex\s*disk|яндекс\s+диск\w*|yandex\s+диск\w*)\b", re.IGNORECASE)
 _COMMAND_WORDS = (
     "покажи", "найди", "поищи", "проверь", "посмотри", "открой", "прочитай",

@@ -18,6 +18,7 @@ from backend.conversation.memory_intent import MemoryProposal, MemoryProposalSto
 from backend.llm.model_models import MessageRole, ModelCapabilities, ModelMessage, ModelRequest, PrivacyScope
 from backend.llm.model_provider import ModelProviderUnavailableError
 from backend.llm.model_router import ModelCapabilityUnavailableError
+from backend.connectors.provider_language import normalize_explicit_provider
 
 from .config import GoogleDriveConfigStore
 from .config import GOOGLE_DRIVE_DOCUMENT_WRITE_SCOPE
@@ -28,11 +29,10 @@ from .reader import GoogleDriveTokenInvalidGrant, GoogleDriveTransport, GoogleDr
 _CONFIRM = re.compile(r"^\s*(?:да|подтверждаю|создавай|создай)(?:\s+(?P<id>[0-9a-f-]{36}))?\s*[.!]?\s*$", re.I)
 _REJECT = re.compile(r"^\s*(?:нет|не надо|не сейчас|отмена)(?:\s+(?P<id>[0-9a-f-]{36}))?\s*[.!]?\s*$", re.I)
 _CREATE = re.compile(
-    "\\b(?:\\u0441\\u043e\\u0437\\u0434\\u0430\\u0439\\s+(?:\\u0434\\u043e\\u043a\\u0443\\u043c\\u0435\\u043d\\u0442|\\u0437\\u0430\\u043c\\u0435\\u0442\\u043a\\w*)|"
-    "\\u0441\\u043e\\u0445\\u0440\\u0430\\u043d\\u0438\\s+(?:\\u044d\\u0442\\u043e\\s+)?(?:\\u0432|\\u043d\\u0430)\\s+(?:google\\s+)?(?:drive|\\u0434\\u0438\\u0441\\u043a)|"
+    "\\b(?:\\u0441\\u043e\\u0437\\u0434\\u0430\\u0439\\s+(?:\\u0434\\u043e\\u043a\\u0443\\u043c\\u0435\\u043d\\u0442|\\u0437\\u0430\\u043c\\u0435\\u0442\\u043a\\w*|google\\s*docs?|\\u0433\\u0443\\u0433\\u043b\\s+\\u0434\\u043e\\u043a(?:\\u0441\\w*)?)|"
+    "\\u0441\\u043e\\u0445\\u0440\\u0430\\u043d\\u0438\\s+(?:\\u044d\\u0442\\u043e\\s+)?(?:\\u0432|\\u043d\\u0430)|"
     "\\u0441\\u043e\\u0431\\u0435\\u0440\\u0438\\s+\\u044d\\u0442\\u043e\\s+\\u0432\\s+\\u0437\\u0430\\u043c\\u0435\\u0442\\u043a\\w*)", re.I,
 )
-_DRIVE = re.compile("\\b(?:google\\s*drive|drive|\\u0433\\u0443\\u0433\\u043b\\s*\\u0434\\u0438\\u0441\\u043a|\\u0434\\u0440\\u0430\\u0439\\u0432)\\b", re.I)
 _REFERENTIAL_MATERIAL = re.compile(r"\b(?:это|этот\s+текст|эту\s+заметку|выше)\b", re.I)
 _INLINE_MATERIAL = re.compile(
     r"(?:^|\s)(?:с\s+текстом|с\s+содержимым|содержимое|текст)\s*[:—-]\s*(?P<body>.+)$|"
@@ -146,7 +146,8 @@ class LocalDocumentDraftBuilder:
 
 def drive_document_create_intent(message: str) -> bool:
     """Only explicit create/save language owns this turn; Drive read remains separate."""
-    return bool(_CREATE.search(message) and _DRIVE.search(message))
+    language = normalize_explicit_provider(message)
+    return language.provider_id == "google_drive" and bool(_CREATE.search(language.text))
 
 
 def document_source_material(message: str, recent_messages: tuple[str, ...]) -> tuple[str, ...] | None:

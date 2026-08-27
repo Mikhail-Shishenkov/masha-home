@@ -2,7 +2,7 @@ from backend.connectors.provider_language import normalize_command_prefix, norma
 
 
 def test_explicit_provider_variants_normalize_to_one_application_owned_id():
-    for phrase in ("Google Drive", "Гугл Диск", "Гугл Диске", "Google Диск", "Drive", "Драйв", "Драйве"):
+    for phrase in ("Google Drive", "Гугл Диск", "Гугл Диске", "Гугл Диска", "Гугл Диском", "Google Диск", "Google Docs", "Гугл Док", "Гугл Докс", "Drive", "Драйв", "Драйве"):
         assert normalize_explicit_provider(f"покажи файлы в {phrase}").provider_id == "google_drive"
     for phrase in ("Яндекс Диск", "Яндекс Диске", "Yandex Disk", "Yandex Диск"):
         assert normalize_explicit_provider(f"покажи файлы на {phrase}").provider_id == "yandex_disk"

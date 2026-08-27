@@ -177,6 +177,30 @@ def test_inline_drive_document_material_with_today_and_tomorrow_is_still_a_docum
     assert writer.transport.calls == []
 
 
+def test_russian_google_drive_aliases_own_document_create_material_before_calendar(tmp_path):
+    cases = (
+        "Маша, создай документ на Гугл Диске: Сегодня мы продолжили делать наш Дом и обсуждали, как тебе лучше понимать обычную человеческую речь.",
+        "Создай документ на Гугл Диск: Сегодня обсуждали планы на завтра.",
+        "Сохрани это на Гугл Диске: Сегодня мы обсудили понятный план работы.",
+        "Создай документ в Google Drive: Сегодня обсуждали планы.",
+    )
+    for index, message in enumerate(cases):
+        proposals = MemoryProposalStore(tmp_path / f"proposals-{index}.json")
+        writer, _, _ = _writer(tmp_path / str(index))
+        service = GoogleDriveDocumentCreateConversationService(
+            proposal_store=proposals,
+            writer=writer,
+            draft_builder=Drafts(DocumentDraft(title="Итог", body="Подготовленный текст.")),
+        )
+
+        preview = service.propose(message, conversation_id=f"russian-{index}", recent_messages=(), now_local=datetime.now(timezone.utc))
+
+        assert drive_document_create_intent(message)
+        assert "Итог" in preview and "Подготовленный текст." in preview
+        assert proposals.current_for_conversation(f"russian-{index}").operation == "google_drive_document_create"
+        assert writer.transport.calls == []
+
+
 def test_requires_explicit_write_and_does_not_claim_read_or_factual_phrases():
     assert drive_document_create_intent("\u0441\u043e\u0437\u0434\u0430\u0439 \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442 \u0432 Drive")
     assert not drive_document_create_intent("\u043f\u0440\u043e\u0447\u0438\u0442\u0430\u0439 \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442 \u0432 Drive")

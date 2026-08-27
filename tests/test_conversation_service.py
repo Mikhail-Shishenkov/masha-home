@@ -81,9 +81,8 @@ def test_explicit_drive_document_create_precedes_calendar_and_temporal_routing(t
     service.google_calendar_create_service = calendar
     service.google_drive_document_create_service = document
     message = (
-        "Создай документ в Google Drive: Короткий итог сегодняшнего занятия — "
-        "мы навели порядок в ветках Git, обновили main и продолжили работу "
-        "над созданием Google Docs."
+        "Маша, создай документ на Гугл Диске: Сегодня мы продолжили делать "
+        "наш Дом и обсуждали, как тебе лучше понимать обычную человеческую речь."
     )
 
     _, response = service.send(message, project_id="project_masha_home")

@@ -32,10 +32,12 @@ class CalendarCreateIntent:
 
 _CREATE_VERB = re.compile(r"^(?:маш(?:а)?\s*,?\s*)?(?:поставь|запланируй|создай)\b", re.IGNORECASE)
 _CREATE_WITH_CALENDAR = re.compile(r"^(?:маш(?:а)?\s*,?\s*)?добавь\b.*\b(?:в\s+)?календар", re.IGNORECASE)
+_LEADING_TEMPORAL_CREATE = re.compile(r"^(?:сегодня|завтра)\s+в\s*\d{1,2}(?::\d{2})?\s+(?:поставь|запланируй|создай)\b", re.IGNORECASE)
 _REMINDER_OWNERSHIP = re.compile(r"\b(?:напомни|напоминани\w*)\b", re.IGNORECASE)
 _TIME_RANGE = re.compile(r"\bс\s*(\d{1,2})(?::(\d{2}))?\s*(?:до|по)\s*(\d{1,2})(?::(\d{2}))?\b", re.IGNORECASE)
 _TIME_AT = re.compile(r"\b(?:в|на)\s*(\d{1,2})(?::(\d{2}))?\b", re.IGNORECASE)
 _DURATION = re.compile(r"\bна\s*(?:(\d{1,2}|два|две)\s*)?(час(?:а|ов)?|минут(?:у|ы)?)\b", re.IGNORECASE)
+_TODAY = re.compile(r"\bсегодня\b", re.IGNORECASE)
 
 
 def calendar_create_intent(message: str, now_local: datetime) -> CalendarCreateIntent | None:
@@ -46,9 +48,9 @@ def calendar_create_intent(message: str, now_local: datetime) -> CalendarCreateI
     # scheduling verb.  Leave it for the established reminder pipeline.
     if _REMINDER_OWNERSHIP.search(normalized):
         return None
-    if not (_CREATE_VERB.search(normalized) or _CREATE_WITH_CALENDAR.search(normalized)):
+    if not (_CREATE_VERB.search(normalized) or _CREATE_WITH_CALENDAR.search(normalized) or _LEADING_TEMPORAL_CREATE.search(normalized)):
         return None
-    if not any(token in normalized for token in ("сегодня", "завтра", "понедель", "вторник", "сред", "четверг", "пятниц", "суббот", "воскрес", " в ", " на ")):
+    if not (_TODAY.search(normalized) or any(token in normalized for token in ("завтра", "понедель", "вторник", "сред", "четверг", "пятниц", "суббот", "воскрес", " в ", " на "))):
         return CalendarCreateIntent(None, None, None, "На какой день поставить?")
     date_value = _create_date(normalized, now_local)
     if date_value is None:
@@ -78,13 +80,13 @@ def _create_date(text: str, now_local: datetime):
     today = now_local.date()
     if "завтра" in text:
         return today + timedelta(days=1)
-    if "сегодня" in text:
+    if _TODAY.search(text):
         return today
     for word, weekday in _WEEKDAYS.items():
         if re.search(rf"\b{word}\b", text):
             delta = (weekday - today.weekday()) % 7
             # Same-weekday without an explicit relative marker is ambiguous.
-            if delta == 0 and "эту" not in text and "сегодня" not in text:
+            if delta == 0 and "эту" not in text and not _TODAY.search(text):
                 return None
             return today + timedelta(days=delta)
     return None
@@ -108,6 +110,7 @@ def _duration(text: str) -> timedelta | None:
 
 def _create_title(message: str) -> str:
     text = message.strip(" .,!?")
+    text = re.sub(r"^\s*(?:сегодня|завтра)\s+в\s*\d{1,2}(?::\d{2})?\s+", "", text, flags=re.IGNORECASE)
     text = re.sub(r"^\s*(?:маш(?:а)?\s*,?\s*)?(?:поставь|запланируй|создай)\s+", "", text, flags=re.IGNORECASE)
     text = re.sub(r"^\s*добавь\s+(?:в\s+)?календар(?:ь|е)\s+", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\b(?:сегодня|завтра|в\s+(?:понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье))\b", "", text, flags=re.IGNORECASE)

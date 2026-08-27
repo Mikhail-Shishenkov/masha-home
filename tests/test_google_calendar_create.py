@@ -96,6 +96,14 @@ def test_create_intent_parses_narrow_complete_request():
     )
 
 
+def test_today_is_a_word_token_not_a_substring_in_document_material():
+    now = datetime(2026, 8, 25, 12, tzinfo=timezone.utc)
+
+    assert calendar_create_intent("Короткий итог сегодняшнего занятия", now) is None
+    assert calendar_create_intent("Сегодня в 10 поставь встречу", now) is not None
+    assert calendar_create_intent("поставь встречу сегодня в 10 на час", now) is not None
+
+
 def test_canonical_a1_phrase_creates_the_same_human_preview(tmp_path: Path):
     service, transport, _ = _service(tmp_path)
     preview = service.propose(
