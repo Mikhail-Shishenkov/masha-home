@@ -1,0 +1,126 @@
+{
+  "schema_version": "1.0",
+  "cases": [
+    {
+      "case_id": "calendar_explicit_tomorrow",
+      "utterance": "Поставь завтра в 19 занятие по AI",
+      "expected_candidate_operations": ["google_calendar.event.create"],
+      "allowed_candidate_alternatives": [],
+      "expected_known_slots": {"date": "завтра", "time": "19:00", "subject": "занятие по ai"},
+      "clarification_required": false,
+      "ambiguity_kind": "none",
+      "ordinary_conversation": false,
+      "comment": "Явная календарная формулировка структурно разрешима."
+    },
+    {
+      "case_id": "schedule_capability_ambiguity",
+      "utterance": "Запиши занятие завтра в 10",
+      "expected_candidate_operations": ["google_calendar.event.create", "home.timed_commitments"],
+      "allowed_candidate_alternatives": [],
+      "expected_known_slots": {"date": "завтра", "time": "10:00", "subject": "занятие"},
+      "clarification_required": true,
+      "ambiguity_kind": "capability",
+      "ordinary_conversation": false,
+      "comment": "Глагол не определяет, нужен календарь или домашнее дело."
+    },
+    {
+      "case_id": "drive_document_temporal_material",
+      "utterance": "Создай документ на Гугл Диске: Сегодня мы продолжили делать наш Дом",
+      "expected_candidate_operations": ["google_drive.document.create"],
+      "allowed_candidate_alternatives": [],
+      "expected_known_slots": {"target": "google_drive", "content": "Сегодня мы продолжили делать наш Дом"},
+      "clarification_required": false,
+      "ambiguity_kind": "none",
+      "ordinary_conversation": false,
+      "comment": "Материал после двоеточия не маршрутизируется как отдельная команда."
+    },
+    {
+      "case_id": "mail_explicit_read",
+      "utterance": "Посмотри мою почту",
+      "expected_candidate_operations": ["yandex_mail.read"],
+      "allowed_candidate_alternatives": [],
+      "expected_known_slots": {},
+      "clarification_required": false,
+      "ambiguity_kind": "none",
+      "ordinary_conversation": false,
+      "comment": "Явная просьба чтения почты остаётся read-only кандидатом."
+    },
+    {
+      "case_id": "today_adjective_is_not_temporal_command",
+      "utterance": "Короткий итог сегодняшнего занятия",
+      "expected_candidate_operations": [],
+      "allowed_candidate_alternatives": [],
+      "expected_known_slots": {},
+      "clarification_required": false,
+      "ambiguity_kind": "none",
+      "ordinary_conversation": true,
+      "comment": "Слово сегодня не совпадает с частью слова сегодняшнего."
+    },
+    {
+      "case_id": "save_unresolved_referent",
+      "utterance": "Сохрани это",
+      "expected_candidate_operations": ["google_drive.document.create", "home.timed_commitments"],
+      "allowed_candidate_alternatives": [],
+      "expected_known_slots": {},
+      "clarification_required": true,
+      "ambiguity_kind": "capability",
+      "ordinary_conversation": false,
+      "comment": "Home сохраняет неопределённый референт и ничего не выдумывает."
+    },
+    {
+      "case_id": "companion_ordinary_conversation",
+      "utterance": "Маш, иди сюда, хочу немного побыть с тобой",
+      "expected_candidate_operations": [],
+      "allowed_candidate_alternatives": [],
+      "expected_known_slots": {},
+      "clarification_required": false,
+      "ambiguity_kind": "none",
+      "ordinary_conversation": true,
+      "comment": "Разговор близости не является неудавшейся командой."
+    },
+    {
+      "case_id": "google_drive_nominative_alias",
+      "utterance": "Гугл Диск",
+      "expected_candidate_operations": [],
+      "allowed_candidate_alternatives": [],
+      "expected_known_slots": {},
+      "clarification_required": false,
+      "ambiguity_kind": "none",
+      "ordinary_conversation": true,
+      "comment": "Одно имя провайдера не даёт полномочия на операцию."
+    },
+    {
+      "case_id": "google_drive_locative_alias",
+      "utterance": "Гугл Диске",
+      "expected_candidate_operations": [],
+      "allowed_candidate_alternatives": [],
+      "expected_known_slots": {},
+      "clarification_required": false,
+      "ambiguity_kind": "none",
+      "ordinary_conversation": true,
+      "comment": "Падеж провайдера не требует нового типа intent."
+    },
+    {
+      "case_id": "google_drive_genitive_alias",
+      "utterance": "Гугл Диска",
+      "expected_candidate_operations": [],
+      "allowed_candidate_alternatives": [],
+      "expected_known_slots": {},
+      "clarification_required": false,
+      "ambiguity_kind": "none",
+      "ordinary_conversation": true,
+      "comment": "Падеж провайдера остаётся данными языка, а не enum."
+    },
+    {
+      "case_id": "google_drive_instrumental_alias",
+      "utterance": "Гугл Диском",
+      "expected_candidate_operations": [],
+      "allowed_candidate_alternatives": [],
+      "expected_known_slots": {},
+      "clarification_required": false,
+      "ambiguity_kind": "none",
+      "ordinary_conversation": true,
+      "comment": "Обычное упоминание не запускает provider action."
+    }
+  ]
+}
