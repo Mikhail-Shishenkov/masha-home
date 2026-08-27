@@ -250,6 +250,7 @@ class ConversationService:
         google_calendar_service=None,
         google_calendar_create_service=None,
         google_calendar_update_service=None,
+        google_drive_document_create_service=None,
         google_drive_service=None,
         yandex_mail_service=None,
         yandex_disk_service=None,
@@ -276,6 +277,7 @@ class ConversationService:
         self.google_calendar_service = google_calendar_service
         self.google_calendar_create_service = google_calendar_create_service
         self.google_calendar_update_service = google_calendar_update_service
+        self.google_drive_document_create_service = google_drive_document_create_service
         self.google_drive_service = google_drive_service
         self.yandex_mail_service = yandex_mail_service
         self.yandex_disk_service = yandex_disk_service
@@ -324,6 +326,13 @@ class ConversationService:
             if calendar_confirmation is not None:
                 self.history.append(conversation.id, ConversationRole.ASSISTANT, calendar_confirmation, origin=ConversationMessageOrigin.APPLICATION)
                 return conversation.id, calendar_confirmation
+        if document_receipt is None and self.google_drive_document_create_service is not None:
+            document_confirmation = self.google_drive_document_create_service.resolve(
+                user_message, conversation_id=conversation.id,
+            )
+            if document_confirmation is not None:
+                self.history.append(conversation.id, ConversationRole.ASSISTANT, document_confirmation, origin=ConversationMessageOrigin.APPLICATION)
+                return conversation.id, document_confirmation
 
         readout = temporal_readout(user_message, temporal_context)
         if readout is not None and document_receipt is None:
@@ -373,6 +382,15 @@ class ConversationService:
             if calendar_create_response is not None:
                 self.history.append(conversation.id, ConversationRole.ASSISTANT, calendar_create_response, origin=ConversationMessageOrigin.APPLICATION)
                 return conversation.id, calendar_create_response
+        if document_receipt is None and self.google_drive_document_create_service is not None:
+            document_create_response = self.google_drive_document_create_service.propose(
+                user_message, conversation_id=conversation.id,
+                recent_messages=tuple(item.content for item in self.history.messages(conversation.id, limit=self.history_limit) if item.id != user_history_message.id),
+                now_local=temporal_context.current_local_time,
+            )
+            if document_create_response is not None:
+                self.history.append(conversation.id, ConversationRole.ASSISTANT, document_create_response, origin=ConversationMessageOrigin.APPLICATION)
+                return conversation.id, document_create_response
         if document_receipt is None and self.google_calendar_service is not None:
             calendar_outcome = self.google_calendar_service.observe(
                 user_message, now_local=temporal_context.current_local_time,
@@ -816,6 +834,10 @@ class ConversationService:
                 response = self.google_calendar_update_service.resolve(
                     command, conversation_id=conversation_id, proposal_id=proposal_id,
                 )
+        if response is None and self.google_drive_document_create_service is not None:
+            response = self.google_drive_document_create_service.resolve(
+                command, conversation_id=conversation_id, proposal_id=proposal_id,
+            )
         if response is None:
             result = self.memory_intent_handler.handle(
                 command,

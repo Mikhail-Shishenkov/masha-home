@@ -3,7 +3,10 @@ from backend.connectors.google_calendar.config import (
     GOOGLE_CALENDAR_WRITE_SCOPE, GOOGLE_CALENDAR_WRITE_SECRET_REF,
     GoogleCalendarConfig, GoogleCalendarConfigStore,
 )
-from backend.connectors.google_drive.config import GoogleDriveConfig, GoogleDriveConfigStore
+from backend.connectors.google_drive.config import (
+    GOOGLE_DOCUMENTS_WRITE_SCOPE, GOOGLE_DOCUMENTS_WRITE_SECRET_REF,
+    GoogleDriveConfig, GoogleDriveConfigStore,
+)
 from backend.connectors.yandex_disk.config import YandexDiskConfig, YandexDiskConfigStore
 from backend.connectors.yandex_mail.config import YandexMailConfig, YandexMailConfigStore
 from backend.secrets import InMemorySecretStore
@@ -72,3 +75,19 @@ def test_calendar_connection_projects_separate_read_and_create_truth(tmp_path):
     secrets.delete(GOOGLE_CALENDAR_WRITE_SECRET_REF)
     row = next(item for item in service.view() if item.connector_id == "google-calendar")
     assert (row.state, row.access) == ("ready", "read_with_create_setup")
+
+
+def test_drive_connection_projects_separate_document_create_truth(tmp_path):
+    secrets = InMemorySecretStore()
+    service, stores = _service(tmp_path, secrets)
+    drive = GoogleDriveConfig(client_id="drive-client-identifier")
+    stores["google-drive"].save(drive)
+    secrets.put(drive.secret_ref, "READ_TOKEN")
+    secrets.put(drive.client_secret_ref, "CLIENT_SECRET")
+    row = next(item for item in service.view() if item.connector_id == "google-drive")
+    assert (row.state, row.access) == ("ready", "read_with_document_create_setup")
+    configured = drive.model_copy(update={"document_write_secret_ref": GOOGLE_DOCUMENTS_WRITE_SECRET_REF, "document_write_requested_scope": GOOGLE_DOCUMENTS_WRITE_SCOPE})
+    stores["google-drive"].save(configured)
+    secrets.put(GOOGLE_DOCUMENTS_WRITE_SECRET_REF, "WRITE_TOKEN")
+    row = next(item for item in service.view() if item.connector_id == "google-drive")
+    assert (row.state, row.access) == ("ready", "read_and_document_create")

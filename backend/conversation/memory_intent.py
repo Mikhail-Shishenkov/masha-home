@@ -64,6 +64,7 @@ MemoryRecordType = Literal[
     "relationship_memory",
     "continuity_state",
     "google_calendar_event",
+    "google_drive_document",
 ]
 _SHARED_MEMORY = re.compile(
     r"^\s*(?:маша\s*,?\s*)?(?:запомни|сохрани)\s+как\s+"

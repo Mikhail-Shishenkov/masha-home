@@ -103,12 +103,13 @@ def test_snapshot_contract_contains_only_allowlisted_states():
         google_calendar_create="unavailable",
         google_calendar_update="unavailable",
         google_drive_read="needs_reconnect",
+        google_drive_document_create="unavailable",
         yandex_mail_read="blocked",
         yandex_disk_read="available",
         proactive_reminders="available",
     )
     assert set(snapshot.model_dump()) == {
-        "web_search", "web_fetch", "google_calendar_read", "google_calendar_create", "google_calendar_update", "google_drive_read",
+        "web_search", "web_fetch", "google_calendar_read", "google_calendar_create", "google_calendar_update", "google_drive_read", "google_drive_document_create",
         "yandex_mail_read", "yandex_disk_read", "commitments", "timed_commitments",
         "proactive_reminders",
     }

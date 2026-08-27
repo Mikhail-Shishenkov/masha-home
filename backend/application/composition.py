@@ -43,7 +43,11 @@ from backend.connectors.google_calendar import (
     GoogleCalendarReader, GoogleCalendarWriter,
     CalendarUpdateReceiptStore, GoogleCalendarUpdater, GoogleCalendarUpdateConversationService,
 )
-from backend.connectors.google_drive import GoogleDriveConfigStore, GoogleDriveConversationService, GoogleDriveReader
+from backend.connectors.google_drive import (
+    DriveDocumentCreateReceiptStore, GoogleDriveConfigStore,
+    GoogleDriveConversationService, GoogleDriveDocumentCreateConversationService,
+    GoogleDriveDocumentWriter, GoogleDriveReader, LocalDocumentDraftBuilder,
+)
 from backend.connectors.yandex_mail import YandexMailConfigStore, YandexMailConversationService, YandexMailReader
 from backend.connectors.yandex_disk import YandexDiskConfigStore, YandexDiskConversationService, YandexDiskReader
 from backend.connectors.presented_read_sets import PresentedReadSetRegistry
@@ -172,6 +176,16 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
             recovery_journal=RecoveryJournal(core.project_root),
             clock=core.conversation.temporal_engine.clock.now_utc,
         ),
+    )
+    core.conversation.google_drive_document_create_service = GoogleDriveDocumentCreateConversationService(
+        proposal_store=core.conversation.memory_intent_handler.proposal_store,
+        writer=GoogleDriveDocumentWriter(
+            config_store=connector_config_stores["google-drive"], secret_store=connector_secret_store,
+            receipt_store=DriveDocumentCreateReceiptStore(runtime / "google-drive-document-create-receipts.json"),
+            policy_store=internet_policy, safety_store=safety.store,
+            recovery_journal=RecoveryJournal(core.project_root), clock=core.conversation.temporal_engine.clock.now_utc,
+        ),
+        draft_builder=LocalDocumentDraftBuilder(router=core.router, identity_kernel=core.identity, model_profiles=core.profiles),
     )
     document_store = DocumentReadStore(runtime / "document-read-receipts.json")
     core.conversation.external_observation_service = ExternalObservationService(

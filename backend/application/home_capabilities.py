@@ -18,6 +18,7 @@ class HomeCapabilitySnapshot(BaseModel):
     google_calendar_create: str = "unavailable"
     google_calendar_update: str = "unavailable"
     google_drive_read: str
+    google_drive_document_create: str = "unavailable"
     yandex_mail_read: str
     yandex_disk_read: str
     commitments: str = "available"
@@ -49,6 +50,11 @@ class HomeCapabilityApplicationService:
             safety_blocked,
             internet_off,
         )
+        drive_connection = next(row for row in connection_rows if row.connector_id == "google-drive")
+        drive_create = self._connector_capability_state(
+            "ready" if getattr(drive_connection, "access", "read_only") == "read_and_document_create" else "needs_reconnect",
+            safety_blocked, internet_off,
+        )
         proactive = self._proactive_policy.load()
         reminder_state = (
             "blocked"
@@ -62,6 +68,7 @@ class HomeCapabilityApplicationService:
             google_calendar_create=calendar_create,
             google_calendar_update=calendar_create,
             google_drive_read=connector_states["google-drive"],
+            google_drive_document_create=drive_create,
             yandex_mail_read=connector_states["yandex-mail"],
             yandex_disk_read=connector_states["yandex-disk"],
             proactive_reminders=reminder_state,

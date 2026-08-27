@@ -10,8 +10,10 @@ from backend.secrets import ConnectorCredentialState, SecretRef
 
 
 GOOGLE_DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
+GOOGLE_DOCUMENTS_WRITE_SCOPE = "https://www.googleapis.com/auth/documents"
 GOOGLE_DRIVE_SECRET_REF = SecretRef(value="google-drive-primary")
 GOOGLE_DRIVE_CLIENT_SECRET_REF = SecretRef(value="google-drive-client-secret")
+GOOGLE_DOCUMENTS_WRITE_SECRET_REF = SecretRef(value="google-drive-documents-write-primary")
 
 
 class GoogleDriveConfig(BaseModel):
@@ -25,10 +27,24 @@ class GoogleDriveConfig(BaseModel):
         default=GOOGLE_DRIVE_SCOPE,
         pattern=r"^https://www\.googleapis\.com/auth/drive\.readonly$",
     )
+    # A document-create grant remains independent from Drive read: a failed
+    # re-consent cannot replace a healthy read connection.
+    document_write_secret_ref: SecretRef | None = None
+    document_write_requested_scope: str | None = Field(
+        default=None,
+        pattern=r"^https://www\.googleapis\.com/auth/documents$",
+    )
     account_label: str | None = Field(default=None, max_length=200)
 
     def credential_state(self, secret_store) -> ConnectorCredentialState:
         if not secret_store.exists(self.secret_ref) or not secret_store.exists(self.client_secret_ref):
+            return ConnectorCredentialState.NEEDS_RECONNECT
+        return ConnectorCredentialState.READY
+
+    def document_write_credential_state(self, secret_store) -> ConnectorCredentialState:
+        if self.document_write_secret_ref is None or self.document_write_requested_scope is None:
+            return ConnectorCredentialState.DISCONNECTED
+        if not secret_store.exists(self.document_write_secret_ref) or not secret_store.exists(self.client_secret_ref):
             return ConnectorCredentialState.NEEDS_RECONNECT
         return ConnectorCredentialState.READY
 

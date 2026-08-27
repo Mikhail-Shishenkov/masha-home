@@ -687,6 +687,8 @@ function renderWorkbench(view) {
     read_only: "Только чтение",
     read_with_create_setup: "Чтение · создание после отдельного подключения",
     read_and_create: "Чтение · создание и изменение событий",
+    read_with_document_create_setup: "Чтение · создание документов после отдельного подключения",
+    read_and_document_create: "Чтение · создание документов",
   };
   for (const connection of view?.connections || []) {
     workbenchConnections.append(workbenchItem(
