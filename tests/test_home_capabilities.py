@@ -11,33 +11,52 @@ from backend.external_observation import InternetAccessMode
 
 
 class _Connections:
-    def __init__(self, states):
+    def __init__(self, states, access=None):
         self.states = states
+        self.access = access or {}
         self.calls = 0
 
     def view(self):
         self.calls += 1
         return tuple(
-            SimpleNamespace(connector_id=connector_id, state=state)
+            SimpleNamespace(
+                connector_id=connector_id,
+                state=state,
+                access=self.access.get(connector_id, "read_only"),
+            )
             for connector_id, state in self.states.items()
         )
 
 
-def _capabilities(*, mode=InternetAccessMode.EXPLICIT, emergency=False, connection_state="ready"):
+def _capabilities(
+    *,
+    mode=InternetAccessMode.EXPLICIT,
+    emergency=False,
+    connection_state="ready",
+    calendar_access="read_only",
+    drive_access="read_only",
+    proactive_enabled=True,
+    reminders_enabled=True,
+    catalog=None,
+):
     connections = _Connections({
         "google-calendar": connection_state,
         "google-drive": connection_state,
         "yandex-mail": connection_state,
         "yandex-disk": connection_state,
+    }, access={
+        "google-calendar": calendar_access,
+        "google-drive": drive_access,
     })
     service = HomeCapabilityApplicationService(
         connections=connections,
         internet_policy=SimpleNamespace(load=lambda: SimpleNamespace(mode=mode)),
         safety_store=SimpleNamespace(is_engaged=lambda: emergency),
         proactive_policy=SimpleNamespace(load=lambda: SimpleNamespace(
-            enabled=True,
-            allow_commitment_reminders=True,
+            enabled=proactive_enabled,
+            allow_commitment_reminders=reminders_enabled,
         )),
+        catalog=catalog,
     )
     return service, connections
 
@@ -113,3 +132,120 @@ def test_snapshot_contract_contains_only_allowlisted_states():
         "yandex_mail_read", "yandex_disk_read", "commitments", "timed_commitments",
         "proactive_reminders",
     }
+
+
+def test_legacy_projection_is_identical_for_healthy_connected_home():
+    service, _ = _capabilities(
+        calendar_access="read_and_create",
+        drive_access="read_and_document_create",
+    )
+
+    assert service.snapshot().model_dump() == {
+        "web_search": "available",
+        "web_fetch": "available",
+        "google_calendar_read": "available",
+        "google_calendar_create": "available",
+        "google_calendar_update": "available",
+        "google_drive_read": "available",
+        "google_drive_document_create": "available",
+        "yandex_mail_read": "available",
+        "yandex_disk_read": "available",
+        "commitments": "available",
+        "timed_commitments": "available",
+        "proactive_reminders": "available",
+    }
+
+
+@pytest.mark.parametrize(
+    "mode, emergency, external_state, reminder_state",
+    (
+        (InternetAccessMode.OFF, False, "blocked", "available"),
+        (InternetAccessMode.EXPLICIT, True, "blocked", "blocked"),
+    ),
+)
+def test_legacy_projection_preserves_network_and_safety_state_logic(
+    mode, emergency, external_state, reminder_state,
+):
+    service, _ = _capabilities(
+        mode=mode,
+        emergency=emergency,
+        calendar_access="read_and_create",
+        drive_access="read_and_document_create",
+    )
+    snapshot = service.snapshot().model_dump()
+
+    assert all(snapshot[key] == external_state for key in (
+        "web_search", "web_fetch", "google_calendar_read",
+        "google_calendar_create", "google_calendar_update",
+        "google_drive_read", "google_drive_document_create",
+        "yandex_mail_read", "yandex_disk_read",
+    ))
+    assert snapshot["commitments"] == snapshot["timed_commitments"] == "available"
+    assert snapshot["proactive_reminders"] == reminder_state
+
+
+@pytest.mark.parametrize(
+    "connection_state, read_state",
+    (("disconnected", "unavailable"), ("needs_reconnect", "needs_reconnect")),
+)
+def test_legacy_projection_preserves_connector_state_vocabulary(connection_state, read_state):
+    service, _ = _capabilities(connection_state=connection_state)
+    snapshot = service.snapshot()
+
+    assert snapshot.google_calendar_read == read_state
+    assert snapshot.google_drive_read == read_state
+    assert snapshot.yandex_mail_read == read_state
+    assert snapshot.yandex_disk_read == read_state
+    assert snapshot.google_calendar_create == "needs_reconnect"
+    assert snapshot.google_calendar_update == "needs_reconnect"
+    assert snapshot.google_drive_document_create == "needs_reconnect"
+
+
+def test_legacy_projection_preserves_write_connection_and_proactive_states():
+    disconnected_write, _ = _capabilities(
+        calendar_access="read_only",
+        drive_access="read_only",
+        proactive_enabled=False,
+    )
+    connected_write, _ = _capabilities(
+        calendar_access="read_and_create",
+        drive_access="read_and_document_create",
+        reminders_enabled=False,
+    )
+
+    first = disconnected_write.snapshot()
+    second = connected_write.snapshot()
+    assert first.google_calendar_create == first.google_calendar_update == "needs_reconnect"
+    assert first.google_drive_document_create == "needs_reconnect"
+    assert first.proactive_reminders == "blocked"
+    assert second.google_calendar_create == second.google_calendar_update == "available"
+    assert second.google_drive_document_create == "available"
+    assert second.proactive_reminders == "blocked"
+
+
+def test_home_service_generic_snapshot_can_include_future_operation_without_legacy_schema_change():
+    from backend.application.capability_catalog import (
+        CapabilityDescriptor,
+        CapabilityEffect,
+        CapabilityOperationKind,
+        CapabilityRisk,
+    )
+    from backend.application.home_capabilities import default_home_capability_catalog
+
+    catalog = default_home_capability_catalog()
+    catalog.register(CapabilityDescriptor(
+        operation_id="telegram.send_to_misha",
+        display_name="Отправить сообщение Мише",
+        family="telegram",
+        kind=CapabilityOperationKind.CREATE,
+        effect=CapabilityEffect.EXTERNAL_MUTATION,
+        risk=CapabilityRisk.CONSEQUENTIAL,
+        verification_required=True,
+    ))
+    service, _ = _capabilities(catalog=catalog)
+
+    generic = service.catalog_snapshot()
+    legacy = service.snapshot()
+
+    assert generic.get("telegram.send_to_misha").availability.value == "unavailable"
+    assert "telegram_send_to_misha" not in type(legacy).model_fields

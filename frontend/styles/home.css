@@ -514,6 +514,7 @@ html[data-object-surface="workbench"] .conversation-surface { opacity: .16; poin
 .memory-candidate-note { margin: 13px 0 0; color: rgba(236,223,207,.55); font: 400 13px/1.5 system-ui, sans-serif; }
 .operation-due { margin: 14px 0 0; color: rgba(231,196,142,.82); font: 500 13px/1.4 system-ui, sans-serif; }
 .operation-actions { display: flex; gap: 23px; margin-top: 25px; }
+.operation-actions[hidden] { display: none; }
 .operation-action, .operation-close { appearance: none; min-height: 38px; padding: 0; border: 0; border-bottom: 1px solid transparent; color: rgba(248,237,224,.58); background: transparent; text-transform: uppercase; letter-spacing: .08em; font: 600 11px/1.2 system-ui, sans-serif; cursor: pointer; }
 .operation-action.is-primary { color: #e9c58e; border-bottom-color: rgba(233,197,142,.42); }
 .operation-action:hover:not(:disabled), .operation-close:hover:not(:disabled) { color: #f8dfb7; border-bottom-color: rgba(248,223,183,.52); }

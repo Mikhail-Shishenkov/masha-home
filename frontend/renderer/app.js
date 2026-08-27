@@ -1441,7 +1441,7 @@ function renderPendingConfirmation(confirmation) {
   operationActions.hidden = false;
   closeOperation.hidden = true;
   confirmOperation.textContent = documentRecovery ? "Проверить" : "Подтвердить";
-  rejectOperation.textContent = documentRecovery ? "Не сейчас" : "Не сейчас";
+  rejectOperation.textContent = "Не сейчас";
   confirmOperation.disabled = false;
   rejectOperation.disabled = false;
   transitionToSurface(() => {
@@ -1476,8 +1476,7 @@ function renderConfirmationResult(result) {
     || result?.pending_confirmation?.confirmation_type === "google_drive_document_recovery";
   const documentCreate = pendingConfirmation?.confirmation_type === "google_drive_document_create"
     || documentRecovery
-    || result?.pending_confirmation?.confirmation_type === "google_drive_document_create"
-    || documentRecovery;
+    || result?.pending_confirmation?.confirmation_type === "google_drive_document_create";
   const recoveryDeferred = documentRecovery && /проверим его позже/i.test(result?.assistant_message?.content || "");
   const documentUnverified = documentCreate && !confirmed && !rejected
     && (documentRecovery || /не смогла проверить|не удалось подтвердить/i.test(result?.assistant_message?.content || ""));
