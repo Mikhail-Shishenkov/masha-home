@@ -1458,6 +1458,32 @@ function renderConfirmationResult(result) {
   document.documentElement.dataset.operation = "result";
 }
 
+function showReminderToast(interactions, interactionId) {
+  const reminder = interactionSafety.reminderToastProjection(
+    interactions,
+    interactionId,
+  );
+  if (!reminder) return;
+  clearTimeout(reminderToastTimer);
+  const due = reminder.dueAt ? ` · ${formatDueAt(reminder.dueAt)}` : "";
+  reminderToastMessage.textContent = `${reminder.message}${due}`;
+  reminderToast.hidden = false;
+  bridge.recordReminderPresented(reminder.interactionId, new Date().toISOString());
+  reminderToastTimer = window.setTimeout(() => {
+    reminderToast.hidden = true;
+    reminderToastTimer = null;
+  }, reminder.durationMs);
+}
+
+function renderBackgroundProactiveProjection(payload) {
+  interactionSafety.preserveComposer(input, document, () => {
+    renderProactiveInteractions(payload.interactions);
+    renderHomeAttention(payload.attention);
+    showReminderToast(payload.interactions, payload.new_interaction_id);
+    proactiveTrigger.hidden = !(payload.interactions?.items?.length > 0);
+  });
+}
+
 function renderHomeAttention(attention) {
   attentionLines.replaceChildren();
 
@@ -1587,23 +1613,6 @@ if (freshOverdue > 0) {
   summaryBits.push(
     `${freshOverdue} ${noun}`
   );
-}
-
-function showReminderToast(interactions, interactionId) {
-  const reminder = interactionSafety.reminderToastProjection(
-    interactions,
-    interactionId,
-  );
-  if (!reminder) return;
-  clearTimeout(reminderToastTimer);
-  const due = reminder.dueAt ? ` · ${formatDueAt(reminder.dueAt)}` : "";
-  reminderToastMessage.textContent = `${reminder.message}${due}`;
-  reminderToast.hidden = false;
-  bridge.recordReminderPresented(reminder.interactionId, new Date().toISOString());
-  reminderToastTimer = window.setTimeout(() => {
-    reminderToast.hidden = true;
-    reminderToastTimer = null;
-  }, reminder.durationMs);
 }
 
 if (upcoming > 0) {
@@ -2099,12 +2108,7 @@ function handleBridgeEvent(encoded) {
   }
   if (payload.kind === "proactive_interactions_loaded") {
     if (interactionSafety.isBackgroundProactiveProjection(payload)) {
-      interactionSafety.preserveComposer(input, document, () => {
-        renderProactiveInteractions(payload.interactions);
-        renderHomeAttention(payload.attention);
-        showReminderToast(payload.interactions, payload.new_interaction_id);
-        proactiveTrigger.hidden = !(payload.interactions?.items?.length > 0);
-      });
+      renderBackgroundProactiveProjection(payload);
       return;
     }
     applySnapshot(payload.snapshot);
