@@ -392,6 +392,13 @@ class GoogleDriveDocumentCreateConversationService:
             return "Нет актуального подтверждённого действия — документ в Drive не создаю." if conversation_id in self._attempted else None
         operation = DriveDocumentCreateOperation.model_validate(proposal.record_payload)
         if _REJECT.match(message):
+            existing = self.writer.receipt_store.get(operation.operation_id)
+            if (
+                existing is not None
+                and existing.status == "created_unverified"
+                and existing.provider_document_id is not None
+            ):
+                return "Хорошо, документ уже создан. Проверим его позже."
             self.writer.reject(operation); self.proposal_store.set_status(proposal.id, ProposalStatus.CANCELLED)
             return "Хорошо, документ в Drive не создаю."
         status, _ = self.writer.create_and_verify(operation)

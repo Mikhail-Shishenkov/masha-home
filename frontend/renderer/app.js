@@ -1431,6 +1431,7 @@ function renderPendingConfirmation(confirmation) {
   candidatePresentation.defer();
   operationEyebrow.textContent = "нужно твоё решение";
   operationTitle.textContent = confirmation.title;
+  const documentRecovery = confirmation.confirmation_type === "google_drive_document_recovery";
   operationSubject.textContent = confirmation.confirmation_type === "google_drive_document_create"
     ? `Название:\n${confirmation.preview_title}\n\nСодержимое:\n${confirmation.preview_body}`
     : confirmation.subject;
@@ -1439,6 +1440,8 @@ function renderPendingConfirmation(confirmation) {
   operationSteps.hidden = true;
   operationActions.hidden = false;
   closeOperation.hidden = true;
+  confirmOperation.textContent = documentRecovery ? "Проверить" : "Подтвердить";
+  rejectOperation.textContent = documentRecovery ? "Не сейчас" : "Не сейчас";
   confirmOperation.disabled = false;
   rejectOperation.disabled = false;
   transitionToSurface(() => {
@@ -1450,7 +1453,10 @@ function renderPendingConfirmation(confirmation) {
 
 function renderConfirmationActivity(decision) {
   operationEyebrow.textContent = "локальная операция";
-  operationTitle.textContent = decision === "confirm" ? "Применяю подтверждение" : "Оставляю без изменений";
+  const documentRecovery = pendingConfirmation?.confirmation_type === "google_drive_document_recovery";
+  operationTitle.textContent = documentRecovery
+    ? decision === "confirm" ? "Проверяю документ" : "Проверим позже"
+    : decision === "confirm" ? "Применяю подтверждение" : "Оставляю без изменений";
   operationSubject.textContent = pendingConfirmation?.subject || "Проверяю выбранное действие";
   operationDue.hidden = true;
   operationActions.hidden = true;
@@ -1466,14 +1472,21 @@ function renderConfirmationActivity(decision) {
 function renderConfirmationResult(result) {
   const confirmed = result?.status === "confirmed";
   const rejected = result?.status === "rejected";
+  const documentRecovery = pendingConfirmation?.confirmation_type === "google_drive_document_recovery"
+    || result?.pending_confirmation?.confirmation_type === "google_drive_document_recovery";
   const documentCreate = pendingConfirmation?.confirmation_type === "google_drive_document_create"
-    || result?.pending_confirmation?.confirmation_type === "google_drive_document_create";
+    || documentRecovery
+    || result?.pending_confirmation?.confirmation_type === "google_drive_document_create"
+    || documentRecovery;
+  const recoveryDeferred = documentRecovery && /проверим его позже/i.test(result?.assistant_message?.content || "");
   const documentUnverified = documentCreate && !confirmed && !rejected
-    && /не смогла проверить|не удалось подтвердить/i.test(result?.assistant_message?.content || "");
-  operationEyebrow.textContent = confirmed ? "готово" : rejected ? "без изменений" : "не получилось";
+    && (documentRecovery || /не смогла проверить|не удалось подтвердить/i.test(result?.assistant_message?.content || ""));
+  operationEyebrow.textContent = recoveryDeferred ? "не сейчас" : confirmed ? "готово" : rejected ? "без изменений" : "не получилось";
   operationTitle.textContent = documentCreate
     ? confirmed
       ? "Документ создан"
+      : recoveryDeferred
+        ? "Документ уже создан"
       : documentUnverified
         ? "Не удалось подтвердить создание документа"
         : "Документ не создан"

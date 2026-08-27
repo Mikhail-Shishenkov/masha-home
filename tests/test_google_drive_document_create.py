@@ -16,7 +16,7 @@ from backend.connectors.google_drive.document_create import (
     document_source_material,
 )
 from backend.application.conversation import ConversationApplicationService
-from backend.conversation.memory_intent import MemoryProposalStore
+from backend.conversation.memory_intent import MemoryProposal, MemoryProposalStore, ProposalStatus
 from backend.external_observation.policy import InternetAccessMode, InternetAccessPolicy, InternetAccessPolicyStore
 from backend.runtime.safety import AutonomySafetyService, AutonomySafetyStore
 from backend.identity.identity_kernel import IdentityKernel
@@ -340,6 +340,137 @@ def test_known_document_reconciles_without_duplicate_and_can_finish_body(tmp_pat
     transport.docs["doc-1"] = {"title": op.title, "body": ""}
     assert writer.create_and_verify(op)[0] == "verified"
     assert not any(method == "POST" and "/drive/v3/files" in url for url, method, _ in transport.calls)
+
+
+def test_known_blank_document_retry_inserts_once_then_verifies_without_marker_search(tmp_path):
+    transport = Transport(); writer, _, _ = _writer(tmp_path, transport=transport); operation = _operation()
+    writer.receipt_store.put(__import__("backend.connectors.google_drive.document_create", fromlist=["DriveDocumentCreateReceipt"]).DriveDocumentCreateReceipt(
+        operation=operation, status="created_unverified", provider_document_id="doc-1",
+    ))
+    transport.docs["doc-1"] = {"title": operation.title, "body": ""}
+
+    status, receipt = writer.create_and_verify(operation)
+
+    assert (status, receipt.status) == ("verified", "verified")
+    assert sum(method == "POST" and "/drive/v3/files" in url for url, method, _ in transport.calls) == 0
+    assert sum(method == "POST" and url.endswith(":batchUpdate") for url, method, _ in transport.calls) == 1
+    assert sum(method == "GET" and "/v1/documents/doc-1" in url for url, method, _ in transport.calls) == 2
+    assert not any(method == "GET" and "/drive/v3/files?" in url for url, method, _ in transport.calls)
+
+
+def test_known_exact_document_retry_verifies_without_mutation_or_marker_search(tmp_path):
+    transport = Transport(); writer, _, _ = _writer(tmp_path, transport=transport); operation = _operation()
+    writer.receipt_store.put(__import__("backend.connectors.google_drive.document_create", fromlist=["DriveDocumentCreateReceipt"]).DriveDocumentCreateReceipt(
+        operation=operation, status="created_unverified", provider_document_id="doc-1",
+    ))
+    transport.docs["doc-1"] = {"title": operation.title, "body": operation.body}
+
+    status, receipt = writer.create_and_verify(operation)
+
+    assert (status, receipt.status) == ("verified", "verified")
+    assert not any(method == "POST" and url.endswith(":batchUpdate") for url, method, _ in transport.calls)
+    assert not any(method == "POST" and "/drive/v3/files" in url for url, method, _ in transport.calls)
+    assert not any(method == "GET" and "/drive/v3/files?" in url for url, method, _ in transport.calls)
+    assert writer.create_and_verify(operation)[0] == "verified"
+    assert len(transport.calls) == 2
+
+
+def test_known_document_retry_get_failure_preserves_operation_and_never_creates(tmp_path):
+    class GetUnavailableTransport(Transport):
+        def request_json(self, url, *, method="GET", headers=None, body=None):
+            if method == "GET" and "/v1/documents/" in url:
+                self.calls.append((url, method, body))
+                from backend.connectors.google_drive.reader import GoogleDriveUnavailable
+                raise GoogleDriveUnavailable("down")
+            return super().request_json(url, method=method, headers=headers, body=body)
+
+    transport = GetUnavailableTransport(); writer, _, _ = _writer(tmp_path, transport=transport); operation = _operation()
+    original = writer.receipt_store.put(__import__("backend.connectors.google_drive.document_create", fromlist=["DriveDocumentCreateReceipt"]).DriveDocumentCreateReceipt(
+        operation=operation, status="created_unverified", provider_document_id="doc-1",
+    ))
+
+    status, receipt = writer.create_and_verify(operation)
+
+    assert (status, receipt.status, receipt.operation.operation_id, receipt.provider_document_id) == (
+        "created_unverified", "created_unverified", original.operation.operation_id, "doc-1",
+    )
+    assert receipt.outcome_detail == "docs_get_unavailable"
+    assert not any(method == "POST" and "/drive/v3/files" in url for url, method, _ in transport.calls)
+    assert not any(method == "GET" and "/drive/v3/files?" in url for url, method, _ in transport.calls)
+
+
+def test_known_document_mismatch_conflicts_without_overwrite(tmp_path):
+    transport = Transport(); writer, _, _ = _writer(tmp_path, transport=transport); operation = _operation()
+    writer.receipt_store.put(__import__("backend.connectors.google_drive.document_create", fromlist=["DriveDocumentCreateReceipt"]).DriveDocumentCreateReceipt(
+        operation=operation, status="created_unverified", provider_document_id="doc-1",
+    ))
+    transport.docs["doc-1"] = {"title": operation.title, "body": "Другой текст."}
+
+    status, receipt = writer.create_and_verify(operation)
+
+    assert (status, receipt.status, receipt.outcome_detail) == ("conflict", "conflict", "verification_mismatch")
+    assert not any(method == "POST" and url.endswith(":batchUpdate") for url, method, _ in transport.calls)
+    assert not any(method == "POST" and "/drive/v3/files" in url for url, method, _ in transport.calls)
+
+
+def test_created_document_is_projected_as_recovery_and_not_new_create_confirmation(tmp_path):
+    proposals = MemoryProposalStore(tmp_path / "proposals.json")
+    writer, _, _ = _writer(tmp_path)
+    operation = _operation()
+    proposal = MemoryProposal(
+        id="proposal-1", conversation_id="conversation-1", record_type="google_drive_document",
+        record_payload=operation.model_dump(mode="json"), created_at=datetime.now(timezone.utc),
+        status=ProposalStatus.PENDING, operation="google_drive_document_create",
+    )
+    proposals.create(proposal)
+    writer.receipt_store.put(__import__("backend.connectors.google_drive.document_create", fromlist=["DriveDocumentCreateReceipt"]).DriveDocumentCreateReceipt(
+        operation=operation, status="created_unverified", provider_document_id="doc-1",
+    ))
+    service = GoogleDriveDocumentCreateConversationService(proposal_store=proposals, writer=writer, draft_builder=Drafts())
+    application = object.__new__(ConversationApplicationService)
+    application._conversation = type("Conversation", (), {
+        "memory_intent_handler": type("Handler", (), {"proposal_store": proposals})(),
+        "google_drive_document_create_service": service,
+    })()
+
+    pending = application.pending_confirmation("conversation-1")
+
+    assert pending.confirmation_type == "google_drive_document_recovery"
+    assert pending.title == "Проверить созданный документ?"
+    assert "Документ уже создан" in pending.subject
+    assert pending.preview_title is None and pending.preview_body is None
+
+
+def test_recovery_not_now_keeps_existing_receipt_and_never_rejects_the_created_document(tmp_path):
+    proposals = MemoryProposalStore(tmp_path / "proposals.json"); writer, _, _ = _writer(tmp_path); operation = _operation()
+    proposal = MemoryProposal(id="proposal-1", conversation_id="conversation-1", record_type="google_drive_document", record_payload=operation.model_dump(mode="json"), created_at=datetime.now(timezone.utc), status=ProposalStatus.PENDING, operation="google_drive_document_create")
+    proposals.create(proposal)
+    writer.receipt_store.put(__import__("backend.connectors.google_drive.document_create", fromlist=["DriveDocumentCreateReceipt"]).DriveDocumentCreateReceipt(operation=operation, status="created_unverified", provider_document_id="doc-1"))
+    service = GoogleDriveDocumentCreateConversationService(proposal_store=proposals, writer=writer, draft_builder=Drafts())
+
+    answer = service.resolve("нет", conversation_id="conversation-1", proposal_id=proposal.id)
+
+    assert "уже создан" in answer
+    assert writer.receipt_store.get(operation.operation_id).status == "created_unverified"
+    assert proposals.current_for_conversation("conversation-1").id == proposal.id
+    assert writer.transport.calls == []
+
+
+def test_recovery_confirmation_reuses_the_pending_operation_without_drive_create(tmp_path):
+    proposals = MemoryProposalStore(tmp_path / "proposals.json"); transport = Transport(); writer, _, _ = _writer(tmp_path, transport=transport); operation = _operation()
+    proposal = MemoryProposal(id="proposal-1", conversation_id="conversation-1", record_type="google_drive_document", record_payload=operation.model_dump(mode="json"), created_at=datetime.now(timezone.utc), status=ProposalStatus.PENDING, operation="google_drive_document_create")
+    proposals.create(proposal)
+    writer.receipt_store.put(__import__("backend.connectors.google_drive.document_create", fromlist=["DriveDocumentCreateReceipt"]).DriveDocumentCreateReceipt(operation=operation, status="created_unverified", provider_document_id="doc-1"))
+    transport.docs["doc-1"] = {"title": operation.title, "body": ""}
+    service = GoogleDriveDocumentCreateConversationService(proposal_store=proposals, writer=writer, draft_builder=Drafts())
+
+    answer = service.resolve("да", conversation_id="conversation-1", proposal_id=proposal.id)
+
+    assert "создала и проверила" in answer
+    assert writer.receipt_store.get(operation.operation_id).status == "verified"
+    assert proposals.get(proposal.id).status == ProposalStatus.CONFIRMED
+    assert sum(method == "POST" and "/drive/v3/files" in url for url, method, _ in transport.calls) == 0
+    assert sum(method == "POST" and url.endswith(":batchUpdate") for url, method, _ in transport.calls) == 1
 
 
 def test_off_stop_and_recovery_hold_block_before_transport(tmp_path):

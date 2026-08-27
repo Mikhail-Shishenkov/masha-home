@@ -162,6 +162,17 @@ class ConversationApplicationService:
         if proposal is None:
             return None
         payload = proposal.record_payload
+        document_recovery = self._document_recovery_receipt(proposal)
+        if document_recovery is not None:
+            return PendingConfirmationView(
+                proposal_id=proposal.id,
+                conversation_id=proposal.conversation_id,
+                confirmation_type="google_drive_document_recovery",
+                title="Проверить созданный документ?",
+                subject="Документ уже создан, но я пока не смогла проверить содержимое. Проверить ещё раз?",
+                due_at=None,
+                created_at=proposal.created_at,
+            )
         confirmation_type, title, subject = self._confirmation_copy(proposal)
         return PendingConfirmationView(
             proposal_id=proposal.id,
@@ -174,6 +185,23 @@ class ConversationApplicationService:
             due_at=payload.get("due_at"),
             created_at=proposal.created_at,
         )
+
+    def _document_recovery_receipt(self, proposal):
+        if proposal.operation != "google_drive_document_create":
+            return None
+        service = getattr(self._conversation, "google_drive_document_create_service", None)
+        operation_id = proposal.record_payload.get("operation_id")
+        if service is None or not isinstance(operation_id, str):
+            return None
+        receipt = service.writer.receipt_store.get(operation_id)
+        if (
+            receipt is not None
+            and receipt.operation.operation_id == operation_id
+            and receipt.status == "created_unverified"
+            and receipt.provider_document_id is not None
+        ):
+            return receipt
+        return None
 
     def remember_presented_entity_set(self, presented: PresentedEntitySet) -> None:
         """Register one application-rendered list in the existing reference truth."""

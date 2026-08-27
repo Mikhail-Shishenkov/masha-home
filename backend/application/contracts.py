@@ -343,6 +343,7 @@ class PendingConfirmationView(UiContract):
         "google_calendar_create",
         "google_calendar_update",
         "google_drive_document_create",
+        "google_drive_document_recovery",
     ]
     title: str = Field(min_length=1, max_length=160)
     subject: str = Field(min_length=1, max_length=500)
