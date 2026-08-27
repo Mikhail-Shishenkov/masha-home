@@ -334,6 +334,22 @@ class ConversationService:
                 self.history.append(conversation.id, ConversationRole.ASSISTANT, document_confirmation, origin=ConversationMessageOrigin.APPLICATION)
                 return conversation.id, document_confirmation
 
+        # An explicit Drive/Docs creation command owns its complete source
+        # material.  In particular, dates or task-like words inside the text
+        # after its content delimiter are not a second scheduling request.
+        # Run this narrow, explicit capability before generic temporal and
+        # calendar parsing, which intentionally inspect natural language more
+        # broadly.
+        if document_receipt is None and self.google_drive_document_create_service is not None:
+            document_create_response = self.google_drive_document_create_service.propose(
+                user_message, conversation_id=conversation.id,
+                recent_messages=tuple(item.content for item in self.history.messages(conversation.id, limit=self.history_limit) if item.id != user_history_message.id),
+                now_local=temporal_context.current_local_time,
+            )
+            if document_create_response is not None:
+                self.history.append(conversation.id, ConversationRole.ASSISTANT, document_create_response, origin=ConversationMessageOrigin.APPLICATION)
+                return conversation.id, document_create_response
+
         readout = temporal_readout(user_message, temporal_context)
         if readout is not None and document_receipt is None:
             self.history.append(
@@ -382,15 +398,6 @@ class ConversationService:
             if calendar_create_response is not None:
                 self.history.append(conversation.id, ConversationRole.ASSISTANT, calendar_create_response, origin=ConversationMessageOrigin.APPLICATION)
                 return conversation.id, calendar_create_response
-        if document_receipt is None and self.google_drive_document_create_service is not None:
-            document_create_response = self.google_drive_document_create_service.propose(
-                user_message, conversation_id=conversation.id,
-                recent_messages=tuple(item.content for item in self.history.messages(conversation.id, limit=self.history_limit) if item.id != user_history_message.id),
-                now_local=temporal_context.current_local_time,
-            )
-            if document_create_response is not None:
-                self.history.append(conversation.id, ConversationRole.ASSISTANT, document_create_response, origin=ConversationMessageOrigin.APPLICATION)
-                return conversation.id, document_create_response
         if document_receipt is None and self.google_calendar_service is not None:
             calendar_outcome = self.google_calendar_service.observe(
                 user_message, now_local=temporal_context.current_local_time,

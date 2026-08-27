@@ -51,6 +51,49 @@ def test_service_routes_identity_bounded_memory_time_and_history(tmp_path):
     assert [message.role.value for message in service.history.messages(conversation_id)] == ["user", "assistant"]
 
 
+def test_explicit_drive_document_create_precedes_calendar_and_temporal_routing(tmp_path):
+    class CalendarCreate:
+        def __init__(self):
+            self.propose_calls = []
+
+        def resolve(self, *_args, **_kwargs):
+            return None
+
+        def propose(self, *args, **kwargs):
+            self.propose_calls.append((args, kwargs))
+            return "Во сколько поставить?"
+
+    class DriveDocumentCreate:
+        def __init__(self):
+            self.propose_calls = []
+
+        def resolve(self, *_args, **_kwargs):
+            return None
+
+        def propose(self, *args, **kwargs):
+            self.propose_calls.append((args, kwargs))
+            return "Создать документ «Короткий итог занятия» с подготовленным текстом?"
+
+    provider = FakeProvider(provider_id="ollama-local", response_text="model must not be called")
+    service = _service(tmp_path, provider)
+    calendar = CalendarCreate()
+    document = DriveDocumentCreate()
+    service.google_calendar_create_service = calendar
+    service.google_drive_document_create_service = document
+    message = (
+        "Создай документ в Google Drive: Короткий итог сегодняшнего занятия — "
+        "мы навели порядок в ветках Git, обновили main и продолжили работу "
+        "над созданием Google Docs."
+    )
+
+    _, response = service.send(message, project_id="project_masha_home")
+
+    assert "Короткий итог занятия" in response
+    assert len(document.propose_calls) == 1
+    assert calendar.propose_calls == []
+    assert provider.last_request is None
+
+
 def test_home_capability_snapshot_reaches_model_as_description_without_execution(tmp_path):
     provider = FakeProvider(provider_id="ollama-local", response_text="Да, Дом умеет искать по твоей просьбе.")
     service = _service(tmp_path, provider)

@@ -20,6 +20,7 @@ from backend.llm.model_provider import ModelProviderUnavailableError
 from backend.llm.model_router import ModelCapabilityUnavailableError
 
 from .config import GoogleDriveConfigStore
+from .config import GOOGLE_DRIVE_DOCUMENT_WRITE_SCOPE
 from .network import GoogleDriveNetworkBlocked, assert_google_drive_network_allowed
 from .reader import GoogleDriveTokenInvalidGrant, GoogleDriveTransport, GoogleDriveUnavailable, UrllibGoogleDriveTransport
 
@@ -72,10 +73,18 @@ class DriveDocumentCreateOperation(BaseModel):
 class DriveDocumentCreateReceipt(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     operation: DriveDocumentCreateOperation
-    status: Literal["proposed", "rejected", "executing", "blocked", "failed", "created_unverified", "conflict", "verified"]
+    status: Literal["proposed", "rejected", "executing", "blocked", "failed", "created_unverified", "create_unresolved", "conflict", "verified"]
     provider_document_id: str | None = Field(default=None, min_length=1, max_length=300)
     confirmed_at: datetime | None = None
     verified_at: datetime | None = None
+    marker_version: Literal["1"] | None = None
+    target_mime_type: str | None = Field(default=None, max_length=100)
+    create_dispatch_started_at: datetime | None = None
+    outcome_detail: Literal[
+        "drive_create_transport_unknown", "drive_create_missing_id",
+        "marker_search_unavailable", "marker_search_zero", "marker_search_multiple",
+        "docs_get_unavailable", "docs_batch_update_unknown", "verification_mismatch",
+    ] | None = None
 
 
 class DriveDocumentCreateReceiptStore:
@@ -172,6 +181,11 @@ def _substantial_material(value: str) -> bool:
 class GoogleDriveDocumentWriter:
     TOKEN_URL = "https://oauth2.googleapis.com/token"
     DOCS_ROOT = "https://docs.googleapis.com/v1/documents"
+    DRIVE_ROOT = "https://www.googleapis.com/drive/v3/files"
+    DOCUMENT_MIME_TYPE = "application/vnd.google-apps.document"
+    MARKER_KEY = "masha_home_operation_id"
+    MARKER_VERSION_KEY = "masha_home_document_create_version"
+    MARKER_VERSION = "1"
 
     def __init__(self, *, config_store: GoogleDriveConfigStore, secret_store, receipt_store: DriveDocumentCreateReceiptStore, transport: GoogleDriveTransport | None = None, policy_store=None, safety_store=None, recovery_journal: RecoveryJournal | None = None, clock=None):
         self.config_store, self.secret_store, self.receipt_store = config_store, secret_store, receipt_store
@@ -186,7 +200,7 @@ class GoogleDriveDocumentWriter:
                 return "failed", existing
             if existing.status == "verified":
                 return "verified", existing
-            if existing.status in {"created_unverified", "executing"}:
+            if existing.status in {"created_unverified", "create_unresolved", "executing"}:
                 return self._reconcile(existing)
         if self._blocked():
             return "blocked", self.receipt_store.put(DriveDocumentCreateReceipt(operation=operation, status="blocked"))
@@ -194,7 +208,10 @@ class GoogleDriveDocumentWriter:
         if credentials is None:
             return "needs_reconnect", self.receipt_store.put(DriveDocumentCreateReceipt(operation=operation, status="failed"))
         client_id, refresh_token, client_secret = credentials
-        executing = self.receipt_store.put(DriveDocumentCreateReceipt(operation=operation, status="executing", confirmed_at=self.clock()))
+        executing = self.receipt_store.put(DriveDocumentCreateReceipt(
+            operation=operation, status="executing", confirmed_at=self.clock(),
+            marker_version=self.MARKER_VERSION, target_mime_type=self.DOCUMENT_MIME_TYPE,
+        ))
         try:
             token = self._access_token(client_id, refresh_token, client_secret)
         except GoogleDriveTokenInvalidGrant:
@@ -205,18 +222,21 @@ class GoogleDriveDocumentWriter:
         try:
             if self._blocked():
                 return "blocked", self.receipt_store.put(executing.model_copy(update={"status": "blocked"}))
-            created = self._request(self.DOCS_ROOT, method="POST", headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, body=json.dumps({"title": operation.title}).encode("utf-8"))
-            document_id = created.get("documentId")
+            dispatch = self.receipt_store.put(executing.model_copy(update={"create_dispatch_started_at": self.clock()}))
+            created = self._request(self.DRIVE_ROOT + "?fields=id,name,mimeType,appProperties,createdTime", method="POST", headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, body=json.dumps({"name": operation.title, "mimeType": self.DOCUMENT_MIME_TYPE, "appProperties": self._marker(operation)}).encode("utf-8"))
+            document_id = created.get("id")
             if not isinstance(document_id, str) or not document_id:
-                return "created_unverified", self.receipt_store.put(executing.model_copy(update={"status": "created_unverified"}))
-            receipt = self.receipt_store.put(executing.model_copy(update={"status": "created_unverified", "provider_document_id": document_id}))
+                return self._recover_by_marker(dispatch.model_copy(update={"status": "created_unverified", "outcome_detail": "drive_create_missing_id"}), token)
+            receipt = self.receipt_store.put(dispatch.model_copy(update={"status": "created_unverified", "provider_document_id": document_id}))
             return self._insert_and_verify(receipt, token)
         except (GoogleDriveUnavailable, GoogleDriveNetworkBlocked):
-            return "created_unverified", self.receipt_store.put(executing.model_copy(update={"status": "created_unverified"}))
+            return self._recover_by_marker(dispatch.model_copy(update={"status": "created_unverified", "outcome_detail": "drive_create_transport_unknown"}), token)
 
     def _reconcile(self, receipt: DriveDocumentCreateReceipt) -> tuple[str, DriveDocumentCreateReceipt]:
         if receipt.provider_document_id is None:
-            return "created_unverified", self.receipt_store.put(receipt.model_copy(update={"status": "created_unverified"}))
+            # Old Docs-API receipts have no marker and cannot be attributed.
+            if receipt.marker_version is None:
+                return "created_unverified", self.receipt_store.put(receipt.model_copy(update={"status": "created_unverified"}))
         if self._blocked():
             return "blocked", self.receipt_store.put(receipt.model_copy(update={"status": "blocked"}))
         credentials = self._credentials()
@@ -224,14 +244,32 @@ class GoogleDriveDocumentWriter:
             return "needs_reconnect", receipt
         try:
             token = self._access_token(*credentials)
+            if receipt.provider_document_id is None:
+                return self._recover_by_marker(receipt, token)
             fetched = self._get(receipt.provider_document_id, token)
             if self._matches(receipt.operation, fetched):
                 return "verified", self.receipt_store.put(receipt.model_copy(update={"status": "verified", "verified_at": self.clock()}))
-            if self._title_matches(receipt.operation, fetched) and not _document_text(fetched):
+            if self._title_matches(receipt.operation, fetched) and not _document_text(fetched).strip():
                 return self._insert_and_verify(receipt, token)
-            return "conflict", self.receipt_store.put(receipt.model_copy(update={"status": "conflict"}))
+            return "conflict", self.receipt_store.put(receipt.model_copy(update={"status": "conflict", "outcome_detail": "verification_mismatch"}))
         except (GoogleDriveUnavailable, GoogleDriveNetworkBlocked):
-            return "created_unverified", self.receipt_store.put(receipt.model_copy(update={"status": "created_unverified"}))
+            return "created_unverified", self.receipt_store.put(receipt.model_copy(update={"status": "created_unverified", "outcome_detail": "docs_get_unavailable"}))
+
+    def _recover_by_marker(self, receipt: DriveDocumentCreateReceipt, token: str) -> tuple[str, DriveDocumentCreateReceipt]:
+        try:
+            rows = self._find_marker_candidates(receipt.operation.operation_id, token)
+        except (GoogleDriveUnavailable, GoogleDriveNetworkBlocked):
+            return "created_unverified", self.receipt_store.put(receipt.model_copy(update={"status": "created_unverified", "outcome_detail": "marker_search_unavailable"}))
+        if not rows:
+            return "create_unresolved", self.receipt_store.put(receipt.model_copy(update={"status": "create_unresolved", "outcome_detail": "marker_search_zero"}))
+        if len(rows) != 1:
+            return "conflict", self.receipt_store.put(receipt.model_copy(update={"status": "conflict", "outcome_detail": "marker_search_multiple"}))
+        candidate = rows[0]
+        document_id = candidate.get("id")
+        if not isinstance(document_id, str) or not document_id or not self._is_exact_marker_candidate(candidate, receipt.operation.operation_id):
+            return "conflict", self.receipt_store.put(receipt.model_copy(update={"status": "conflict", "outcome_detail": "verification_mismatch"}))
+        known = self.receipt_store.put(receipt.model_copy(update={"status": "created_unverified", "provider_document_id": document_id, "outcome_detail": None}))
+        return self._reconcile(known)
 
     def _insert_and_verify(self, receipt: DriveDocumentCreateReceipt, token: str) -> tuple[str, DriveDocumentCreateReceipt]:
         assert receipt.provider_document_id is not None
@@ -240,16 +278,19 @@ class GoogleDriveDocumentWriter:
             fetched = self._get(receipt.provider_document_id, token)
             if self._matches(receipt.operation, fetched):
                 return "verified", self.receipt_store.put(receipt.model_copy(update={"status": "verified", "verified_at": self.clock()}))
-            return "conflict", self.receipt_store.put(receipt.model_copy(update={"status": "conflict"}))
+            return "conflict", self.receipt_store.put(receipt.model_copy(update={"status": "conflict", "outcome_detail": "verification_mismatch"}))
         except (GoogleDriveUnavailable, GoogleDriveNetworkBlocked):
-            return "created_unverified", self.receipt_store.put(receipt.model_copy(update={"status": "created_unverified"}))
+            ambiguous = self.receipt_store.put(receipt.model_copy(update={"status": "created_unverified", "outcome_detail": "docs_batch_update_unknown"}))
+            # The mutation may have committed after the response was lost.
+            # Re-read before ever considering another body insertion.
+            return self._reconcile(ambiguous)
 
     def reject(self, operation: DriveDocumentCreateOperation) -> DriveDocumentCreateReceipt:
         return self.receipt_store.put(DriveDocumentCreateReceipt(operation=operation, status="rejected"))
 
     def _credentials(self):
         config = self.config_store.load()
-        if config is None or config.document_write_secret_ref is None:
+        if config is None or config.document_write_secret_ref is None or config.document_write_requested_scope != GOOGLE_DRIVE_DOCUMENT_WRITE_SCOPE:
             return None
         refresh, secret = self.secret_store.get(config.document_write_secret_ref), self.secret_store.get(config.client_secret_ref)
         return None if refresh is None or secret is None else (config.client_id, refresh, secret)
@@ -267,6 +308,39 @@ class GoogleDriveDocumentWriter:
     def _request(self, url: str, *, method="GET", headers=None, body=None) -> dict:
         assert_google_drive_network_allowed(policy_store=self.policy_store, safety_store=self.safety_store)
         return self.transport.request_json(url, method=method, headers=headers, body=body)
+
+    def _find_marker_candidates(self, operation_id: str, token: str) -> tuple[dict, ...]:
+        query = (
+            f"trashed = false and mimeType = '{self.DOCUMENT_MIME_TYPE}' and "
+            f"appProperties has {{ key='{self.MARKER_KEY}' and value='{operation_id}' }}"
+        )
+        rows: list[dict] = []
+        page_token = None
+        for _ in range(4):
+            params = {"q": query, "pageSize": "100", "fields": "nextPageToken,files(id,name,mimeType,appProperties,createdTime)"}
+            if page_token is not None:
+                params["pageToken"] = page_token
+            result = self._request(self.DRIVE_ROOT + "?" + urlencode(params), headers={"Authorization": f"Bearer {token}"})
+            files = result.get("files")
+            if not isinstance(files, list):
+                raise GoogleDriveUnavailable("invalid_marker_search")
+            rows.extend(item for item in files if isinstance(item, dict))
+            page_token = result.get("nextPageToken")
+            if not isinstance(page_token, str) or not page_token:
+                return tuple(rows)
+        raise GoogleDriveUnavailable("marker_search_incomplete")
+
+    def _marker(self, operation: DriveDocumentCreateOperation) -> dict[str, str]:
+        return {self.MARKER_KEY: operation.operation_id, self.MARKER_VERSION_KEY: self.MARKER_VERSION}
+
+    def _is_exact_marker_candidate(self, item: dict, operation_id: str) -> bool:
+        properties = item.get("appProperties")
+        return bool(
+            item.get("mimeType") == self.DOCUMENT_MIME_TYPE
+            and isinstance(properties, dict)
+            and properties.get(self.MARKER_KEY) == operation_id
+            and properties.get(self.MARKER_VERSION_KEY) == self.MARKER_VERSION
+        )
 
     def _blocked(self) -> bool:
         from backend.external_observation.policy import InternetAccessMode
@@ -321,7 +395,7 @@ class GoogleDriveDocumentCreateConversationService:
             return "Хорошо, документ в Drive не создаю."
         status, _ = self.writer.create_and_verify(operation)
         if status == "verified": self.proposal_store.set_status(proposal.id, ProposalStatus.CONFIRMED); return f"Готово: создала и проверила документ «{operation.title}» в Google Drive."
-        if status == "created_unverified": return "Создание могло начаться, но я пока не смогла проверить документ. Повторно его не создаю."
+        if status in {"created_unverified", "create_unresolved"}: return "Создание могло начаться, но я пока не смогла проверить документ. Повторно его не создаю."
         if status == "needs_reconnect": return "Для создания документа нужно отдельно подключить запись Google Docs."
         if status == "blocked": return "Сейчас внешние действия остановлены, поэтому документ в Drive не создаю."
         return "Не удалось создать документ — ничего не утверждаю как готовое."

@@ -10,7 +10,11 @@ from backend.secrets import ConnectorCredentialState, SecretRef
 
 
 GOOGLE_DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
-GOOGLE_DOCUMENTS_WRITE_SCOPE = "https://www.googleapis.com/auth/documents"
+GOOGLE_DRIVE_DOCUMENT_WRITE_SCOPE = "https://www.googleapis.com/auth/drive.file"
+# Compatibility import name for callers compiled against the first A3 slice.
+# Its value intentionally changes: a documents-only grant cannot recover a
+# Drive marker-bearing document create operation.
+GOOGLE_DOCUMENTS_WRITE_SCOPE = GOOGLE_DRIVE_DOCUMENT_WRITE_SCOPE
 GOOGLE_DRIVE_SECRET_REF = SecretRef(value="google-drive-primary")
 GOOGLE_DRIVE_CLIENT_SECRET_REF = SecretRef(value="google-drive-client-secret")
 GOOGLE_DOCUMENTS_WRITE_SECRET_REF = SecretRef(value="google-drive-documents-write-primary")
@@ -32,7 +36,7 @@ class GoogleDriveConfig(BaseModel):
     document_write_secret_ref: SecretRef | None = None
     document_write_requested_scope: str | None = Field(
         default=None,
-        pattern=r"^https://www\.googleapis\.com/auth/documents$",
+        pattern=r"^https://www\.googleapis\.com/auth/(?:drive\.file|documents)$",
     )
     account_label: str | None = Field(default=None, max_length=200)
 
@@ -44,6 +48,8 @@ class GoogleDriveConfig(BaseModel):
     def document_write_credential_state(self, secret_store) -> ConnectorCredentialState:
         if self.document_write_secret_ref is None or self.document_write_requested_scope is None:
             return ConnectorCredentialState.DISCONNECTED
+        if self.document_write_requested_scope != GOOGLE_DRIVE_DOCUMENT_WRITE_SCOPE:
+            return ConnectorCredentialState.NEEDS_RECONNECT
         if not secret_store.exists(self.document_write_secret_ref) or not secret_store.exists(self.client_secret_ref):
             return ConnectorCredentialState.NEEDS_RECONNECT
         return ConnectorCredentialState.READY
