@@ -76,6 +76,36 @@ def calendar_create_intent(message: str, now_local: datetime) -> CalendarCreateI
     return CalendarCreateIntent(title, start, end)
 
 
+def calendar_create_from_resolved_slots(
+    *,
+    subject: str,
+    date: str,
+    time_value: str,
+    now_local: datetime,
+    duration: timedelta = timedelta(hours=1),
+) -> CalendarCreateIntent:
+    """Build the existing domain intent from validated semantic slot values.
+
+    V2 scheduling deliberately uses the Home's one-hour event default when no
+    duration was part of its small semantic contract.  Provider execution and
+    confirmation remain owned by the existing Calendar create service.
+    """
+
+    title = _SPACE.sub(" ", subject).strip(" ,.-")[:500]
+    if not title:
+        raise ValueError("calendar_subject_missing")
+    day = _create_date(date.casefold().strip(), now_local)
+    if day is None:
+        raise ValueError("calendar_date_invalid")
+    match = re.fullmatch(r"(?P<hour>\d{2}):(?P<minute>\d{2})", time_value.strip())
+    if match is None:
+        raise ValueError("calendar_time_invalid")
+    start = _at(day, match.group("hour"), match.group("minute"), now_local)
+    if duration <= timedelta(0):
+        raise ValueError("calendar_duration_invalid")
+    return CalendarCreateIntent(title=title, start=start, end=start + duration)
+
+
 def _create_date(text: str, now_local: datetime):
     today = now_local.date()
     if "завтра" in text:

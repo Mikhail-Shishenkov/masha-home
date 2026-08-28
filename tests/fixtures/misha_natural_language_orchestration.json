@@ -1,0 +1,95 @@
+{
+  "schema_version": "1.0",
+  "cases": [
+    {
+      "case_id": "schedule_initial_clarification",
+      "initial": "Запиши занятие завтра в 10",
+      "follow_up": null,
+      "advance_minutes": 0,
+      "expected_status": "clarification",
+      "expected_operation_id": null,
+      "expected_pending_status": "pending"
+    },
+    {
+      "case_id": "schedule_calendar_handoff",
+      "initial": "Запиши занятие завтра в 10",
+      "follow_up": "В календарь",
+      "advance_minutes": 0,
+      "expected_status": "resolved_handoff",
+      "expected_operation_id": "google_calendar.event.create",
+      "expected_pending_status": "resolved"
+    },
+    {
+      "case_id": "schedule_reminder_handoff",
+      "initial": "Запиши занятие завтра в 10",
+      "follow_up": "Просто напомни",
+      "advance_minutes": 0,
+      "expected_status": "resolved_handoff",
+      "expected_operation_id": "home.timed_commitments",
+      "expected_pending_status": "resolved"
+    },
+    {
+      "case_id": "calendar_missing_subject_clarification",
+      "initial": "Поставь завтра в 10",
+      "follow_up": null,
+      "advance_minutes": 0,
+      "expected_status": "clarification",
+      "expected_operation_id": null,
+      "expected_pending_status": "pending"
+    },
+    {
+      "case_id": "calendar_missing_subject_handoff",
+      "initial": "Поставь завтра в 10",
+      "follow_up": "Занятие по AI",
+      "advance_minutes": 0,
+      "expected_status": "resolved_handoff",
+      "expected_operation_id": "google_calendar.event.create",
+      "expected_pending_status": "resolved"
+    },
+    {
+      "case_id": "pending_weather_pass_through",
+      "initial": "Запиши занятие завтра в 10",
+      "follow_up": "Какая завтра погода?",
+      "advance_minutes": 0,
+      "expected_status": "pass_through",
+      "expected_operation_id": null,
+      "expected_pending_status": "pending"
+    },
+    {
+      "case_id": "pending_conversation_pass_through",
+      "initial": "Запиши занятие завтра в 10",
+      "follow_up": "Маш, я кофе сделал",
+      "advance_minutes": 0,
+      "expected_status": "pass_through",
+      "expected_operation_id": null,
+      "expected_pending_status": "pending"
+    },
+    {
+      "case_id": "new_schedule_supersedes_old",
+      "initial": "Запиши занятие завтра в 10",
+      "follow_up": "Запиши тренировку завтра в 12",
+      "advance_minutes": 0,
+      "expected_status": "clarification",
+      "expected_operation_id": null,
+      "expected_pending_status": "superseded"
+    },
+    {
+      "case_id": "pending_schedule_cancelled",
+      "initial": "Запиши занятие завтра в 10",
+      "follow_up": "Не надо",
+      "advance_minutes": 0,
+      "expected_status": "cancelled",
+      "expected_operation_id": null,
+      "expected_pending_status": "cancelled"
+    },
+    {
+      "case_id": "expired_schedule_cannot_resolve",
+      "initial": "Запиши занятие завтра в 10",
+      "follow_up": "В календарь",
+      "advance_minutes": 31,
+      "expected_status": "pass_through",
+      "expected_operation_id": null,
+      "expected_pending_status": "expired"
+    }
+  ]
+}

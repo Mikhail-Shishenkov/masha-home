@@ -114,6 +114,25 @@ def test_canonical_a1_phrase_creates_the_same_human_preview(tmp_path: Path):
     assert transport.calls == []
 
 
+def test_resolved_v2_slots_enter_existing_proposal_boundary_without_network(tmp_path: Path):
+    service, transport, writer = _service(tmp_path)
+
+    preview = service.propose_from_resolved_intent(
+        subject="Занятие по AI",
+        date="завтра",
+        time="10:00",
+        conversation_id="v2-conversation",
+        now_local=datetime(2026, 8, 25, 12, tzinfo=timezone.utc),
+    )
+
+    pending = service.proposal_store.current_for_conversation("v2-conversation")
+    receipt = writer.receipt_store.get(pending.record_payload["operation_id"])
+    assert preview == "Поставить «Занятие по AI» в Основной календарь: 26.08 в 10:00–11:00?"
+    assert pending.operation == "google_calendar_create"
+    assert receipt.status == "proposed" and receipt.confirmed_at is None
+    assert transport.calls == []
+
+
 def test_explicit_reminder_words_are_never_claimed_by_calendar_create(tmp_path: Path):
     service, transport, _ = _service(tmp_path)
     now = datetime(2026, 8, 25, 12, tzinfo=timezone.utc)

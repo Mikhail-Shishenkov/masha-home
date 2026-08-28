@@ -1431,10 +1431,57 @@ class MemoryIntentHandler:
         body, due = self.temporal_engine.extract_due(body)
         if due is not None and due.ambiguity is not None:
             return MemoryIntentResult(handled=True, response="Срок получился неоднозначным. Скажи дату и время точнее — я не буду угадывать.")
+        return self._propose_commitment_with_due(
+            body,
+            due_at=None if due is None else due.resolved_utc,
+            conversation_id=conversation_id,
+            project_id=project_id,
+            explicit_reminder=explicit_reminder and due is not None,
+        )
+
+    def propose_timed_commitment_from_resolved_intent(
+        self,
+        *,
+        subject: str,
+        date: str,
+        time: str,
+        conversation_id: str,
+        project_id: str,
+    ) -> MemoryIntentResult:
+        """Enter the existing commitment proposal flow from resolved meaning."""
+
+        if self.proposal_store.current_for_conversation(conversation_id) is not None:
+            return self._pending_conflict()
+        body = subject.strip().rstrip(".")
+        if not body:
+            return MemoryIntentResult(handled=True, response="Какое именно дело добавить?")
+        due = self.temporal_engine.parse_due(f"{date.strip()} в {time.strip()}")
+        if due.ambiguity is not None or due.resolved_utc is None:
+            return MemoryIntentResult(
+                handled=True,
+                response="Срок получился неоднозначным. Скажи дату и время точнее — я не буду угадывать.",
+            )
+        return self._propose_commitment_with_due(
+            body,
+            due_at=due.resolved_utc,
+            conversation_id=conversation_id,
+            project_id=project_id,
+            explicit_reminder=True,
+        )
+
+    def _propose_commitment_with_due(
+        self,
+        body: str,
+        *,
+        due_at,
+        conversation_id: str,
+        project_id: str,
+        explicit_reminder: bool,
+    ) -> MemoryIntentResult:
         record = self._make_record(
             "commitment", body, project_id,
-            due_at=None if due is None else due.resolved_utc,
-            explicit_reminder=explicit_reminder and due is not None,
+            due_at=due_at,
+            explicit_reminder=explicit_reminder,
         )
         proposal = self.proposal_store.create(MemoryProposal(
             id=str(uuid4()), conversation_id=conversation_id, record_type="commitment",

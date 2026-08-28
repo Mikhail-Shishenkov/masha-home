@@ -255,6 +255,8 @@ class ConversationService:
         yandex_mail_service=None,
         yandex_disk_service=None,
         home_capability_provider=None,
+        natural_language_coordinator=None,
+        resolved_capability_adapters=None,
     ):
         self.identity_kernel = identity_kernel
         self.memory_retriever = memory_retriever
@@ -282,9 +284,12 @@ class ConversationService:
         self.yandex_mail_service = yandex_mail_service
         self.yandex_disk_service = yandex_disk_service
         self.home_capability_provider = home_capability_provider
+        self.natural_language_coordinator = natural_language_coordinator
+        self.resolved_capability_adapters = resolved_capability_adapters
         self.last_recall_result = None
         self.last_external_observation = None
         self.last_external_observations = ()
+        self.last_v2_routing_decision = None
 
     def send(
         self,
@@ -299,6 +304,7 @@ class ConversationService:
     ) -> tuple[str, str]:
         self.last_external_observation = None
         self.last_external_observations = ()
+        self.last_v2_routing_decision = None
         conversation = self.history.create() if conversation_id is None else self.history.get(conversation_id)
         last_interaction_at = self.history.last_interaction_at(conversation.id)
         temporal_context = self.temporal_engine.context(
@@ -317,6 +323,7 @@ class ConversationService:
                 user_message, conversation_id=conversation.id,
             )
             if calendar_confirmation is not None:
+                self._retire_v2_pending_for_domain_proposal(conversation.id)
                 self.history.append(conversation.id, ConversationRole.ASSISTANT, calendar_confirmation, origin=ConversationMessageOrigin.APPLICATION)
                 return conversation.id, calendar_confirmation
         if document_receipt is None and self.google_calendar_update_service is not None:
@@ -324,6 +331,7 @@ class ConversationService:
                 user_message, conversation_id=conversation.id,
             )
             if calendar_confirmation is not None:
+                self._retire_v2_pending_for_domain_proposal(conversation.id)
                 self.history.append(conversation.id, ConversationRole.ASSISTANT, calendar_confirmation, origin=ConversationMessageOrigin.APPLICATION)
                 return conversation.id, calendar_confirmation
         if document_receipt is None and self.google_drive_document_create_service is not None:
@@ -331,6 +339,7 @@ class ConversationService:
                 user_message, conversation_id=conversation.id,
             )
             if document_confirmation is not None:
+                self._retire_v2_pending_for_domain_proposal(conversation.id)
                 self.history.append(conversation.id, ConversationRole.ASSISTANT, document_confirmation, origin=ConversationMessageOrigin.APPLICATION)
                 return conversation.id, document_confirmation
 
@@ -347,8 +356,61 @@ class ConversationService:
                 now_local=temporal_context.current_local_time,
             )
             if document_create_response is not None:
+                self._retire_v2_pending_for_domain_proposal(conversation.id)
                 self.history.append(conversation.id, ConversationRole.ASSISTANT, document_create_response, origin=ConversationMessageOrigin.APPLICATION)
                 return conversation.id, document_create_response
+
+        # Existing mutation confirmations and explicit Docs Create own the turn
+        # before semantic clarification.  The V2 coordinator is deliberately
+        # placed here: adopted scheduling ambiguity is handled before broad
+        # temporal/legacy routing, while every mature proposal remains the
+        # application source of confirmation truth.
+        pending_mutation = (
+            self.memory_intent_handler is not None
+            and self.memory_intent_handler.proposal_store.current_for_conversation(
+                conversation.id
+            ) is not None
+        )
+        if (
+            document_receipt is None
+            and allow_capability_routing
+            and not pending_mutation
+            and self.natural_language_coordinator is not None
+        ):
+            coordination = self.natural_language_coordinator.coordinate(
+                user_message,
+                conversation_id=conversation.id,
+            )
+            self.last_v2_routing_decision = coordination.diagnostic
+            v2_response = coordination.response
+            if coordination.status.value == "resolved_handoff":
+                try:
+                    # Lazy import avoids making the foundational conversation
+                    # module depend on application package initialization.
+                    from .resolution_coordinator import DomainProposalContext
+
+                    proposal = self.resolved_capability_adapters.propose(
+                        coordination.handoff,
+                        DomainProposalContext(
+                            project_id=project_id,
+                            now_local=temporal_context.current_local_time,
+                        ),
+                    )
+                    v2_response = proposal.response
+                except (AttributeError, RuntimeError):
+                    v2_response = (
+                        "Не смогла безопасно подготовить это действие. "
+                        "Ничего не выполняю."
+                    )
+            if coordination.status.value != "pass_through":
+                assert v2_response is not None
+                self.history.append(
+                    conversation.id,
+                    ConversationRole.ASSISTANT,
+                    v2_response,
+                    origin=ConversationMessageOrigin.APPLICATION,
+                )
+                return conversation.id, v2_response
 
         readout = temporal_readout(user_message, temporal_context)
         if readout is not None and document_receipt is None:
@@ -388,6 +450,7 @@ class ConversationService:
                 now_local=temporal_context.current_local_time,
             )
             if calendar_update_response is not None:
+                self._retire_v2_pending_for_domain_proposal(conversation.id)
                 self.history.append(conversation.id, ConversationRole.ASSISTANT, calendar_update_response, origin=ConversationMessageOrigin.APPLICATION)
                 return conversation.id, calendar_update_response
         if document_receipt is None and self.google_calendar_create_service is not None:
@@ -396,6 +459,7 @@ class ConversationService:
                 now_local=temporal_context.current_local_time,
             )
             if calendar_create_response is not None:
+                self._retire_v2_pending_for_domain_proposal(conversation.id)
                 self.history.append(conversation.id, ConversationRole.ASSISTANT, calendar_create_response, origin=ConversationMessageOrigin.APPLICATION)
                 return conversation.id, calendar_create_response
         if document_receipt is None and self.google_calendar_service is not None:
@@ -519,6 +583,13 @@ class ConversationService:
             )
             if intent.handled:
                 assert intent.response is not None
+                if (
+                    pending_mutation
+                    or self.memory_intent_handler.proposal_store.current_for_conversation(
+                        conversation.id
+                    ) is not None
+                ):
+                    self._retire_v2_pending_for_domain_proposal(conversation.id)
                 self.history.append(
                     conversation.id,
                     ConversationRole.ASSISTANT,
@@ -762,6 +833,12 @@ class ConversationService:
                 )
             )
         return conversation.id, rendered
+
+    def _retire_v2_pending_for_domain_proposal(self, conversation_id: str) -> None:
+        if self.natural_language_coordinator is not None:
+            self.natural_language_coordinator.supersede_for_domain_proposal(
+                conversation_id
+            )
 
     def external_observation_for_message(self, message_id: str):
         if self.external_observation_service is None:

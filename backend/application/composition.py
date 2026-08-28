@@ -66,6 +66,16 @@ from backend.temporal.timezone_provider import HomeTimeZoneProvider, HomeTimeZon
 from backend.conversation.response_expression import (
     ResponseExpressionClassifier,
 )
+from backend.conversation.clarification import (
+    DeterministicClarificationBuilder,
+    FollowUpResolutionEngine,
+)
+from backend.conversation.interpretation_v2 import CapabilityCandidateDiscovery
+from backend.conversation.pending_resolution import PendingResolutionStore
+from backend.conversation.resolution_coordinator import (
+    NaturalLanguageResolutionCoordinator,
+    ResolvedCapabilityAdapterRegistry,
+)
 
 from .application import MashaApplication
 from .activities import ActivityApplicationService
@@ -76,7 +86,7 @@ from .home_snapshot import HomeSnapshotService
 from .human_information import HumanInformationService
 from .external_context import LocalExternalContextHintProvider
 from .external_connections import ExternalConnectionApplicationService
-from .home_capabilities import HomeCapabilityApplicationService
+from .home_capabilities import HomeCapabilityApplicationService, default_home_capability_catalog
 from .model_settings import ModelSettingsService
 from .local_documents import LocalDocumentTurnService
 from .memory_candidates import MemoryCandidateApplicationService
@@ -85,6 +95,10 @@ from .reflections import ReflectionApplicationService
 from .status import MashaStatusService
 from .visual_assets import VisualIdentityResolver
 from .workbench import WorkbenchApplicationService
+from .resolved_capabilities import (
+    CalendarCreateHandoffAdapter,
+    TimedCommitmentHandoffAdapter,
+)
 
 
 @dataclass(frozen=True)
@@ -146,11 +160,13 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
         config_stores=connector_config_stores,
         secret_store=connector_secret_store,
     )
+    capability_catalog = default_home_capability_catalog()
     capabilities = HomeCapabilityApplicationService(
         connections=connections,
         internet_policy=internet_policy,
         safety_store=safety.store,
         proactive_policy=proactive_policy,
+        catalog=capability_catalog,
     )
     core.conversation.home_capability_provider = capabilities.snapshot
     core.conversation.google_calendar_create_service = GoogleCalendarCreateConversationService(
@@ -187,6 +203,23 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
         ),
         draft_builder=LocalDocumentDraftBuilder(router=core.router, identity_kernel=core.identity, model_profiles=core.profiles),
     )
+    pending_resolutions = PendingResolutionStore(
+        runtime / "pending-resolutions.json",
+        clock=core.conversation.temporal_engine.clock.now_utc,
+    )
+    core.conversation.natural_language_coordinator = NaturalLanguageResolutionCoordinator(
+        discovery=CapabilityCandidateDiscovery(catalog=capability_catalog),
+        builder=DeterministicClarificationBuilder(
+            catalog=capability_catalog,
+            clock=core.conversation.temporal_engine.clock.now_utc,
+        ),
+        engine=FollowUpResolutionEngine(),
+        store=pending_resolutions,
+    )
+    core.conversation.resolved_capability_adapters = ResolvedCapabilityAdapterRegistry((
+        CalendarCreateHandoffAdapter(core.conversation.google_calendar_create_service),
+        TimedCommitmentHandoffAdapter(core.conversation.memory_intent_handler),
+    ))
     document_store = DocumentReadStore(runtime / "document-read-receipts.json")
     core.conversation.external_observation_service = ExternalObservationService(
         provider=DDGSWebSearchProvider(

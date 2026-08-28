@@ -21,6 +21,11 @@ from backend.document_read import DocumentEvidence, DocumentPageEvidence, Docume
 from backend.connectors.yandex_mail.models import MailMessageContent, MailMessageSummary, MailOutcome, ResolvedMailRequest
 from backend.connectors.yandex_disk.reader import DiskReadOutcome, ResolvedYandexDiskDocumentRequest
 from backend.application.home_capabilities import HomeCapabilitySnapshot
+from backend.application.home_capabilities import default_home_capability_catalog
+from backend.conversation.clarification import DeterministicClarificationBuilder, FollowUpResolutionEngine
+from backend.conversation.interpretation_v2 import CapabilityCandidateDiscovery
+from backend.conversation.pending_resolution import PendingResolutionStore
+from backend.conversation.resolution_coordinator import NaturalLanguageResolutionCoordinator
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -80,6 +85,13 @@ def test_explicit_drive_document_create_precedes_calendar_and_temporal_routing(t
     document = DriveDocumentCreate()
     service.google_calendar_create_service = calendar
     service.google_drive_document_create_service = document
+    catalog = default_home_capability_catalog()
+    service.natural_language_coordinator = NaturalLanguageResolutionCoordinator(
+        discovery=CapabilityCandidateDiscovery(catalog=catalog),
+        builder=DeterministicClarificationBuilder(catalog=catalog),
+        engine=FollowUpResolutionEngine(),
+        store=PendingResolutionStore(tmp_path / "pending-resolutions.json"),
+    )
     message = (
         "Маша, создай документ на Гугл Диске: Сегодня мы продолжили делать "
         "наш Дом и обсуждали, как тебе лучше понимать обычную человеческую речь."
@@ -90,6 +102,88 @@ def test_explicit_drive_document_create_precedes_calendar_and_temporal_routing(t
     assert "Короткий итог занятия" in response
     assert len(document.propose_calls) == 1
     assert calendar.propose_calls == []
+    assert provider.last_request is None
+    assert service.last_v2_routing_decision is None
+
+
+@pytest.mark.parametrize(
+    "service_attribute",
+    (
+        "google_calendar_create_service",
+        "google_calendar_update_service",
+        "google_drive_document_create_service",
+    ),
+)
+@pytest.mark.parametrize("confirmation", ("Подтверждаю", "Да", "Не сейчас"))
+def test_existing_external_confirmation_resolves_before_v2(
+    service_attribute, confirmation, tmp_path
+):
+    class ExistingConfirmation:
+        def resolve(self, *_args, **_kwargs):
+            return "Существующее подтверждение обработано."
+
+        def propose(self, *_args, **_kwargs):
+            raise AssertionError("proposal routing must not run")
+
+    class CoordinatorSpy:
+        coordinate_calls = 0
+
+        def coordinate(self, *_args, **_kwargs):
+            self.coordinate_calls += 1
+            raise AssertionError("V2 must not inspect an existing confirmation")
+
+        def supersede_for_domain_proposal(self, _conversation_id):
+            return False
+
+    provider = FakeProvider(provider_id="ollama-local", response_text="model must not run")
+    service = _service(tmp_path, provider)
+    coordinator = CoordinatorSpy()
+    service.natural_language_coordinator = coordinator
+    setattr(service, service_attribute, ExistingConfirmation())
+
+    _, response = service.send(confirmation, project_id="project_masha_home")
+
+    assert response == "Существующее подтверждение обработано."
+    assert coordinator.coordinate_calls == 0
+    assert provider.last_request is None
+
+
+def test_existing_memory_confirmation_resolves_before_v2(tmp_path, memory_path):
+    class CoordinatorSpy:
+        coordinate_calls = 0
+
+        def coordinate(self, *_args, **_kwargs):
+            self.coordinate_calls += 1
+            raise AssertionError("V2 must not inspect an existing confirmation")
+
+        def supersede_for_domain_proposal(self, _conversation_id):
+            return True
+
+    provider = FakeProvider(provider_id="ollama-local", response_text="model must not run")
+    service = _service(tmp_path, provider)
+    store = MemoryStore(memory_path)
+    proposals = MemoryProposalStore(tmp_path / "memory-proposals.json")
+    service.memory_intent_handler = MemoryIntentHandler(
+        proposal_store=proposals,
+        confirmed_memory=ConfirmedMemoryService(store),
+    )
+    coordinator = CoordinatorSpy()
+    service.natural_language_coordinator = coordinator
+    conversation = service.history.create()
+    service.memory_intent_handler.handle(
+        "Запомни, что я люблю чай",
+        conversation_id=conversation.id,
+        project_id="project_masha_home",
+    )
+
+    _, response = service.send(
+        "Подтверждаю",
+        project_id="project_masha_home",
+        conversation_id=conversation.id,
+    )
+
+    assert response == "Готово, сохранила."
+    assert coordinator.coordinate_calls == 0
     assert provider.last_request is None
 
 

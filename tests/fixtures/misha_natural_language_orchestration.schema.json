@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://masha-home.local/schemas/misha-natural-language-orchestration-1.0.json",
+  "title": "Misha Natural Language Conversation Orchestration Benchmark",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "cases"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "cases": {
+      "type": "array",
+      "minItems": 10,
+      "items": {"$ref": "#/$defs/case"}
+    }
+  },
+  "$defs": {
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "case_id", "initial", "follow_up", "advance_minutes",
+        "expected_status", "expected_operation_id", "expected_pending_status"
+      ],
+      "properties": {
+        "case_id": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,79}$"},
+        "initial": {"type": "string", "minLength": 1, "maxLength": 20000},
+        "follow_up": {"type": ["string", "null"], "minLength": 1, "maxLength": 20000},
+        "advance_minutes": {"type": "integer", "minimum": 0, "maximum": 60},
+        "expected_status": {
+          "enum": ["pass_through", "clarification", "resolved_handoff", "cancelled", "still_unresolved", "failed"]
+        },
+        "expected_operation_id": {
+          "type": ["string", "null"],
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+        },
+        "expected_pending_status": {
+          "enum": ["pending", "resolved", "cancelled", "expired", "superseded"]
+        }
+      }
+    }
+  }
+}

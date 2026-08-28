@@ -174,6 +174,28 @@ def test_explicit_deadline_creates_commitment_proposal_deterministically(tmp_pat
     assert "отправить отчёт" in result.response
 
 
+def test_resolved_v2_timed_commitment_uses_existing_proposal_without_mutation(tmp_path, memory_path):
+    store = MemoryStore(memory_path)
+    handler, proposals = _handler(tmp_path, store)
+    original = json.dumps(store.data, sort_keys=True)
+
+    result = handler.propose_timed_commitment_from_resolved_intent(
+        subject="проверку роутера",
+        date="завтра",
+        time="11:00",
+        conversation_id="v2-conversation",
+        project_id=PROJECT_ID,
+    )
+
+    proposal = proposals.current_for_conversation("v2-conversation")
+    assert result.handled is True
+    assert "проверку роутера" in result.response and result.response.endswith("?")
+    assert proposal.record_type == "commitment"
+    assert proposal.record_payload["due_at"] is not None
+    assert proposal.record_payload["reminder_delivery_mode"] == "explicit_user_reminder"
+    assert json.dumps(store.data, sort_keys=True) == original
+
+
 def test_incomplete_explicit_memory_request_asks_for_type_instead_of_guessing(tmp_path, memory_path):
     handler, proposals = _handler(tmp_path, MemoryStore(memory_path))
 

@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from backend.conversation.memory_intent import MemoryProposal, MemoryProposalStore, ProposalStatus, PendingProposalConflict
 
-from .intent import calendar_create_intent
+from .intent import calendar_create_from_resolved_slots, calendar_create_intent
 from .writer import CalendarCreateOperation, CalendarCreateReceipt, GoogleCalendarWriter
 
 
@@ -27,6 +27,40 @@ class GoogleCalendarCreateConversationService:
         intent = calendar_create_intent(message, now_local)
         if intent is None:
             return None
+        return self._propose_intent(
+            intent,
+            conversation_id=conversation_id,
+            now_local=now_local,
+        )
+
+    def propose_from_resolved_intent(
+        self,
+        *,
+        subject: str,
+        date: str,
+        time: str,
+        conversation_id: str,
+        now_local: datetime,
+    ):
+        intent = calendar_create_from_resolved_slots(
+            subject=subject,
+            date=date,
+            time_value=time,
+            now_local=now_local,
+        )
+        return self._propose_intent(
+            intent,
+            conversation_id=conversation_id,
+            now_local=now_local,
+        )
+
+    def _propose_intent(
+        self,
+        intent,
+        *,
+        conversation_id: str,
+        now_local: datetime,
+    ):
         if intent.clarification is not None:
             return intent.clarification
         assert intent.title is not None and intent.start is not None and intent.end is not None

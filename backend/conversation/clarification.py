@@ -47,6 +47,7 @@ _INDEPENDENT_QUESTION = re.compile(
 _INDEPENDENT_COMMAND = re.compile(
     r"^(?:создай|покажи|найди|поищи|проверь|посмотри|напомни)\b"
 )
+_INDEPENDENT_STATEMENT = re.compile(r"^(?:я|мы|мне|нам|у меня|у нас)\b")
 _EXPLICIT_MATERIAL = re.compile(
     r"^(?:вот\s+)?(?:этот\s+)?текст\s*:\s*(?P<material>.+)$",
     re.IGNORECASE | re.DOTALL,
@@ -511,6 +512,7 @@ class FollowUpResolutionEngine:
         return bool(
             _INDEPENDENT_QUESTION.search(text)
             or _INDEPENDENT_COMMAND.search(text)
+            or _INDEPENDENT_STATEMENT.search(text)
         )
 
     @staticmethod

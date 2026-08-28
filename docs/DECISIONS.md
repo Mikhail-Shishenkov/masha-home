@@ -857,6 +857,55 @@ LLMs are replaceable cognitive engines. Human Information Slice A is the
 implemented v0.3.1 foundation; Slice B is the next UX-facing step before the
 `v0.3.1` release tag.
 
+### DEC-098. Capability Catalog is descriptive, not authoritative
+
+Статус: **Принято и реализовано в Living Home Core Slice 1**
+
+The catalog describes canonical operations, availability and risk. A catalog
+entry neither authorizes execution nor bypasses policy, confirmation,
+verification or an operation receipt.
+
+### DEC-099. Interpretation V2 produces meaning, never execution authority
+
+Статус: **Принято и реализовано в Slice 2A–2C; требуется live acceptance**
+
+`InterpretationFrame` and `ResolvedCapabilityHandoff` contain candidates,
+slots, ambiguity and bounded provenance only. They contain no permission,
+credential, provider entity ID, confirmation or mutation result.
+
+### DEC-100. PendingResolution is ephemeral conversation-scoped semantic state
+
+Статус: **Принято и реализовано в Slice 2B–2C; требуется live acceptance**
+
+A pending clarification is stored in a separate versioned runtime JSON file.
+It is neither Memory nor a Commitment, expires after a bounded TTL and is
+intentionally excluded from disaster backup as recoverable conversational
+runtime state.
+
+### DEC-101. Router V2 adoption is capability-by-capability
+
+Статус: **Принято и реализовано для scheduling в Slice 2C; требуется live acceptance**
+
+An application-owned allowlist and adapter registry adopt only selected
+canonical operations. Slice 2C adopts Calendar Create and timed commitments;
+all other capabilities retain their mature V1/live owners during migration.
+
+### DEC-102. Follow-ups patch the original interpretation
+
+Статус: **Принято и реализовано в Slice 2B–2C; требуется live acceptance**
+
+A short clarification answer selects a proven candidate or fills the requested
+slot in the original frame. It is not reparsed as an independent command, so
+known values and their provenance survive the conversation turn.
+
+### DEC-103. Mutation confirmation precedes semantic clarification
+
+Статус: **Принято и реализовано в Slice 2C; требуется live acceptance**
+
+Existing A1/A2/A3 and Memory proposal resolution runs before Router V2.
+Meaning resolution can prepare an existing proposal, but only that mature
+domain boundary can confirm, execute, verify and record application truth.
+
 ## 6. Открытые вопросы ближайших этапов
 
 - Точный Human Home UX для v0.3.1 Slice B: passive memory review, possible
