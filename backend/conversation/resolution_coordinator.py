@@ -17,6 +17,7 @@ from .clarification import (
     ClarificationRequest,
     DeterministicClarificationBuilder,
     FollowUpOutcome,
+    FollowUpResolutionResult,
     FollowUpResolutionEngine,
 )
 from .interpretation_v2 import (
@@ -31,6 +32,7 @@ from .pending_resolution import (
     PendingResolutionStore,
     PendingResolutionStoreError,
 )
+from .semantic_resolver import SemanticFollowUpProposal
 
 
 _OPERATION_ID = r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$"
@@ -104,6 +106,14 @@ class V2RoutingDiagnostic(StrictCoordinatorModel):
     status: CoordinationStatus
     candidate_operation_ids: tuple[str, ...] = Field(default=(), max_length=8)
     pending_outcome: str | None = Field(default=None, max_length=80)
+    pending_resolution_id: str | None = Field(default=None, min_length=36, max_length=36)
+    prior_known_slots: tuple[InterpretationSlot, ...] = Field(default=(), max_length=24)
+    follow_up_proposal: SemanticFollowUpProposal | None = None
+    merged_slots: tuple[InterpretationSlot, ...] = Field(default=(), max_length=24)
+    remaining_missing_slots: tuple[str, ...] = Field(default=(), max_length=24)
+    resolved_candidate: str | None = Field(
+        default=None, pattern=_OPERATION_ID, max_length=100,
+    )
 
 
 class ConversationCoordinationOutcome(StrictCoordinatorModel):
@@ -179,7 +189,26 @@ class NaturalLanguageResolutionCoordinator:
     ) -> ConversationCoordinationOutcome:
         try:
             active = self.store.active_for_conversation(conversation_id)
-            frame = self.discovery.interpret(utterance)
+            frame = None
+            if active is not None:
+                follow_up = self.engine.resolve(active, utterance)
+                continued = self._continue_pending(
+                    active,
+                    follow_up,
+                    conversation_id=conversation_id,
+                )
+                if continued is not None:
+                    if (
+                        follow_up.outcome is FollowUpOutcome.STILL_UNRESOLVED
+                        and follow_up.interpretation == active.interpretation
+                        and follow_up.semantic_proposal is None
+                    ):
+                        frame = self.discovery.interpret(utterance)
+                        if not frame.candidates:
+                            return continued
+                    else:
+                        return continued
+            frame = frame or self.discovery.interpret(utterance)
             if active is None:
                 if (
                     frame.resolution_state is InterpretationResolutionState.RESOLVED
@@ -250,60 +279,90 @@ class NaturalLanguageResolutionCoordinator:
                     )
                 return self._pass(frame, pending_outcome="superseded")
 
-            follow_up = self.engine.resolve(active, utterance)
-            if follow_up.outcome is FollowUpOutcome.RESOLVED:
-                if not self.adoption.supports_operation(
-                    follow_up.selected_operation_id or ""
-                ):
-                    return self._pass(frame, pending_outcome="unsupported_resolution")
-                stored = self.store.resolve(
-                    active.resolution_id,
-                    follow_up.interpretation,
-                )
-                handoff = ResolvedCapabilityHandoff.from_interpretation(
-                    stored.interpretation,
-                    conversation_id=conversation_id,
-                    resolution_id=stored.resolution_id,
-                )
-                return self._handled(
-                    CoordinationStatus.RESOLVED_HANDOFF,
-                    stored.interpretation,
-                    handoff=handoff,
-                    pending_outcome="resolved",
-                )
-            if follow_up.outcome is FollowUpOutcome.CANCELLED:
-                self.store.cancel(active.resolution_id)
-                return self._handled(
-                    CoordinationStatus.CANCELLED,
-                    active.interpretation,
-                    response=self.CANCELLED_RESPONSE,
-                    pending_outcome="cancelled",
-                )
-            if follow_up.outcome is FollowUpOutcome.NOT_A_FOLLOW_UP:
-                return self._pass(frame, pending_outcome="not_a_follow_up")
-
-            request = self.builder.build_request(
-                follow_up.interpretation,
-                conversation_id=conversation_id,
-                resolution_id=active.resolution_id,
-            )
-            if follow_up.interpretation != active.interpretation:
-                self.store.update_pending(
-                    active.resolution_id,
-                    follow_up.interpretation,
-                    clarification_kind=request.clarification_kind,
-                    choices=request.choices,
-                    requested_slot=request.requested_slot,
-                    referent_expression=request.referent_expression,
-                )
-            return self._handled(
-                CoordinationStatus.STILL_UNRESOLVED,
-                follow_up.interpretation,
-                clarification=request,
-                pending_outcome="still_unresolved",
-            )
+            return self._pass(frame, pending_outcome="not_a_follow_up")
         except (PendingResolutionStoreError, ClarificationBuildError, ValueError):
             return self._failed()
+
+    def _continue_pending(
+        self,
+        active,
+        follow_up: FollowUpResolutionResult,
+        *,
+        conversation_id: str,
+    ) -> ConversationCoordinationOutcome | None:
+        if follow_up.outcome is FollowUpOutcome.NOT_A_FOLLOW_UP:
+            return None
+        trace = self._follow_up_trace(active.resolution_id, follow_up)
+        if follow_up.outcome is FollowUpOutcome.RESOLVED:
+            if not self.adoption.supports_operation(
+                follow_up.selected_operation_id or ""
+            ):
+                return self._handled(
+                    CoordinationStatus.PASS_THROUGH,
+                    follow_up.interpretation,
+                    pending_outcome="unsupported_resolution",
+                    trace=trace,
+                )
+            stored = self.store.resolve(
+                active.resolution_id,
+                follow_up.interpretation,
+            )
+            handoff = ResolvedCapabilityHandoff.from_interpretation(
+                stored.interpretation,
+                conversation_id=conversation_id,
+                resolution_id=stored.resolution_id,
+            )
+            return self._handled(
+                CoordinationStatus.RESOLVED_HANDOFF,
+                stored.interpretation,
+                handoff=handoff,
+                pending_outcome="resolved",
+                trace=trace,
+            )
+        if follow_up.outcome is FollowUpOutcome.CANCELLED:
+            self.store.cancel(active.resolution_id)
+            return self._handled(
+                CoordinationStatus.CANCELLED,
+                active.interpretation,
+                response=self.CANCELLED_RESPONSE,
+                pending_outcome="cancelled",
+                trace=trace,
+            )
+        request = self.builder.build_request(
+            follow_up.interpretation,
+            conversation_id=conversation_id,
+            resolution_id=active.resolution_id,
+        )
+        if follow_up.interpretation != active.interpretation:
+            self.store.update_pending(
+                active.resolution_id,
+                follow_up.interpretation,
+                clarification_kind=request.clarification_kind,
+                choices=request.choices,
+                requested_slot=request.requested_slot,
+                referent_expression=request.referent_expression,
+            )
+        return self._handled(
+            CoordinationStatus.STILL_UNRESOLVED,
+            follow_up.interpretation,
+            clarification=request,
+            pending_outcome="still_unresolved",
+            trace=trace,
+        )
+
+    @staticmethod
+    def _follow_up_trace(
+        resolution_id: str,
+        follow_up: FollowUpResolutionResult,
+    ) -> dict:
+        return {
+            "pending_resolution_id": resolution_id,
+            "prior_known_slots": follow_up.prior_slots,
+            "follow_up_proposal": follow_up.semantic_proposal,
+            "merged_slots": follow_up.merged_slots,
+            "remaining_missing_slots": follow_up.remaining_missing_slots,
+            "resolved_candidate": follow_up.selected_operation_id,
+        }
 
     def supersede_for_domain_proposal(self, conversation_id: str) -> bool:
         """Retire older semantic state once a mature proposal proves ownership."""
@@ -362,6 +421,7 @@ class NaturalLanguageResolutionCoordinator:
         clarification: ClarificationRequest | None = None,
         handoff: ResolvedCapabilityHandoff | None = None,
         pending_outcome: str | None = None,
+        trace: dict | None = None,
     ) -> ConversationCoordinationOutcome:
         diagnostic = V2RoutingDiagnostic(
             status=status,
@@ -369,6 +429,7 @@ class NaturalLanguageResolutionCoordinator:
                 candidate.operation_id for candidate in frame.candidates
             ),
             pending_outcome=pending_outcome,
+            **(trace or {}),
         )
         self.last_decision = diagnostic
         return ConversationCoordinationOutcome(

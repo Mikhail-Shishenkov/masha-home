@@ -7,6 +7,7 @@ from backend.conversation.interpretation_v2 import (
     CapabilityCandidateDiscovery,
     InterpretationResolutionState,
 )
+from backend.conversation.clarification import DeterministicClarificationBuilder
 from backend.conversation.resolution_coordinator import V2LiveAdoptionPolicy
 from backend.conversation.semantic_resolver import (
     HybridCapabilityCandidateDiscovery,
@@ -16,6 +17,7 @@ from backend.conversation.semantic_resolver import (
     SemanticProposalValidator,
     SemanticResolverFailure,
     SemanticResolverResult,
+    SemanticPendingContext,
     SemanticSlotProposal,
     SemanticValidationError,
 )
@@ -87,6 +89,66 @@ def test_local_resolver_uses_configured_role_and_strict_structured_request(tmp_p
     assert provider.last_request.identity_context.persona_id == "semantic-resolver"
     assert "qwen3.5" not in provider.last_request.messages[0].content
     assert roles.profile_for(ModelRole.SEMANTIC_RESOLVER).profile_id == "primary"
+
+
+def test_follow_up_resolver_receives_only_bounded_pending_context(tmp_path):
+    provider, resolver, validator, _, _ = _boundaries(tmp_path)
+    provider.response_text = json.dumps({
+        "relation": "follow_up",
+        "selected_operation_id": "google_calendar.event.create",
+        "slot_updates": [],
+    })
+    frame = CapabilityCandidateDiscovery(
+        catalog=default_home_capability_catalog(),
+    ).interpret("Запиши занятие завтра в 11")
+    _, pending = DeterministicClarificationBuilder(
+        catalog=default_home_capability_catalog(),
+    ).build(frame, conversation_id="bounded-conversation")
+
+    result = resolver.resolve_follow_up(
+        "Давай в календарь",
+        validator.vocabulary(),
+        SemanticPendingContext.from_pending(pending),
+    )
+
+    assert result.proposal.selected_operation_id == "google_calendar.event.create"
+    request = provider.last_request
+    assert request.required_capabilities.structured_output is True
+    assert request.required_capabilities.tools is False
+    assert request.private_context == {}
+    assert [message.content for message in request.messages[1:]] == [
+        "Давай в календарь",
+    ]
+    system = request.messages[0].content
+    assert pending.interpretation.original_utterance in system
+    assert "known_slots" in system and "missing_slots" in system
+    assert "Memory" not in system
+    assert "credential" not in system.casefold()
+
+
+def test_follow_up_timeout_is_controlled_and_cannot_patch_pending_state(tmp_path):
+    provider, resolver, validator, _, _ = _boundaries(tmp_path)
+    provider.simulate_timeout = True
+    frame = CapabilityCandidateDiscovery(
+        catalog=default_home_capability_catalog(),
+    ).interpret("Запиши занятие завтра в 11")
+    _, pending = DeterministicClarificationBuilder(
+        catalog=default_home_capability_catalog(),
+    ).build(frame, conversation_id="timeout-conversation")
+
+    result = resolver.resolve_follow_up(
+        "Лучше в Дом",
+        validator.vocabulary(),
+        SemanticPendingContext.from_pending(pending),
+    )
+
+    assert result.proposal is None
+    assert result.failure is SemanticResolverFailure.TIMEOUT
+    assert {item.name: item.value for item in pending.interpretation.slots} == {
+        "date": "завтра",
+        "time": "11:00",
+        "subject": "занятие",
+    }
 
 
 def test_hybrid_understands_wrapped_schedule_and_home_derives_ambiguity(tmp_path):

@@ -1455,7 +1455,13 @@ class MemoryIntentHandler:
         body = subject.strip().rstrip(".")
         if not body:
             return MemoryIntentResult(handled=True, response="Какое именно дело добавить?")
-        due = self.temporal_engine.parse_due(f"{date.strip()} в {time.strip()}")
+        date_value = date.strip()
+        due_expression = (
+            f"{date_value}T{time.strip()}"
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_value)
+            else f"{date_value} в {time.strip()}"
+        )
+        due = self.temporal_engine.parse_due(due_expression)
         if due.ambiguity is not None or due.resolved_utc is None:
             return MemoryIntentResult(
                 handled=True,

@@ -34,6 +34,7 @@ from backend.llm.model_roles import ModelRole, ModelRoleProfileStore
 from backend.llm.model_router import ModelCapabilityUnavailableError
 from backend.memory.text_normalization import meaningful_tokens
 from backend.external_observation.intent import InformationSpace, classify_information_space
+from backend.temporal.date_resolution import HomeCalendarDateResolver
 
 from .capability_router import normalize_utterance
 from .interpretation_v2 import (
@@ -76,6 +77,93 @@ class SemanticAmbiguityHint(str, Enum):
 class SemanticSlotProposal(StrictSemanticModel):
     name: str = Field(pattern=_SLOT_NAME)
     value: str = Field(min_length=1, max_length=500)
+
+
+class SemanticSlotMergeMode(str, Enum):
+    ADD = "add"
+    ENRICH = "enrich"
+    CORRECT = "correct"
+    CONFIRM = "confirm"
+
+
+class SemanticFollowUpRelation(str, Enum):
+    FOLLOW_UP = "follow_up"
+    NOT_A_FOLLOW_UP = "not_a_follow_up"
+
+
+class SemanticSlotUpdateProposal(StrictSemanticModel):
+    name: str = Field(pattern=_SLOT_NAME)
+    value: str = Field(min_length=1, max_length=500)
+    mode: SemanticSlotMergeMode
+
+
+class SemanticReferentUpdateProposal(StrictSemanticModel):
+    expression: str = Field(min_length=1, max_length=300)
+    value: str = Field(min_length=1, max_length=500)
+
+
+class SemanticPendingContext(StrictSemanticModel):
+    original_utterance: str = Field(min_length=1, max_length=20_000)
+    candidate_operation_ids: tuple[str, ...] = Field(min_length=1, max_length=8)
+    known_slots: tuple[SemanticSlotProposal, ...] = Field(default=(), max_length=24)
+    missing_slots: tuple[str, ...] = Field(default=(), max_length=24)
+    unresolved_referents: tuple[str, ...] = Field(default=(), max_length=8)
+    clarification_kind: str = Field(min_length=1, max_length=40)
+    requested_slot: str | None = Field(default=None, pattern=_SLOT_NAME)
+
+    @classmethod
+    def from_pending(cls, pending) -> "SemanticPendingContext":
+        return cls(
+            original_utterance=pending.interpretation.original_utterance,
+            candidate_operation_ids=tuple(
+                item.operation_id for item in pending.interpretation.candidates
+            ),
+            known_slots=tuple(
+                SemanticSlotProposal(name=item.name, value=item.value)
+                for item in pending.interpretation.slots
+                if item.value is not None
+            ),
+            missing_slots=pending.interpretation.missing_slots,
+            unresolved_referents=tuple(
+                item.expression
+                for item in pending.interpretation.referents
+                if item.value is None
+            ),
+            clarification_kind=pending.clarification_kind.value,
+            requested_slot=pending.requested_slot,
+        )
+
+
+class SemanticFollowUpProposal(StrictSemanticModel):
+    relation: SemanticFollowUpRelation
+    selected_operation_id: str | None = Field(
+        default=None, pattern=_OPERATION_ID, max_length=100,
+    )
+    slot_updates: tuple[SemanticSlotUpdateProposal, ...] = Field(
+        default=(), max_length=24,
+    )
+    referent_updates: tuple[SemanticReferentUpdateProposal, ...] = Field(
+        default=(), max_length=8,
+    )
+
+    @model_validator(mode="after")
+    def relation_matches_payload(self):
+        names = [item.name for item in self.slot_updates]
+        if len(names) != len(set(names)):
+            raise ValueError("semantic follow-up repeats a slot")
+        expressions = [item.expression for item in self.referent_updates]
+        if len(expressions) != len(set(expressions)):
+            raise ValueError("semantic follow-up repeats a referent")
+        if (
+            self.relation is SemanticFollowUpRelation.NOT_A_FOLLOW_UP
+            and (
+                self.selected_operation_id is not None
+                or self.slot_updates
+                or self.referent_updates
+            )
+        ):
+            raise ValueError("independent turn cannot patch pending meaning")
+        return self
 
 
 class SemanticInterpretationProposal(StrictSemanticModel):
@@ -140,6 +228,40 @@ class SemanticResolverResult(StrictSemanticModel):
         return self
 
 
+class SemanticFollowUpResult(StrictSemanticModel):
+    proposal: SemanticFollowUpProposal | None = None
+    failure: SemanticResolverFailure | None = None
+    latency_ms: float = Field(ge=0)
+
+    @model_validator(mode="after")
+    def result_has_one_outcome(self):
+        if (self.proposal is None) == (self.failure is None):
+            raise ValueError("semantic follow-up result requires exactly one outcome")
+        return self
+
+
+class ValidatedSemanticSlotUpdate(StrictSemanticModel):
+    slot: InterpretationSlot
+    mode: SemanticSlotMergeMode
+
+
+class ValidatedSemanticReferentUpdate(StrictSemanticModel):
+    referent: InterpretationReferent
+
+
+class ValidatedSemanticFollowUp(StrictSemanticModel):
+    relation: SemanticFollowUpRelation
+    selected_operation_id: str | None = Field(
+        default=None, pattern=_OPERATION_ID, max_length=100,
+    )
+    slot_updates: tuple[ValidatedSemanticSlotUpdate, ...] = Field(
+        default=(), max_length=24,
+    )
+    referent_updates: tuple[ValidatedSemanticReferentUpdate, ...] = Field(
+        default=(), max_length=8,
+    )
+
+
 class SemanticResolver(Protocol):
     def resolve(
         self,
@@ -148,6 +270,15 @@ class SemanticResolver(Protocol):
         *,
         profile_id: str | None = None,
     ) -> SemanticResolverResult: ...
+
+    def resolve_follow_up(
+        self,
+        utterance: str,
+        vocabulary: tuple[SemanticVocabularyItem, ...],
+        context: SemanticPendingContext,
+        *,
+        profile_id: str | None = None,
+    ) -> SemanticFollowUpResult: ...
 
 
 def _resolver_identity() -> IdentityContext:
@@ -243,6 +374,76 @@ class LocalSemanticResolver:
         self.last_result = result
         return result
 
+    def resolve_follow_up(
+        self,
+        utterance: str,
+        vocabulary: tuple[SemanticVocabularyItem, ...],
+        context: SemanticPendingContext,
+        *,
+        profile_id: str | None = None,
+    ) -> SemanticFollowUpResult:
+        """Interpret one turn against bounded pending meaning, never history."""
+
+        started = self.clock()
+        try:
+            profile = (
+                self.role_profiles.profiles.get_profile(profile_id)
+                if profile_id is not None
+                else self.role_profiles.profile_for(ModelRole.SEMANTIC_RESOLVER)
+            )
+            if not profile.enabled:
+                raise ValueError("semantic profile disabled")
+        except (KeyError, ValueError):
+            return self._failed_follow_up(
+                SemanticResolverFailure.ROLE_UNAVAILABLE, started,
+            )
+        request = ModelRequest(
+            messages=(
+                ModelMessage(
+                    role=MessageRole.SYSTEM,
+                    content=self._follow_up_prompt(vocabulary, context),
+                ),
+                ModelMessage(role=MessageRole.USER, content=utterance[:20_000]),
+            ),
+            identity_context=_resolver_identity(),
+            required_capabilities=ModelCapabilities(
+                structured_output=True,
+                tools=False,
+            ),
+            privacy_scope=PrivacyScope.LOCAL_ONLY,
+            preferred_provider_id=profile.provider_id,
+            timeout_seconds=min(profile.timeout_seconds, self.timeout_seconds),
+            execution_model_id=profile.model_id,
+            execution_think=False,
+        )
+        try:
+            response = self.router.generate(request)
+            if response.finish_reason not in {FinishReason.COMPLETED, FinishReason.LENGTH}:
+                return self._failed_follow_up(
+                    SemanticResolverFailure.MALFORMED_OUTPUT, started,
+                )
+            proposal = SemanticFollowUpProposal.model_validate(
+                json.loads(response.text)
+            )
+        except ModelTimeoutError:
+            return self._failed_follow_up(SemanticResolverFailure.TIMEOUT, started)
+        except ModelCapabilityUnavailableError:
+            return self._failed_follow_up(
+                SemanticResolverFailure.CAPABILITY_UNAVAILABLE, started,
+            )
+        except ModelProviderUnavailableError:
+            return self._failed_follow_up(
+                SemanticResolverFailure.PROVIDER_UNAVAILABLE, started,
+            )
+        except (json.JSONDecodeError, ValueError, TypeError):
+            return self._failed_follow_up(
+                SemanticResolverFailure.MALFORMED_OUTPUT, started,
+            )
+        return SemanticFollowUpResult(
+            proposal=proposal,
+            latency_ms=max(0.0, (self.clock() - started) * 1000),
+        )
+
     def _failed(self, failure: SemanticResolverFailure, started: float) -> SemanticResolverResult:
         result = SemanticResolverResult(
             failure=failure,
@@ -250,6 +451,16 @@ class LocalSemanticResolver:
         )
         self.last_result = result
         return result
+
+    def _failed_follow_up(
+        self,
+        failure: SemanticResolverFailure,
+        started: float,
+    ) -> SemanticFollowUpResult:
+        return SemanticFollowUpResult(
+            failure=failure,
+            latency_ms=max(0.0, (self.clock() - started) * 1000),
+        )
 
     @staticmethod
     def _prompt(vocabulary: tuple[SemanticVocabularyItem, ...]) -> str:
@@ -270,6 +481,35 @@ class LocalSemanticResolver:
             "ordinary_conversation=true означает отсутствие application action. "
             "Безопасный каталог операций и требуемых смысловых слотов:\n"
             + json.dumps(operations, ensure_ascii=False, separators=(",", ":"))
+        )
+
+    @staticmethod
+    def _follow_up_prompt(
+        vocabulary: tuple[SemanticVocabularyItem, ...],
+        context: SemanticPendingContext,
+    ) -> str:
+        operations = [item.model_dump(mode="json") for item in vocabulary]
+        bounded_context = context.model_dump(mode="json")
+        return (
+            "Ты локальный интерпретатор одного ответа на активное уточнение. "
+            "Не отвечай человеку и не выполняй действия. Определи, продолжает ли "
+            "текущая реплика сохранённый intent. Выбор capability меняет только "
+            "candidate, а slot update не удаляет остальные известные slots. "
+            "Новый самостоятельный вопрос, рассказ или новая задача — not_a_follow_up. "
+            "Для slot value копируй только выражение, реально присутствующее в текущей "
+            "реплике; не вычисляй календарную дату самостоятельно. mode: add для нового "
+            "slot, enrich для более точного старого значения, correct для явной замены, "
+            "confirm для подтверждения прежнего. Используй только operation_id из "
+            "pending context. Верни строго JSON без Markdown: "
+            '{"relation":"follow_up|not_a_follow_up",'
+            '"selected_operation_id":string|null,'
+            '"slot_updates":[{"name":string,"value":string,'
+            '"mode":"add|enrich|correct|confirm"}],'
+            '"referent_updates":[{"expression":string,"value":string}]}. '
+            "Безопасный каталог:\n"
+            + json.dumps(operations, ensure_ascii=False, separators=(",", ":"))
+            + "\nBounded pending context:\n"
+            + json.dumps(bounded_context, ensure_ascii=False, separators=(",", ":"))
         )
 
 
@@ -305,6 +545,11 @@ class SemanticProposalValidator:
                 required_slots=specification.required_slots,
             ))
         return tuple(items)
+
+    def required_slots(self, operation_id: str) -> tuple[str, ...]:
+        if operation_id not in self.allowed_operation_ids:
+            raise SemanticValidationError("unsupported_operation")
+        return self.specifications.get(operation_id).required_slots
 
     def validate(
         self,
@@ -388,6 +633,146 @@ class SemanticProposalValidator:
             resolution_state=state,
         )
 
+    def validate_follow_up(
+        self,
+        pending,
+        utterance: str,
+        proposal: SemanticFollowUpProposal,
+        *,
+        date_resolver: HomeCalendarDateResolver,
+    ) -> ValidatedSemanticFollowUp:
+        """Validate a contextual proposal against the saved frame and this turn."""
+
+        if proposal.relation is SemanticFollowUpRelation.NOT_A_FOLLOW_UP:
+            return ValidatedSemanticFollowUp(relation=proposal.relation)
+        candidate_ids = {
+            candidate.operation_id for candidate in pending.interpretation.candidates
+        }
+        if (
+            proposal.selected_operation_id is not None
+            and proposal.selected_operation_id not in candidate_ids
+        ):
+            raise SemanticValidationError("follow_up_invented_candidate")
+        allowed_slots = set()
+        for operation_id in candidate_ids:
+            try:
+                specification = self.specifications.get(operation_id)
+            except InterpretationSpecificationError as error:
+                raise SemanticValidationError("follow_up_unknown_operation") from error
+            allowed_slots.update(specification.required_slots)
+        if any(item.name not in allowed_slots for item in proposal.slot_updates):
+            raise SemanticValidationError("follow_up_unknown_slot")
+        known = {
+            item.name: item for item in pending.interpretation.slots
+        }
+        updates = []
+        for item in proposal.slot_updates:
+            slot = self._validated_follow_up_slot(
+                utterance,
+                item,
+                date_resolver=date_resolver,
+            )
+            self._validate_merge_mode(known.get(item.name), slot, item.mode)
+            updates.append(ValidatedSemanticSlotUpdate(slot=slot, mode=item.mode))
+        unresolved = {
+            item.expression
+            for item in pending.interpretation.referents
+            if item.value is None
+        }
+        referent_updates = []
+        for item in proposal.referent_updates:
+            if item.expression not in unresolved:
+                raise SemanticValidationError("follow_up_unknown_referent")
+            utterance_tokens = set(meaningful_tokens(normalize_utterance(utterance)))
+            value_tokens = set(meaningful_tokens(item.value))
+            if not value_tokens or not value_tokens.issubset(utterance_tokens):
+                raise SemanticValidationError("follow_up_referent_not_grounded")
+            referent_updates.append(ValidatedSemanticReferentUpdate(
+                referent=InterpretationReferent(
+                    expression=item.expression,
+                    value=item.value.strip(),
+                    origin=InterpretationValueOrigin.FOLLOW_UP_SEMANTIC,
+                ),
+            ))
+        return ValidatedSemanticFollowUp(
+            relation=proposal.relation,
+            selected_operation_id=proposal.selected_operation_id,
+            slot_updates=tuple(updates),
+            referent_updates=tuple(referent_updates),
+        )
+
+    @staticmethod
+    def _validated_follow_up_slot(
+        utterance: str,
+        proposal: SemanticSlotUpdateProposal,
+        *,
+        date_resolver: HomeCalendarDateResolver,
+    ) -> InterpretationSlot:
+        value = proposal.value.strip()
+        normalized = normalize_utterance(utterance)
+        if proposal.name == "date":
+            if normalize_utterance(value) not in normalized:
+                raise SemanticValidationError("follow_up_date_not_grounded")
+            resolved = date_resolver.resolve(value)
+            if resolved is None:
+                raise SemanticValidationError("follow_up_date_invalid")
+            return InterpretationSlot(
+                name="date",
+                value=resolved.canonical,
+                origin=InterpretationValueOrigin.TEMPORAL_NORMALIZED,
+            )
+        if proposal.name == "time":
+            proposed_times = _utterance_times(normalize_utterance(value))
+            grounded_times = _utterance_times(normalized)
+            matches = proposed_times & grounded_times
+            if len(matches) != 1:
+                raise SemanticValidationError("follow_up_time_not_grounded")
+            return InterpretationSlot(
+                name="time",
+                value=next(iter(matches)),
+                origin=InterpretationValueOrigin.TEMPORAL_NORMALIZED,
+            )
+        if proposal.name == "subject":
+            utterance_tokens = set(meaningful_tokens(normalized))
+            value_tokens = set(meaningful_tokens(value))
+            if not value_tokens or not value_tokens.issubset(utterance_tokens):
+                raise SemanticValidationError("follow_up_subject_not_grounded")
+        elif normalize_utterance(value) not in normalized:
+            raise SemanticValidationError("follow_up_value_not_grounded")
+        return InterpretationSlot(
+            name=proposal.name,
+            value=value,
+            origin=InterpretationValueOrigin.FOLLOW_UP_SEMANTIC,
+        )
+
+    @staticmethod
+    def _validate_merge_mode(
+        previous: InterpretationSlot | None,
+        updated: InterpretationSlot,
+        mode: SemanticSlotMergeMode,
+    ) -> None:
+        if mode is SemanticSlotMergeMode.ADD:
+            if previous is not None:
+                raise SemanticValidationError("follow_up_add_replaces_known_slot")
+            return
+        if previous is None:
+            raise SemanticValidationError("follow_up_update_missing_slot")
+        same_value = normalize_utterance(previous.value or "") == normalize_utterance(
+            updated.value or ""
+        )
+        if mode is SemanticSlotMergeMode.CONFIRM:
+            if not same_value:
+                raise SemanticValidationError("follow_up_confirmation_changed_slot")
+            return
+        if mode is SemanticSlotMergeMode.ENRICH:
+            before = set(meaningful_tokens(previous.value or ""))
+            after = set(meaningful_tokens(updated.value or ""))
+            if not before or not before < after:
+                raise SemanticValidationError("follow_up_enrichment_not_stronger")
+            return
+        if mode is SemanticSlotMergeMode.CORRECT and same_value:
+            raise SemanticValidationError("follow_up_correction_unchanged")
+
     @staticmethod
     def _ambiguity(candidates, missing, referents) -> InterpretationAmbiguity:
         if len(candidates) > 1:
@@ -420,7 +805,7 @@ class SemanticProposalValidator:
         return InterpretationSlot(
             name=proposal.name,
             value=value,
-            origin=InterpretationValueOrigin.EXPLICIT,
+            origin=InterpretationValueOrigin.SEMANTIC,
         )
 
     @staticmethod

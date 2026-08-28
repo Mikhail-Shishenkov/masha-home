@@ -1,0 +1,55 @@
+{
+  "schema_version": "1.0",
+  "cases": [
+    {
+      "case_id": "indirect_dentist_choose_calendar",
+      "initial": "Маш, завтра в девять у меня стоматолог, куда-нибудь запиши",
+      "initial_proposal": {"ordinary_conversation": false, "candidate_operation_ids": ["google_calendar.event.create", "home.timed_commitments"], "extracted_slots": [{"name": "subject", "value": "стоматолог"}, {"name": "date", "value": "завтра"}, {"name": "time", "value": "09:00"}], "unresolved_referents": [], "ambiguity_hint": "capability"},
+      "follow_ups": [{"utterance": "давай в календарь", "proposal": {"relation": "follow_up", "selected_operation_id": "google_calendar.event.create", "slot_updates": []}}],
+      "expected_status": "resolved_handoff", "expected_operation_id": "google_calendar.event.create", "expected_slots": {"subject": "стоматолог", "date": "2026-08-29", "time": "09:00"}, "pending_survives": false
+    },
+    {
+      "case_id": "indirect_dentist_choose_reminder",
+      "initial": "Маш, завтра в девять у меня стоматолог, куда-нибудь запиши",
+      "initial_proposal": {"ordinary_conversation": false, "candidate_operation_ids": ["google_calendar.event.create", "home.timed_commitments"], "extracted_slots": [{"name": "subject", "value": "стоматолог"}, {"name": "date", "value": "завтра"}, {"name": "time", "value": "09:00"}], "unresolved_referents": [], "ambiguity_hint": "capability"},
+      "follow_ups": [{"utterance": "лучше просто напомни", "proposal": {"relation": "follow_up", "selected_operation_id": "home.timed_commitments", "slot_updates": []}}],
+      "expected_status": "resolved_handoff", "expected_operation_id": "home.timed_commitments", "expected_slots": {"subject": "стоматолог", "date": "2026-08-29", "time": "09:00"}, "pending_survives": false
+    },
+    {
+      "case_id": "fill_title_only",
+      "initial": "Поставь завтра в 10",
+      "follow_ups": [{"utterance": "это тренировка", "proposal": {"relation": "follow_up", "selected_operation_id": null, "slot_updates": [{"name": "subject", "value": "тренировка", "mode": "add"}]}}],
+      "expected_status": "resolved_handoff", "expected_operation_id": "google_calendar.event.create", "expected_slots": {"subject": "тренировка", "date": "2026-08-29", "time": "10:00"}, "pending_survives": false
+    },
+    {
+      "case_id": "fill_saturday_only",
+      "initial": "Поставь тренировку в 10",
+      "follow_ups": [{"utterance": "в субботу"}],
+      "expected_status": "resolved_handoff", "expected_operation_id": "google_calendar.event.create", "expected_slots": {"subject": "тренировку", "date": "2026-08-29", "time": "10:00"}, "pending_survives": false
+    },
+    {
+      "case_id": "correct_time_then_choose",
+      "initial": "Запиши занятие завтра в 10",
+      "follow_ups": [{"utterance": "не в 10, а в 11", "proposal": {"relation": "follow_up", "selected_operation_id": null, "slot_updates": [{"name": "time", "value": "11", "mode": "correct"}]}}, {"utterance": "в календарь"}],
+      "expected_status": "resolved_handoff", "expected_operation_id": "google_calendar.event.create", "expected_slots": {"subject": "занятие", "date": "2026-08-29", "time": "11:00"}, "pending_survives": false
+    },
+    {
+      "case_id": "correct_date_then_choose",
+      "initial": "Запиши занятие завтра в 10",
+      "follow_ups": [{"utterance": "нет, в воскресенье", "proposal": {"relation": "follow_up", "selected_operation_id": null, "slot_updates": [{"name": "date", "value": "в воскресенье", "mode": "correct"}]}}, {"utterance": "в календарь"}],
+      "expected_status": "resolved_handoff", "expected_operation_id": "google_calendar.event.create", "expected_slots": {"subject": "занятие", "date": "2026-08-30", "time": "10:00"}, "pending_survives": false
+    },
+    {
+      "case_id": "cancel_accumulated_intent",
+      "initial": "Запиши занятие завтра в 10",
+      "follow_ups": [{"utterance": "отмена"}],
+      "expected_status": "cancelled", "expected_operation_id": null, "expected_slots": {"subject": "занятие", "date": "завтра", "time": "10:00"}, "pending_survives": false
+    },
+    {
+      "case_id": "ordinary_turn_preserves_pending",
+      "initial": "Поставь завтра в 10",
+      "follow_ups": [{"utterance": "Сегодня был хороший день", "proposal": {"relation": "not_a_follow_up", "selected_operation_id": null, "slot_updates": []}}],
+      "expected_status": "pass_through", "expected_operation_id": null, "expected_slots": {"date": "завтра", "time": "10:00"}, "pending_survives": true
+    }
+  ]
+}

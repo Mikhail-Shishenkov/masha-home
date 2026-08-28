@@ -51,6 +51,9 @@ class InterpretationAmbiguity(str, Enum):
 class InterpretationValueOrigin(str, Enum):
     EXPLICIT = "explicit"
     DETERMINISTIC = "deterministic"
+    SEMANTIC = "semantic"
+    FOLLOW_UP_SEMANTIC = "follow_up_semantic"
+    TEMPORAL_NORMALIZED = "temporal_normalized"
     UNRESOLVED = "unresolved"
 
 

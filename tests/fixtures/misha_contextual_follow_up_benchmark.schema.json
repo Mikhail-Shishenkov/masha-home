@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://masha-home.local/schemas/misha-contextual-follow-up-benchmark-1.0.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "cases"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "cases": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["case_id", "initial", "follow_ups", "expected_status", "expected_slots"],
+        "properties": {
+          "case_id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+          "initial": {"type": "string", "minLength": 1, "maxLength": 2000},
+          "initial_proposal": {"type": "object"},
+          "follow_ups": {
+            "type": "array", "minItems": 1, "maxItems": 8,
+            "items": {
+              "type": "object", "additionalProperties": false,
+              "required": ["utterance"],
+              "properties": {
+                "utterance": {"type": "string", "minLength": 1, "maxLength": 1000},
+                "proposal": {"type": "object"}
+              }
+            }
+          },
+          "expected_status": {"type": "string"},
+          "expected_operation_id": {"type": ["string", "null"]},
+          "expected_slots": {"type": "object", "additionalProperties": {"type": ["string", "null"]}},
+          "pending_survives": {"type": "boolean"}
+        }
+      }
+    }
+  }
+}

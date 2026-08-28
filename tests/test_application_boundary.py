@@ -208,7 +208,8 @@ def test_ordinary_llm_turn_cannot_claim_unreceipted_mutation(tmp_path):
     assert result.status is ConversationTurnStatus.COMPLETED
     assert result.pending_confirmation is None
     assert result.assistant_message is not None
-    assert "в этом сообщении Дом ничего не менял" in result.assistant_message.content
+    assert "Я пока ничего не меняла" in result.assistant_message.content
+    assert "в этом сообщении Дом" not in result.assistant_message.content
     after = application._conversation._conversation.memory_retriever.memory_store.read_document()
     assert after.commitments == before.commitments
     assert application.conversation(result.conversation_id).messages[-1].content == result.assistant_message.content
@@ -230,7 +231,8 @@ def test_ordinary_llm_turn_blocks_present_and_near_future_mutation_claims(tmp_pa
     result = application.send_message("Расскажи, что ты думаешь", project_id=PROJECT_ID)
 
     assert result.assistant_message is not None
-    assert "в этом сообщении Дом ничего не менял" in result.assistant_message.content
+    assert "Я пока ничего не меняла" in result.assistant_message.content
+    assert "в этом сообщении Дом" not in result.assistant_message.content
 
 
 def test_response_contract_allows_discussion_and_receipted_success():

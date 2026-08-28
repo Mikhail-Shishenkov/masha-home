@@ -108,6 +108,17 @@ def calendar_create_from_resolved_slots(
 
 def _create_date(text: str, now_local: datetime):
     today = now_local.date()
+    iso = re.fullmatch(r"\s*(\d{4})-(\d{2})-(\d{2})\s*", text)
+    if iso is not None:
+        try:
+            return datetime(
+                int(iso.group(1)),
+                int(iso.group(2)),
+                int(iso.group(3)),
+                tzinfo=now_local.tzinfo,
+            ).date()
+        except ValueError:
+            return None
     if "завтра" in text:
         return today + timedelta(days=1)
     if _TODAY.search(text):

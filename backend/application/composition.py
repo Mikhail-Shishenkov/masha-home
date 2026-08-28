@@ -221,15 +221,16 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
         specifications=deterministic_discovery.specifications,
         allowed_operation_ids=adoption.supported_operation_ids,
     )
+    semantic_resolver = LocalSemanticResolver(
+        router=core.router,
+        role_profiles=ModelRoleProfileStore(
+            config / "model-roles.json",
+            profiles=core.profiles,
+        ),
+    )
     semantic_discovery = HybridCapabilityCandidateDiscovery(
         deterministic=deterministic_discovery,
-        resolver=LocalSemanticResolver(
-            router=core.router,
-            role_profiles=ModelRoleProfileStore(
-                config / "model-roles.json",
-                profiles=core.profiles,
-            ),
-        ),
+        resolver=semantic_resolver,
         validator=semantic_validator,
     )
     core.conversation.natural_language_coordinator = NaturalLanguageResolutionCoordinator(
@@ -238,7 +239,11 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
             catalog=capability_catalog,
             clock=core.conversation.temporal_engine.clock.now_utc,
         ),
-        engine=FollowUpResolutionEngine(),
+        engine=FollowUpResolutionEngine(
+            semantic_resolver=semantic_resolver,
+            semantic_validator=semantic_validator,
+            temporal_engine=core.conversation.temporal_engine,
+        ),
         store=pending_resolutions,
         adoption=adoption,
     )

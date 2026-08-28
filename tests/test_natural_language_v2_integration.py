@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from backend.application import ConversationTurnStatus, build_masha_application
@@ -9,10 +10,12 @@ from backend.llm.fake_provider import FakeProvider
 from backend.llm.model_router import ModelRouter
 from backend.llm.model_models import ModelCapabilities
 from backend.memory.sqlite_repository import MemorySqliteRepository
+from backend.temporal.temporal_engine import FixedClock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ID = "project_masha_home"
+FIXED_NOW = datetime(2026, 8, 28, 8, 0, tzinfo=timezone.utc)
 
 
 class LocalProvider(FakeProvider):
@@ -22,6 +25,22 @@ class LocalProvider(FakeProvider):
 
     def is_model_available(self, model_id: str) -> bool:
         return model_id in self.available_models
+
+
+class SemanticThenConversationProvider(LocalProvider):
+    def __init__(self, semantic_text: str, conversation_text: str):
+        super().__init__()
+        self.capabilities = ModelCapabilities(structured_output=True)
+        self.semantic_text = semantic_text
+        self.conversation_text = conversation_text
+
+    def generate(self, request):
+        self.response_text = (
+            self.semantic_text
+            if request.required_capabilities.structured_output
+            else self.conversation_text
+        )
+        return super().generate(request)
 
 
 def _root(tmp_path):
@@ -42,6 +61,83 @@ def _application(tmp_path, *, root=None, provider=None):
         project_root=root,
         router=ModelRouter([provider]),
     )
+
+
+def test_live_wrapped_request_accumulates_into_calendar_proposal_without_slot_loss(
+    tmp_path, monkeypatch,
+):
+    import socket
+
+    provider = LocalProvider(json.dumps({
+        "ordinary_conversation": False,
+        "candidate_operation_ids": [
+            "google_calendar.event.create",
+            "home.timed_commitments",
+        ],
+        "extracted_slots": [
+            {"name": "subject", "value": "занятие"},
+            {"name": "date", "value": "завтра"},
+            {"name": "time", "value": "12:00"},
+        ],
+        "unresolved_referents": [],
+        "ambiguity_hint": "capability",
+    }, ensure_ascii=False))
+    provider.capabilities = ModelCapabilities(structured_output=True)
+    _, _, application = _application(tmp_path, provider=provider)
+    conversation = application._conversation._conversation
+    conversation.temporal_engine.clock = FixedClock(FIXED_NOW)
+    monkeypatch.setattr(
+        socket,
+        "create_connection",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("network")),
+    )
+
+    first = application.send_message(
+        "Доброе утро, Маша! Запиши занятие завтра в 12",
+        project_id=PROJECT_ID,
+    )
+    model_calls_after_first = len(provider.requests)
+    second = application.send_message(
+        "Поставь в календарь",
+        project_id=PROJECT_ID,
+        conversation_id=first.conversation_id,
+    )
+
+    assert first.assistant_message.content == (
+        "Занятие — поставить в календарь или просто напомнить в 12:00?"
+    )
+    assert second.pending_confirmation is not None
+    assert second.pending_confirmation.confirmation_type == "google_calendar_create"
+    assert "занятие" in second.assistant_message.content.casefold()
+    assert "12:00–13:00" in second.assistant_message.content
+    assert len(provider.requests) == model_calls_after_first
+    receipts = conversation.google_calendar_create_service.writer.receipt_store._items
+    assert {item.status for item in receipts.values()} == {"proposed"}
+    assert all(item.confirmed_at is None for item in receipts.values())
+
+
+def test_unsupported_external_registration_gets_human_truthful_fallback(tmp_path):
+    provider = SemanticThenConversationProvider(
+        json.dumps({
+            "ordinary_conversation": True,
+            "candidate_operation_ids": [],
+            "extracted_slots": [],
+            "unresolved_referents": [],
+            "ambiguity_hint": "none",
+        }),
+        "Я записала тебя на внешнее занятие.",
+    )
+    _, _, application = _application(tmp_path, provider=provider)
+
+    turn = application.send_message(
+        "Привет, моя хорошая! запиши меня на занятие в 9 утра",
+        project_id=PROJECT_ID,
+    )
+
+    assert turn.pending_confirmation is None
+    assert "Я пока ничего не меняла" in turn.assistant_message.content
+    assert "в этом сообщении Дом" not in turn.assistant_message.content
+    assert "записала тебя" not in turn.assistant_message.content.casefold()
 
 
 def test_calendar_choice_reaches_existing_preview_with_zero_provider_effects(tmp_path, monkeypatch):
@@ -107,7 +203,15 @@ def test_reminder_choice_uses_existing_confirmation_and_creates_nothing_yet(tmp_
 
 
 def test_missing_subject_reaches_calendar_preview_without_losing_known_slots(tmp_path):
-    _, _, application = _application(tmp_path)
+    provider = LocalProvider(json.dumps({
+        "relation": "follow_up",
+        "selected_operation_id": None,
+        "slot_updates": [
+            {"name": "subject", "value": "Занятие по AI", "mode": "add"},
+        ],
+    }, ensure_ascii=False))
+    provider.capabilities = ModelCapabilities(structured_output=True)
+    _, _, application = _application(tmp_path, provider=provider)
     first = application.send_message("Поставь завтра в 10", project_id=PROJECT_ID)
     second = application.send_message(
         "Занятие по AI",

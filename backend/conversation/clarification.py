@@ -14,6 +14,8 @@ from backend.application.capability_catalog import (
     CapabilityCatalog,
     CapabilityNotFoundError,
 )
+from backend.temporal.date_resolution import HomeCalendarDateResolver
+from backend.temporal.temporal_engine import TemporalEngine
 
 from .capability_router import normalize_utterance
 from .interpretation_v2 import (
@@ -33,6 +35,16 @@ from .pending_resolution import (
     PendingResolutionStatus,
     PendingResolutionTransitionError,
     StrictResolutionModel,
+)
+from .semantic_resolver import (
+    SemanticFollowUpProposal,
+    SemanticFollowUpRelation,
+    SemanticFollowUpResult,
+    SemanticPendingContext,
+    SemanticProposalValidator,
+    SemanticResolver,
+    SemanticValidationError,
+    ValidatedSemanticFollowUp,
 )
 
 
@@ -276,6 +288,10 @@ class FollowUpResolutionResult(BaseModel):
     )
     supplied_slot: InterpretationSlot | None = None
     supplied_referent: InterpretationReferent | None = None
+    semantic_proposal: SemanticFollowUpProposal | None = None
+    prior_slots: tuple[InterpretationSlot, ...] = Field(default=(), max_length=24)
+    merged_slots: tuple[InterpretationSlot, ...] = Field(default=(), max_length=24)
+    remaining_missing_slots: tuple[str, ...] = Field(default=(), max_length=24)
 
     @model_validator(mode="after")
     def outcome_matches_interpretation(self):
@@ -295,6 +311,24 @@ class FollowUpResolutionResult(BaseModel):
 
 class FollowUpResolutionEngine:
     """Patch one active interpretation; never route, execute, or authorize."""
+
+    def __init__(
+        self,
+        *,
+        semantic_resolver: SemanticResolver | None = None,
+        semantic_validator: SemanticProposalValidator | None = None,
+        temporal_engine: TemporalEngine | None = None,
+    ):
+        if (semantic_resolver is None) != (semantic_validator is None):
+            raise ValueError("semantic follow-up resolver and validator must be paired")
+        self.semantic_resolver = semantic_resolver
+        self.semantic_validator = semantic_validator
+        self.date_resolver = (
+            None
+            if temporal_engine is None
+            else HomeCalendarDateResolver(temporal_engine)
+        )
+        self.last_semantic_result: SemanticFollowUpResult | None = None
 
     def resolve(
         self,
@@ -316,16 +350,35 @@ class FollowUpResolutionEngine:
             operation_id = self._selected_operation(pending, original, text)
             if operation_id is not None:
                 return self._select_candidate(pending, operation_id)
+        if pending.clarification_kind is ClarificationKind.SLOT:
+            # Dates and times have a small Home-owned deterministic grammar.
+            # Free-form subjects do not: in production they cross the bounded
+            # semantic follow-up contract so ordinary conversation cannot be
+            # silently consumed as a task title.
+            slot = None
+            if (
+                pending.requested_slot != "subject"
+                or self.semantic_resolver is None
+            ):
+                slot = self._slot_from_follow_up(
+                    pending.requested_slot,
+                    original,
+                    text,
+                    date_resolver=self.date_resolver,
+                )
+            if slot is not None:
+                return self._fill_slot(pending, slot)
+        semantic = self._semantic_follow_up(pending, original)
+        if semantic is not None:
+            return semantic
+        if pending.clarification_kind in {
+            ClarificationKind.CAPABILITY,
+            ClarificationKind.PROVIDER_SCOPE,
+            ClarificationKind.SLOT,
+        }:
             if self._is_independent(text):
                 return self._unchanged(pending, FollowUpOutcome.NOT_A_FOLLOW_UP)
             return self._unchanged(pending, FollowUpOutcome.STILL_UNRESOLVED)
-        if pending.clarification_kind is ClarificationKind.SLOT:
-            if self._is_independent(text):
-                return self._unchanged(pending, FollowUpOutcome.NOT_A_FOLLOW_UP)
-            slot = self._slot_from_follow_up(pending.requested_slot, original, text)
-            if slot is None:
-                return self._unchanged(pending, FollowUpOutcome.STILL_UNRESOLVED)
-            return self._fill_slot(pending, slot)
         if text in _UNRESOLVED_ANSWERS:
             return self._unchanged(pending, FollowUpOutcome.STILL_UNRESOLVED)
         if self._is_independent(text):
@@ -354,7 +407,118 @@ class FollowUpResolutionEngine:
             outcome=self._outcome_for(frame),
             interpretation=frame,
             supplied_referent=referent,
+            prior_slots=pending.interpretation.slots,
+            merged_slots=frame.slots,
+            remaining_missing_slots=frame.missing_slots,
         )
+
+    def _semantic_follow_up(
+        self,
+        pending: PendingResolution,
+        follow_up: str,
+    ) -> FollowUpResolutionResult | None:
+        if (
+            self.semantic_resolver is None
+            or self.semantic_validator is None
+            or self.date_resolver is None
+        ):
+            return None
+        try:
+            context = SemanticPendingContext.from_pending(pending)
+            result = self.semantic_resolver.resolve_follow_up(
+                follow_up,
+                self.semantic_validator.vocabulary(),
+                context,
+            )
+            self.last_semantic_result = result
+            if result.proposal is None:
+                return None
+            validated = self.semantic_validator.validate_follow_up(
+                pending,
+                follow_up,
+                result.proposal,
+                date_resolver=self.date_resolver,
+            )
+        except (SemanticValidationError, ValueError):
+            return None
+        if validated.relation is SemanticFollowUpRelation.NOT_A_FOLLOW_UP:
+            return self._unchanged(
+                pending,
+                FollowUpOutcome.NOT_A_FOLLOW_UP,
+                semantic_proposal=result.proposal,
+            )
+        return self._merge_semantic(pending, validated, result.proposal)
+
+    def _merge_semantic(
+        self,
+        pending: PendingResolution,
+        update: ValidatedSemanticFollowUp,
+        proposal: SemanticFollowUpProposal,
+    ) -> FollowUpResolutionResult:
+        candidates = pending.interpretation.candidates
+        if update.selected_operation_id is not None:
+            candidates = tuple(
+                item for item in candidates
+                if item.operation_id == update.selected_operation_id
+            )
+        slots = self._normalized_slots(pending.interpretation.slots)
+        for item in update.slot_updates:
+            slots[item.slot.name] = item.slot
+        referents = {
+            item.expression: item for item in pending.interpretation.referents
+        }
+        for item in update.referent_updates:
+            referents[item.referent.expression] = item.referent
+        slot_names = tuple(slots)
+        candidates = tuple(
+            CapabilityCandidate.model_validate({
+                **candidate.model_dump(mode="python"),
+                "slot_names": slot_names,
+                "missing_slots": tuple(
+                    name
+                    for name in self.semantic_validator.required_slots(
+                        candidate.operation_id
+                    )
+                    if name not in slots
+                ),
+            })
+            for candidate in candidates
+        )
+        frame = self._reframe(
+            pending.interpretation,
+            candidates=candidates,
+            slots=tuple(slots.values()),
+            referents=tuple(referents.values()),
+        )
+        return FollowUpResolutionResult(
+            outcome=self._outcome_for(frame),
+            interpretation=frame,
+            selected_operation_id=(
+                frame.candidates[0].operation_id
+                if frame.resolution_state is InterpretationResolutionState.RESOLVED
+                else None
+            ),
+            semantic_proposal=proposal,
+            prior_slots=pending.interpretation.slots,
+            merged_slots=frame.slots,
+            remaining_missing_slots=frame.missing_slots,
+        )
+
+    def _normalized_slots(
+        self,
+        source: tuple[InterpretationSlot, ...],
+    ) -> dict[str, InterpretationSlot]:
+        slots = {item.name: item for item in source}
+        current = slots.get("date")
+        if self.date_resolver is not None and current is not None and current.value:
+            resolved = self.date_resolver.resolve(current.value)
+            if resolved is not None:
+                slots["date"] = InterpretationSlot(
+                    name="date",
+                    value=resolved.canonical,
+                    origin=InterpretationValueOrigin.TEMPORAL_NORMALIZED,
+                )
+        return slots
 
     @staticmethod
     def _selected_operation(
@@ -385,18 +549,28 @@ class FollowUpResolutionEngine:
             item for item in pending.interpretation.candidates
             if item.operation_id == operation_id
         )
-        frame = self._reframe(pending.interpretation, candidates=(candidate,))
+        slots = self._normalized_slots(pending.interpretation.slots)
+        frame = self._reframe(
+            pending.interpretation,
+            candidates=(candidate,),
+            slots=tuple(slots.values()),
+        )
         return FollowUpResolutionResult(
             outcome=self._outcome_for(frame),
             interpretation=frame,
             selected_operation_id=operation_id,
+            prior_slots=pending.interpretation.slots,
+            merged_slots=frame.slots,
+            remaining_missing_slots=frame.missing_slots,
         )
 
-    @staticmethod
     def _slot_from_follow_up(
+        self,
         slot_name: str | None,
         original: str,
         text: str,
+        *,
+        date_resolver: HomeCalendarDateResolver | None,
     ) -> InterpretationSlot | None:
         if slot_name is None or text in _UNRESOLVED_ANSWERS:
             return None
@@ -411,6 +585,13 @@ class FollowUpResolutionEngine:
                 return None
             value = f"{hour:02d}:{minute:02d}"
         elif slot_name == "date":
+            resolved = None if date_resolver is None else date_resolver.resolve(original)
+            if resolved is not None:
+                return InterpretationSlot(
+                    name="date",
+                    value=resolved.canonical,
+                    origin=InterpretationValueOrigin.TEMPORAL_NORMALIZED,
+                )
             value = text if _DATE_VALUE.fullmatch(text) else None
         else:
             value = original.strip()[:500]
@@ -427,10 +608,7 @@ class FollowUpResolutionEngine:
         pending: PendingResolution,
         slot: InterpretationSlot,
     ) -> FollowUpResolutionResult:
-        slots = {
-            item.name: item
-            for item in pending.interpretation.slots
-        }
+        slots = self._normalized_slots(pending.interpretation.slots)
         slots[slot.name] = slot
         candidates = tuple(
             CapabilityCandidate.model_validate({
@@ -456,6 +634,9 @@ class FollowUpResolutionEngine:
                 else None
             ),
             supplied_slot=slot,
+            prior_slots=pending.interpretation.slots,
+            merged_slots=frame.slots,
+            remaining_missing_slots=frame.missing_slots,
         )
 
     @staticmethod
@@ -519,8 +700,14 @@ class FollowUpResolutionEngine:
     def _unchanged(
         pending: PendingResolution,
         outcome: FollowUpOutcome,
+        *,
+        semantic_proposal: SemanticFollowUpProposal | None = None,
     ) -> FollowUpResolutionResult:
         return FollowUpResolutionResult(
             outcome=outcome,
             interpretation=pending.interpretation,
+            semantic_proposal=semantic_proposal,
+            prior_slots=pending.interpretation.slots,
+            merged_slots=pending.interpretation.slots,
+            remaining_missing_slots=pending.interpretation.missing_slots,
         )

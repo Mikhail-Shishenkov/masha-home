@@ -26,6 +26,7 @@ from pydantic import (
 from .interpretation_v2 import (
     InterpretationFrame,
     InterpretationResolutionState,
+    InterpretationValueOrigin,
 )
 
 
@@ -389,8 +390,32 @@ class PendingResolutionStore:
             raise PendingResolutionTransitionError("resolution lost original utterance provenance")
         old_slots = {slot.name: slot for slot in original.slots}
         new_slots = {slot.name: slot for slot in updated.slots}
-        if any(new_slots.get(name) != slot for name, slot in old_slots.items()):
-            raise PendingResolutionTransitionError("resolution changed an already known slot")
+        if not set(old_slots).issubset(new_slots):
+            raise PendingResolutionTransitionError("resolution removed an already known slot")
+        allowed_revision_origins = {
+            InterpretationValueOrigin.FOLLOW_UP_SEMANTIC,
+            InterpretationValueOrigin.TEMPORAL_NORMALIZED,
+        }
+        if any(
+            new_slots[name] != slot
+            and new_slots[name].origin not in allowed_revision_origins
+            for name, slot in old_slots.items()
+        ):
+            raise PendingResolutionTransitionError(
+                "resolution changed a known slot without follow-up provenance"
+            )
+        if any(
+            name not in old_slots
+            and slot.origin not in {
+                InterpretationValueOrigin.EXPLICIT,
+                InterpretationValueOrigin.FOLLOW_UP_SEMANTIC,
+                InterpretationValueOrigin.TEMPORAL_NORMALIZED,
+            }
+            for name, slot in new_slots.items()
+        ):
+            raise PendingResolutionTransitionError(
+                "resolution added a slot without user or temporal provenance"
+            )
         old_candidates = {item.operation_id: item for item in original.candidates}
         for item in updated.candidates:
             old = old_candidates.get(item.operation_id)
