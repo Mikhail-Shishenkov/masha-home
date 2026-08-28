@@ -906,6 +906,36 @@ Existing A1/A2/A3 and Memory proposal resolution runs before Router V2.
 Meaning resolution can prepare an existing proposal, but only that mature
 domain boundary can confirm, execute, verify and record application truth.
 
+### DEC-104. Semantic model output is a proposal, never an InterpretationFrame
+
+Статус: **Принято и реализовано в Slice 2D; требуется live acceptance**
+
+The replaceable local `semantic_resolver` role receives one bounded utterance
+and an application-built capability vocabulary. Its strict JSON result is
+untrusted: Home validates catalog/specification membership, live adoption,
+slot provenance, referents and structural ambiguity before constructing an
+`InterpretationFrame`. A timeout, unavailable model or invalid proposal falls
+back without authority or execution.
+
+### DEC-105. Deterministic ownership precedes semantic interpretation
+
+Статус: **Принято и реализовано в Slice 2D; требуется live acceptance**
+
+Exact provider syntax, Google Docs material, ordinal references,
+confirmations and cancellations retain their mature deterministic owners.
+The semantic resolver is a bounded fallback for natural paraphrase and cannot
+override an already proven owner. Live V2 adoption remains limited to Calendar
+Create and timed commitments.
+
+### DEC-106. Application receipts bound mutation-result claims
+
+Статус: **Принято и реализовано в Slice 2D; требуется live acceptance**
+
+An ordinary model response cannot claim that Home completed a real mutation
+unless the turn carries application-owned execution evidence. This is a
+general result-boundary invariant for current and future mutation families;
+model confidence and phrasing are not application truth.
+
 ## 6. Открытые вопросы ближайших этапов
 
 - Точный Human Home UX для v0.3.1 Slice B: passive memory review, possible

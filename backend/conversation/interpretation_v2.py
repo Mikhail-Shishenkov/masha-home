@@ -201,6 +201,10 @@ class InterpretationSpecificationRegistry:
 def default_interpretation_specifications() -> tuple[InterpretationSpecification, ...]:
     return (
         InterpretationSpecification(
+            operation_id="web.search",
+            required_slots=("query",),
+        ),
+        InterpretationSpecification(
             operation_id="google_calendar.event.create",
             required_slots=("subject", "date", "time"),
         ),
@@ -208,11 +212,13 @@ def default_interpretation_specifications() -> tuple[InterpretationSpecification
             operation_id="google_drive.document.create",
             required_slots=("content",),
         ),
+        InterpretationSpecification(operation_id="google_drive.read"),
         InterpretationSpecification(
             operation_id="home.timed_commitments",
             required_slots=("subject", "date", "time"),
         ),
         InterpretationSpecification(operation_id="yandex_mail.read"),
+        InterpretationSpecification(operation_id="yandex_disk.read"),
     )
 
 

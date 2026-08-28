@@ -15,6 +15,7 @@ from backend.identity.identity_store import IdentityStore
 from backend.llm.model_router import ModelRouter
 from backend.llm.ollama_provider import OllamaProvider
 from backend.llm.model_profiles import ModelProfileStore
+from backend.llm.model_roles import ModelRoleProfileStore
 from backend.memory.confirmed_memory_service import ConfirmedMemoryService
 from backend.memory.memory_management import MemoryManagementService
 from backend.memory.candidate_lifecycle import PassiveMemoryService
@@ -75,6 +76,12 @@ from backend.conversation.pending_resolution import PendingResolutionStore
 from backend.conversation.resolution_coordinator import (
     NaturalLanguageResolutionCoordinator,
     ResolvedCapabilityAdapterRegistry,
+    V2LiveAdoptionPolicy,
+)
+from backend.conversation.semantic_resolver import (
+    HybridCapabilityCandidateDiscovery,
+    LocalSemanticResolver,
+    SemanticProposalValidator,
 )
 
 from .application import MashaApplication
@@ -207,14 +214,33 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
         runtime / "pending-resolutions.json",
         clock=core.conversation.temporal_engine.clock.now_utc,
     )
+    adoption = V2LiveAdoptionPolicy()
+    deterministic_discovery = CapabilityCandidateDiscovery(catalog=capability_catalog)
+    semantic_validator = SemanticProposalValidator(
+        catalog=capability_catalog,
+        specifications=deterministic_discovery.specifications,
+        allowed_operation_ids=adoption.supported_operation_ids,
+    )
+    semantic_discovery = HybridCapabilityCandidateDiscovery(
+        deterministic=deterministic_discovery,
+        resolver=LocalSemanticResolver(
+            router=core.router,
+            role_profiles=ModelRoleProfileStore(
+                config / "model-roles.json",
+                profiles=core.profiles,
+            ),
+        ),
+        validator=semantic_validator,
+    )
     core.conversation.natural_language_coordinator = NaturalLanguageResolutionCoordinator(
-        discovery=CapabilityCandidateDiscovery(catalog=capability_catalog),
+        discovery=semantic_discovery,
         builder=DeterministicClarificationBuilder(
             catalog=capability_catalog,
             clock=core.conversation.temporal_engine.clock.now_utc,
         ),
         engine=FollowUpResolutionEngine(),
         store=pending_resolutions,
+        adoption=adoption,
     )
     core.conversation.resolved_capability_adapters = ResolvedCapabilityAdapterRegistry((
         CalendarCreateHandoffAdapter(core.conversation.google_calendar_create_service),

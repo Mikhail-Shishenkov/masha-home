@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import shutil
+import json
 from pathlib import Path
 
 from backend.application import ConversationTurnStatus, build_masha_application
 from backend.llm.fake_provider import FakeProvider
 from backend.llm.model_router import ModelRouter
+from backend.llm.model_models import ModelCapabilities
 from backend.memory.sqlite_repository import MemorySqliteRepository
 
 
@@ -214,3 +216,60 @@ def test_ordinary_phrases_never_create_pending_semantic_state(tmp_path):
         store = application._conversation._conversation.natural_language_coordinator.store
         assert store.active_for_conversation(turn.conversation_id) is None
         assert turn.pending_confirmation is None
+
+
+def test_live_wrapped_schedule_uses_semantics_then_existing_clarification(tmp_path):
+    provider = LocalProvider(json.dumps({
+        "ordinary_conversation": False,
+        "candidate_operation_ids": [
+            "google_calendar.event.create",
+            "home.timed_commitments",
+        ],
+        "extracted_slots": [
+            {"name": "subject", "value": "занятие"},
+            {"name": "date", "value": "завтра"},
+            {"name": "time", "value": "11:00"},
+        ],
+        "unresolved_referents": [],
+        "ambiguity_hint": "capability",
+    }, ensure_ascii=False))
+    provider.capabilities = ModelCapabilities(structured_output=True)
+    _, _, application = _application(tmp_path, provider=provider)
+
+    turn = application.send_message(
+        "Доброе утро, Маша! Запиши занятие завтра в 11",
+        project_id=PROJECT_ID,
+    )
+
+    assert turn.assistant_message.content == (
+        "Занятие — поставить в календарь или просто напомнить в 11:00?"
+    )
+    assert turn.pending_confirmation is None
+    assert provider.requests[-1].required_capabilities.structured_output is True
+    assert application._conversation._conversation.google_calendar_create_service.writer.receipt_store._items == {}
+
+
+def test_semantically_resolved_indirect_reminder_still_requires_confirmation(tmp_path):
+    provider = LocalProvider(json.dumps({
+        "ordinary_conversation": False,
+        "candidate_operation_ids": ["home.timed_commitments"],
+        "extracted_slots": [
+            {"name": "subject", "value": "занятие"},
+            {"name": "date", "value": "завтра"},
+            {"name": "time", "value": "11:00"},
+        ],
+        "unresolved_referents": [],
+        "ambiguity_hint": "none",
+    }, ensure_ascii=False))
+    provider.capabilities = ModelCapabilities(structured_output=True)
+    _, _, application = _application(tmp_path, provider=provider)
+    before = application.commitments().items
+
+    turn = application.send_message(
+        "Маш, у меня завтра в одиннадцать занятие, надо не забыть",
+        project_id=PROJECT_ID,
+    )
+
+    assert turn.pending_confirmation is not None
+    assert turn.pending_confirmation.confirmation_type == "commitment_create"
+    assert application.commitments().items == before

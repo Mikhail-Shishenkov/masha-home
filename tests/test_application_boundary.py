@@ -221,6 +221,7 @@ def test_ordinary_llm_turn_cannot_claim_unreceipted_mutation(tmp_path):
         "Сейчас сохраню это как дело.",
         "Закрываю задачу.",
         "Я это уже изменила.",
+        "Занятие на завтра в 11 уже запланировано.",
     ),
 )
 def test_ordinary_llm_turn_blocks_present_and_near_future_mutation_claims(tmp_path, claim):
@@ -302,6 +303,21 @@ def test_response_contract_still_blocks_application_mutation_claims_with_safe_di
     assert diagnostic["rule"]
     assert diagnostic["character_count"] == len(claim)
     assert "content" not in diagnostic
+
+
+def test_response_contract_blocks_unverified_planning_claim_generically():
+    from backend.conversation.response_contract import (
+        UNRECEIPTED_MUTATION_RESPONSE,
+        render_model_response,
+    )
+
+    claim = "Занятие на завтра в 11 уже запланировано."
+
+    assert render_model_response(claim) == UNRECEIPTED_MUTATION_RESPONSE
+    assert render_model_response(
+        claim,
+        application_receipts=("verified-calendar-receipt",),
+    ) == claim
 
 
 def test_ambiguous_follow_up_neither_creates_nor_claims_commitment(tmp_path):

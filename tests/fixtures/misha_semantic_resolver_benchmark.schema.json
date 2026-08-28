@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://masha-home.local/schemas/misha-semantic-resolver-benchmark-1.0.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "cases"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "cases": {"type": "array", "minItems": 50, "items": {"$ref": "#/$defs/case"}}
+  },
+  "$defs": {
+    "operations": {"type": "array", "uniqueItems": true, "maxItems": 8, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"}},
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_id", "category", "utterance", "expected_candidate_operations", "expected_known_slots", "clarification_required", "ordinary_conversation", "forbidden_operations"],
+      "properties": {
+        "case_id": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,79}$"},
+        "category": {"enum": ["scheduling", "ordinary", "docs_content", "mail", "files", "memory", "continuity", "web", "referent", "typo_colloquial"]},
+        "utterance": {"type": "string", "minLength": 1, "maxLength": 20000},
+        "expected_candidate_operations": {"$ref": "#/$defs/operations"},
+        "expected_known_slots": {"type": "object", "maxProperties": 24, "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,63}$"}, "additionalProperties": {"type": "string", "maxLength": 500}},
+        "clarification_required": {"type": "boolean"},
+        "ordinary_conversation": {"type": "boolean"},
+        "forbidden_operations": {"$ref": "#/$defs/operations"}
+      }
+    }
+  }
+}

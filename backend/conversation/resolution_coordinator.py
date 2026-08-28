@@ -20,6 +20,7 @@ from .clarification import (
     FollowUpResolutionEngine,
 )
 from .interpretation_v2 import (
+    CandidateEvidenceSource,
     CapabilityCandidateDiscovery,
     InterpretationFrame,
     InterpretationResolutionState,
@@ -76,7 +77,7 @@ class ResolvedCapabilityHandoff(StrictCoordinatorModel):
         frame: InterpretationFrame,
         *,
         conversation_id: str,
-        resolution_id: str,
+        resolution_id: str | None,
     ) -> "ResolvedCapabilityHandoff":
         if (
             frame.resolution_state is not InterpretationResolutionState.RESOLVED
@@ -181,6 +182,21 @@ class NaturalLanguageResolutionCoordinator:
             frame = self.discovery.interpret(utterance)
             if active is None:
                 if (
+                    frame.resolution_state is InterpretationResolutionState.RESOLVED
+                    and self.adoption.supports_frame(frame)
+                    and self._is_semantic(frame)
+                ):
+                    return self._handled(
+                        CoordinationStatus.RESOLVED_HANDOFF,
+                        frame,
+                        handoff=ResolvedCapabilityHandoff.from_interpretation(
+                            frame,
+                            conversation_id=conversation_id,
+                            resolution_id=None,
+                        ),
+                        pending_outcome="semantic_resolved",
+                    )
+                if (
                     frame.resolution_state
                     is InterpretationResolutionState.CLARIFICATION_REQUIRED
                     and self.adoption.supports_frame(frame)
@@ -215,11 +231,23 @@ class NaturalLanguageResolutionCoordinator:
                         pending_outcome="superseded",
                     )
                 # A complete adopted request remains owned by its mature legacy
-                # route, but it is sufficient proof to retire the old question.
+                # route unless it exists only because the semantic resolver
+                # understood a paraphrase that legacy syntax cannot own.
                 self.store.supersede(
                     active.resolution_id,
                     reason="superseded_by_supported_request",
                 )
+                if self._is_semantic(frame):
+                    return self._handled(
+                        CoordinationStatus.RESOLVED_HANDOFF,
+                        frame,
+                        handoff=ResolvedCapabilityHandoff.from_interpretation(
+                            frame,
+                            conversation_id=conversation_id,
+                            resolution_id=None,
+                        ),
+                        pending_outcome="superseded_semantic_resolved",
+                    )
                 return self._pass(frame, pending_outcome="superseded")
 
             follow_up = self.engine.resolve(active, utterance)
@@ -303,6 +331,14 @@ class NaturalLanguageResolutionCoordinator:
             CoordinationStatus.PASS_THROUGH,
             frame,
             pending_outcome=pending_outcome,
+        )
+
+    @staticmethod
+    def _is_semantic(frame: InterpretationFrame) -> bool:
+        return any(
+            evidence.source is CandidateEvidenceSource.SEMANTIC
+            for candidate in frame.candidates
+            for evidence in candidate.evidence
         )
 
     def _failed(self) -> ConversationCoordinationOutcome:
