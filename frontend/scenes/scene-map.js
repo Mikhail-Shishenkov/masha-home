@@ -55,6 +55,49 @@ specialNear: scene(
   "Маша совсем рядом и внимательно смотрит на тебя"
 ),
 
+
+specialClosePlayful: scene(
+  "evening",
+  "special_close_playful",
+  "assets/presence/evening/special-close-playful.png",
+  "Маша рядом и явно поддразнивает тебя"
+),
+
+specialNearPlayful: scene(
+  "evening",
+  "special_near_playful",
+  "assets/presence/evening/special-near-playful.png",
+  "Маша совсем рядом с игривым внимательным взглядом"
+),
+
+specialCloseSupportive: scene(
+  "evening",
+  "special_close_supportive",
+  "assets/presence/evening/special-close-supportive.png",
+  "Маша рядом и мягко поддерживает тебя"
+),
+
+specialNearSupportive: scene(
+  "evening",
+  "special_near_supportive",
+  "assets/presence/evening/special-near-supportive.png",
+  "Маша совсем рядом и спокойно остаётся с тобой"
+),
+
+specialCloseFirm: scene(
+  "evening",
+  "special_close_firm",
+  "assets/presence/evening/special-close-firm.png",
+  "Маша рядом, спокойная и серьёзная"
+),
+
+specialNearFirm: scene(
+  "evening",
+  "special_near_firm",
+  "assets/presence/evening/special-near-firm.png",
+  "Маша остаётся совсем рядом, но говорит серьёзно и прямо"
+),
+
 specialQuietNear: scene(
   "evening",
   "special_quiet_near",
@@ -152,11 +195,28 @@ specialThoughtful: scene(
     presentation.home_proximity || "wide";
 
 if (specialEvening) {
-  if (["skeptical", "serious"].includes(expression)) {
-    return scenes.firmDisagreement;
-  }
+  const specialExpression =
+    expression === "playful"
+      ? "playful"
+      : expression === "sympathetic"
+      ? "supportive"
+      : ["skeptical", "serious"].includes(expression)
+      ? "firm"
+      : "warm";
 
   if (specialProximity === "near") {
+    if (specialExpression === "playful") {
+      return scenes.specialNearPlayful;
+    }
+
+    if (specialExpression === "supportive") {
+      return scenes.specialNearSupportive;
+    }
+
+    if (specialExpression === "firm") {
+      return scenes.specialNearFirm;
+    }
+
     if (
       activity === "idle"
       && presence.ambient === "quiet"
@@ -168,9 +228,23 @@ if (specialEvening) {
   }
 
   if (specialProximity === "close") {
+    if (specialExpression === "playful") {
+      return scenes.specialClosePlayful;
+    }
+
+    if (specialExpression === "supportive") {
+      return scenes.specialCloseSupportive;
+    }
+
+    if (specialExpression === "firm") {
+      return scenes.specialCloseFirm;
+    }
+
     return scenes.specialClose;
   }
 
+  // WIDE intentionally stays canonical: expression never changes
+  // relationship distance by itself.
   return scenes.specialEvening;
 }
   if (
