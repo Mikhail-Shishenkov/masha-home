@@ -684,6 +684,7 @@ class LocalConversationBridge(QObject):
             home_moment=home_moment,
             home_proximity=self._current_home_proximity(),
             home_boundary_pause=self._current_home_boundary_pause(),
+            home_scene_continuity=self._current_home_scene_continuity(),
         )
         future.add_done_callback(self._finish_continuity_thread)
 
@@ -1378,6 +1379,7 @@ class LocalConversationBridge(QObject):
             home_moment=self._current_home_moment(),
             home_proximity=self._current_home_proximity(),
             home_boundary_pause=self._current_home_boundary_pause(),
+            home_scene_continuity=self._current_home_scene_continuity(),
         )
 
     def _send_turn_with_document(self, content: str, token: str):
@@ -1396,6 +1398,7 @@ class LocalConversationBridge(QObject):
             home_moment=self._current_home_moment(),
             home_proximity=self._current_home_proximity(),
             home_boundary_pause=self._current_home_boundary_pause(),
+            home_scene_continuity=self._current_home_scene_continuity(),
         )
 
     def _finish_turn(self, future) -> None:
@@ -1616,6 +1619,14 @@ class LocalConversationBridge(QObject):
             if self._session is None:
                 return False
             return bool(self._session.special_evening_boundary_paused)
+
+    def _current_home_scene_continuity(self) -> dict[str, str] | None:
+        """Read the tiny Presentation-owned scene anchor under the same lock."""
+        with self._session_lock:
+            if self._session is None:
+                return None
+            value = self._session.special_evening_scene_continuity
+            return None if value is None else dict(value)
 
     @staticmethod
     def _is_explicit_evening_stop(content: str) -> bool:

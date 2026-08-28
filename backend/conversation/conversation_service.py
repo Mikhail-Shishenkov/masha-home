@@ -308,6 +308,7 @@ class ConversationService:
         home_moment: str = "ordinary",
         home_proximity: str = "wide",
         home_boundary_pause: bool = False,
+        home_scene_continuity: dict[str, str] | None = None,
         document_receipt: DocumentReadReceipt | None = None,
     ) -> tuple[str, str]:
         self.last_external_observation = None
@@ -727,6 +728,7 @@ class ConversationService:
             home_moment=home_moment,
             home_proximity=home_proximity,
             home_boundary_pause=home_boundary_pause,
+            home_scene_continuity=home_scene_continuity,
             active_continuity=active_continuity,
             external_information=None if not external_information else external_information,
             external_information_contract=(

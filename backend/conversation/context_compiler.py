@@ -82,6 +82,34 @@ SPECIAL_EVENING_SCENE_CONTRACT = (
     "и, когда уместно, продолжи ближайшим допустимым вариантом разговора."
 )
 
+# SPECIAL_EVENING_SCENE_CONTINUITY_V2
+SPECIAL_EVENING_SCENE_CONTINUITY_CONTRACT = (
+    "НЕПРЕРЫВНОСТЬ СЦЕНЫ «ВДВОЁМ»: special_evening_scene_continuity — "
+    "ограниченная application-owned подсказка только текущей UI-сессии. "
+    "last_transition сообщает лишь последнее известное изменение дистанции Дома "
+    "и не устанавливает точную позу, прикосновение или место тела. "
+    "contact_state=unspecified означает, что Дом не утверждает продолжающийся "
+    "конкретный физический контакт. Это не запрещает новый естественный жест "
+    "в текущем ответе. Но не говори «всё ещё держу», «снова обнимаю», "
+    "«перемещаюсь с твоих колен», «с твоих колен» или иным образом не ссылайся "
+    "на точную прошлую позу/контакт как на уже установленный факт, если именно "
+    "это действие явно не присутствует в ближайших репликах разговора. "
+    "Не выводи точную позу из одного лишь WIDE/CLOSE/NEAR. Если last_transition "
+    "равен model_closer/manual_closer, достоверно только то, что дистанция стала "
+    "на один шаг ближе; farther — на один шаг дальше; paused — близость на паузе."
+)
+
+_ALLOWED_SCENE_CONTINUITY_TRANSITIONS = frozenset({
+    "none",
+    "entered",
+    "manual_closer",
+    "manual_farther",
+    "model_closer",
+    "model_farther",
+    "paused",
+})
+
+
 # SPECIAL_EVENING_PRIORITY_DIRECTIVE_V2
 SPECIAL_EVENING_PRIORITY_DIRECTIVE = (
     "ПРИОРИТЕТ РАЗГОВОРА «ВДВОЁМ». "
@@ -206,6 +234,26 @@ BEHAVIORAL_CONTRACT = (
 
 
 
+def resolve_special_evening_scene_continuity(
+    home_moment: str,
+    value: dict[str, str] | None,
+) -> dict[str, str] | None:
+    """Fail closed to a tiny session-only continuity vocabulary."""
+    if home_moment != HOME_MOMENT_SPECIAL_EVENING:
+        return None
+
+    source = value if isinstance(value, dict) else {}
+    last_transition = source.get("last_transition")
+    if last_transition not in _ALLOWED_SCENE_CONTINUITY_TRANSITIONS:
+        last_transition = "none"
+
+    # Exact contact/pose is intentionally not application-owned in Step 4.
+    return {
+        "last_transition": last_transition,
+        "contact_state": "unspecified",
+    }
+
+
 def resolve_home_scene_context(
     home_moment: str,
     home_proximity: str,
@@ -240,6 +288,7 @@ class ConversationContextCompiler:
         home_moment: str = HOME_MOMENT_ORDINARY,
         home_proximity: str = HOME_PROXIMITY_WIDE,
         home_boundary_pause: bool = False,
+        home_scene_continuity: dict[str, str] | None = None,
         active_continuity: dict[str, str] | None = None,
         external_information: list[dict] | None = None,
         external_information_contract: str | None = None,
@@ -260,6 +309,14 @@ class ConversationContextCompiler:
             home_boundary_pause
             and special_evening_scene is not None
         )
+        safe_scene_continuity = (
+            resolve_special_evening_scene_continuity(
+                safe_home_moment,
+                home_scene_continuity,
+            )
+        )
+        if safe_home_boundary_pause and safe_scene_continuity is not None:
+            safe_scene_continuity["last_transition"] = "paused"
 
         compiled_messages = messages
         if special_evening_scene is not None:
@@ -268,10 +325,14 @@ class ConversationContextCompiler:
                 f"- proximity: {safe_home_proximity}\n"
                 f"- visual_anchor: {special_evening_scene.get('visual_anchor', '')}\n"
                 f"- relation: {special_evening_scene.get('relation', '')}\n"
-                f"- boundary_pause: {safe_home_boundary_pause}"
+                f"- boundary_pause: {safe_home_boundary_pause}\n"
+                f"- last_transition: {safe_scene_continuity.get('last_transition', 'none')}\n"
+                f"- contact_state: {safe_scene_continuity.get('contact_state', 'unspecified')}"
             )
             priority_content = (
                 SPECIAL_EVENING_PRIORITY_DIRECTIVE
+                + "\n\n"
+                + SPECIAL_EVENING_SCENE_CONTINUITY_CONTRACT
                 + "\n\n"
                 + scene_summary
             )
@@ -298,6 +359,12 @@ class ConversationContextCompiler:
                 "home_proximity": safe_home_proximity,
                 "special_evening_boundary_pause": safe_home_boundary_pause,
                 "special_evening_scene": special_evening_scene,
+                "special_evening_scene_continuity": safe_scene_continuity,
+                "special_evening_scene_continuity_contract": (
+                    SPECIAL_EVENING_SCENE_CONTINUITY_CONTRACT
+                    if special_evening_scene is not None
+                    else None
+                ),
                 "special_evening_scene_contract": (
                     SPECIAL_EVENING_SCENE_CONTRACT if special_evening_scene is not None else None
                 ),

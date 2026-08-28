@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from backend.presentation import (
@@ -60,6 +61,53 @@ _RESPONSE_EXPRESSION_CUES = frozenset(
         "playful",
     }
 )
+
+_PROXIMITY_ORDER = {
+    HomeProximity.WIDE: 0,
+    HomeProximity.CLOSE: 1,
+    HomeProximity.NEAR: 2,
+}
+
+
+@dataclass
+class SpecialEveningSceneContinuityState:
+    """Tiny session-only grounding hint; never Memory or physical-world truth."""
+
+    last_transition: str = "none"
+
+    def reset(self) -> None:
+        self.last_transition = "none"
+
+    def entered(self) -> None:
+        self.last_transition = "entered"
+
+    def paused(self) -> None:
+        self.last_transition = "paused"
+
+    def proximity_changed(
+        self,
+        current: HomeProximity,
+        target: HomeProximity,
+        *,
+        source: str,
+    ) -> None:
+        if current is target or source not in {"manual", "model"}:
+            return
+
+        direction = (
+            "closer"
+            if _PROXIMITY_ORDER[target] > _PROXIMITY_ORDER[current]
+            else "farther"
+        )
+        self.last_transition = f"{source}_{direction}"
+
+    def model_context(self) -> dict[str, str]:
+        # Home deliberately does not claim an exact ongoing touch or body pose.
+        return {
+            "last_transition": self.last_transition,
+            "contact_state": "unspecified",
+        }
+
 
 class HomeSnapshotView(UiContract):
     """Bounded renderer-safe data with no service, provider, or storage handles."""
@@ -149,6 +197,10 @@ class HomePresentationSession:
         self._runtime = PresentationRuntime(snapshot.presentation)
         # Session-only relationship boundary; not Memory or global safety.
         self._special_evening_boundary_paused = False
+        # A tiny Presentation-owned continuity hint. It never enters Memory.
+        self._special_evening_scene_continuity = (
+            SpecialEveningSceneContinuityState()
+        )
 
     def _now(self) -> datetime:
         now = self._clock()
@@ -176,6 +228,7 @@ class HomePresentationSession:
             return None
 
         self._special_evening_boundary_paused = False
+        self._special_evening_scene_continuity.entered()
         return self._dispatch(
             HomeMomentChanged(
                 occurred_at=now,
@@ -186,6 +239,7 @@ class HomePresentationSession:
     def leave_special_evening(self) -> HomeSnapshotView:
         """Return Home to the ordinary day/evening presence family."""
         self._special_evening_boundary_paused = False
+        self._special_evening_scene_continuity.reset()
         return self._dispatch(
             HomeMomentChanged(
                 occurred_at=self._now(),
@@ -205,18 +259,35 @@ class HomePresentationSession:
             return None
 
         # Manual proximity is an explicit human re-entry signal.
+        current = self._runtime.model.home_proximity
         self._special_evening_boundary_paused = False
-        return self._dispatch(
+        snapshot = self._dispatch(
             HomeProximityChanged(
                 occurred_at=self._now(),
                 proximity=proximity,
             )
         )
+        self._special_evening_scene_continuity.proximity_changed(
+            current,
+            proximity,
+            source="manual",
+        )
+        return snapshot
 
     @property
     def special_evening_boundary_paused(self) -> bool:
         """Expose only the current UI-session relationship boundary."""
         return self._special_evening_boundary_paused
+
+    @property
+    def special_evening_scene_continuity(self) -> dict[str, str] | None:
+        """Expose bounded session grounding without creating another state owner."""
+        if (
+            self._runtime.model.home_moment
+            is not HomeMoment.SPECIAL_EVENING
+        ):
+            return None
+        return self._special_evening_scene_continuity.model_context()
 
     def pause_special_evening_closeness(self) -> HomeSnapshotView | None:
         """Pause scene escalation without invoking global Emergency Stop."""
@@ -227,6 +298,7 @@ class HomePresentationSession:
             return None
 
         self._special_evening_boundary_paused = True
+        self._special_evening_scene_continuity.paused()
         return self._dispatch(
             HomeProximityChanged(
                 occurred_at=self._now(),
@@ -265,12 +337,18 @@ class HomePresentationSession:
         if target is current:
             return None
 
-        return self._dispatch(
+        snapshot = self._dispatch(
             HomeProximityChanged(
                 occurred_at=self._now(),
                 proximity=target,
             )
         )
+        self._special_evening_scene_continuity.proximity_changed(
+            current,
+            target,
+            source="model",
+        )
+        return snapshot
 
     def user_sent(self) -> HomeSnapshotView:
         return self._dispatch(UserSentMessage(occurred_at=self._now()))
