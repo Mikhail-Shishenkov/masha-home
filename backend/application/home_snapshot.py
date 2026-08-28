@@ -147,6 +147,8 @@ class HomePresentationSession:
         self._composition = composition
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._runtime = PresentationRuntime(snapshot.presentation)
+        # Session-only relationship boundary; not Memory or global safety.
+        self._special_evening_boundary_paused = False
 
     def _now(self) -> datetime:
         now = self._clock()
@@ -173,6 +175,7 @@ class HomePresentationSession:
         if 7 <= now.hour < 18:
             return None
 
+        self._special_evening_boundary_paused = False
         return self._dispatch(
             HomeMomentChanged(
                 occurred_at=now,
@@ -182,6 +185,7 @@ class HomePresentationSession:
 
     def leave_special_evening(self) -> HomeSnapshotView:
         """Return Home to the ordinary day/evening presence family."""
+        self._special_evening_boundary_paused = False
         return self._dispatch(
             HomeMomentChanged(
                 occurred_at=self._now(),
@@ -200,10 +204,33 @@ class HomePresentationSession:
         ):
             return None
 
+        # Manual proximity is an explicit human re-entry signal.
+        self._special_evening_boundary_paused = False
         return self._dispatch(
             HomeProximityChanged(
                 occurred_at=self._now(),
                 proximity=proximity,
+            )
+        )
+
+    @property
+    def special_evening_boundary_paused(self) -> bool:
+        """Expose only the current UI-session relationship boundary."""
+        return self._special_evening_boundary_paused
+
+    def pause_special_evening_closeness(self) -> HomeSnapshotView | None:
+        """Pause scene escalation without invoking global Emergency Stop."""
+        if (
+            self._runtime.model.home_moment
+            is not HomeMoment.SPECIAL_EVENING
+        ):
+            return None
+
+        self._special_evening_boundary_paused = True
+        return self._dispatch(
+            HomeProximityChanged(
+                occurred_at=self._now(),
+                proximity=HomeProximity.WIDE,
             )
         )
 

@@ -682,6 +682,8 @@ class LocalConversationBridge(QObject):
             conversation_id=self._conversation_id,
             project_id=HOME_PROJECT_ID,
             home_moment=home_moment,
+            home_proximity=self._current_home_proximity(),
+            home_boundary_pause=self._current_home_boundary_pause(),
         )
         future.add_done_callback(self._finish_continuity_thread)
 
@@ -1361,6 +1363,7 @@ class LocalConversationBridge(QObject):
 
     def _send_turn(self, content: str):
         """Publish the deterministic thinking phase before local model execution."""
+        self._apply_explicit_evening_boundary(content)
         if self._application.status().model_available:
             self._emit(
                 {
@@ -1373,6 +1376,8 @@ class LocalConversationBridge(QObject):
             project_id=HOME_PROJECT_ID,
             conversation_id=self._conversation_id,
             home_moment=self._current_home_moment(),
+            home_proximity=self._current_home_proximity(),
+            home_boundary_pause=self._current_home_boundary_pause(),
         )
 
     def _send_turn_with_document(self, content: str, token: str):
@@ -1389,6 +1394,8 @@ class LocalConversationBridge(QObject):
             project_id=HOME_PROJECT_ID,
             conversation_id=self._conversation_id,
             home_moment=self._current_home_moment(),
+            home_proximity=self._current_home_proximity(),
+            home_boundary_pause=self._current_home_boundary_pause(),
         )
 
     def _finish_turn(self, future) -> None:
@@ -1589,6 +1596,38 @@ class LocalConversationBridge(QObject):
             if self._session is None:
                 return "ordinary"
             return self._session.home_moment.value
+
+    def _current_home_proximity(self) -> str:
+        """Read Presentation proximity without creating another state owner."""
+        with self._session_lock:
+            if self._session is None:
+                return "wide"
+            return self._session.home_proximity.value
+
+    def _current_home_boundary_pause(self) -> bool:
+        """Read only the current UI-session relationship boundary."""
+        with self._session_lock:
+            if self._session is None:
+                return False
+            return bool(self._session.special_evening_boundary_paused)
+
+    @staticmethod
+    def _is_explicit_evening_stop(content: str) -> bool:
+        """Recognize only a standalone explicit Stop; no phrase-routing zoo."""
+        normalized = content.casefold().strip()
+        normalized = normalized.strip(" .,!?:;—-")
+        return normalized == "стоп"
+
+    def _apply_explicit_evening_boundary(self, content: str) -> None:
+        if not self._is_explicit_evening_stop(content):
+            return
+        with self._session_lock:
+            if self._session is None:
+                return
+            if self._session.home_moment.value != "special_evening":
+                return
+            self._session.pause_special_evening_closeness()
+
 
     def _active_continuity_payload(self) -> dict | None:
         if self._application is None or self._conversation_id is None:

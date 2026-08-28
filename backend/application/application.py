@@ -91,12 +91,16 @@ class MashaApplication:
         project_id: str,
         conversation_id: str | None = None,
         home_moment: str = "ordinary",
+        home_proximity: str = "wide",
+        home_boundary_pause: bool = False,
     ) -> ConversationTurnResult:
         return self._conversation.send_message(
             content,
             project_id=project_id,
             conversation_id=conversation_id,
             home_moment=home_moment,
+            home_proximity=home_proximity,
+            home_boundary_pause=home_boundary_pause,
         )
 
     def send_message_with_document(
@@ -107,6 +111,8 @@ class MashaApplication:
         project_id: str,
         conversation_id: str | None = None,
         home_moment: str = "ordinary",
+        home_proximity: str = "wide",
+        home_boundary_pause: bool = False,
     ) -> ConversationTurnResult:
         return self._conversation.send_message_with_document(
             content,
@@ -114,6 +120,8 @@ class MashaApplication:
             project_id=project_id,
             conversation_id=conversation_id,
             home_moment=home_moment,
+            home_proximity=home_proximity,
+            home_boundary_pause=home_boundary_pause,
         )
 
     def stage_local_document(self, selected_path: str):
@@ -224,6 +232,8 @@ class MashaApplication:
         conversation_id: str | None,
         project_id: str,
         home_moment: str = "ordinary",
+        home_proximity: str = "wide",
+        home_boundary_pause: bool = False,
     ) -> ConversationTurnResult:
         prompt = self._continuity.thread_prompt(thread_id)
         return self._conversation.send_message(
@@ -233,6 +243,8 @@ class MashaApplication:
             allow_capability_routing=False,
             active_continuity_thread_id=thread_id,
             home_moment=home_moment,
+            home_proximity=home_proximity,
+            home_boundary_pause=home_boundary_pause,
         )
 
     def reflection_workspace(self) -> ReflectionWorkspaceView:

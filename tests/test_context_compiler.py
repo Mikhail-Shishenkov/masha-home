@@ -97,3 +97,28 @@ def test_active_continuity_is_structured_background_not_synthetic_user_text():
         "Обсудить нашу будущую поездку к морю"
     )
     assert "тихий фон" in request.private_context["active_continuity_contract"]
+
+
+
+def test_special_evening_boundary_pause_is_high_priority_session_context_not_memory():
+    compiler = ConversationContextCompiler(
+        lambda: datetime(2026, 8, 28, 20, 15, tzinfo=timezone.utc)
+    )
+    identity = IdentityKernel(
+        IdentityStore(PROJECT_ROOT / "identity" / "masha.identity.json")
+    ).build_context()
+
+    request = compiler.compile(
+        messages=(ModelMessage(role="user", content="Стоп"),),
+        identity_context=identity,
+        working_memory=[],
+        home_moment="special_evening",
+        home_proximity="near",
+        home_boundary_pause=True,
+    )
+
+    assert request.private_context["special_evening_boundary_pause"] is True
+    assert request.private_context["memory_context"] == []
+    assert request.messages[0].role.value == "system"
+    assert "ПАУЗА БЛИЗОСТИ «ВДВОЁМ»" in request.messages[0].content
+    assert "Следующая нейтральная реплика НЕ снимает эту паузу" in request.messages[0].content

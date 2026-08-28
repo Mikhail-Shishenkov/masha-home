@@ -306,6 +306,8 @@ class ConversationService:
         allow_capability_routing: bool = True,
         active_continuity_thread_id: str | None = None,
         home_moment: str = "ordinary",
+        home_proximity: str = "wide",
+        home_boundary_pause: bool = False,
         document_receipt: DocumentReadReceipt | None = None,
     ) -> tuple[str, str]:
         self.last_external_observation = None
@@ -723,6 +725,8 @@ class ConversationService:
             execution_timeout_seconds=30.0 if active_profile is None else active_profile.timeout_seconds,
             context_lens=context_lens.value,
             home_moment=home_moment,
+            home_proximity=home_proximity,
+            home_boundary_pause=home_boundary_pause,
             active_continuity=active_continuity,
             external_information=None if not external_information else external_information,
             external_information_contract=(

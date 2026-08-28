@@ -27,7 +27,7 @@ from backend.llm.model_router import ModelRouter
 from backend.memory.sqlite_repository import MemorySqliteRepository
 from backend.memory.memory_management import MemoryManagementService, MemoryMutationOperation
 from backend.memory.memory_models import CommitmentStatus
-from backend.presentation import HomeMoment, PresenceActivity
+from backend.presentation import HomeMoment, HomeProximity, PresenceActivity
 from backend.skills.agent_loop import (
     AgentRunReceipt,
     AgentRunStatus,
@@ -1904,3 +1904,35 @@ def test_selected_continuity_thread_is_context_not_synthetic_turn(tmp_path):
 
     application.clear_continuity_thread(conversation_id=conversation_id)
     assert application.active_continuity_thread(conversation_id=conversation_id) is None
+
+
+
+def test_special_evening_boundary_pause_is_session_only_and_manual_closeness_resumes(tmp_path):
+    root, _, application = _application(tmp_path)
+    current_time = [datetime(2026, 8, 28, 20, 0, tzinfo=timezone.utc)]
+    application._home_snapshot._clock = lambda: current_time[0]
+
+    repository = MemorySqliteRepository(
+        root / "local-data" / "memory" / "masha.sqlite3"
+    )
+    before = repository.read_document()
+
+    session = application.open_home_session()
+    session.opened()
+    assert session.enter_special_evening() is not None
+    assert session.set_special_proximity(HomeProximity.NEAR) is not None
+
+    paused = session.pause_special_evening_closeness()
+    assert paused is not None
+    assert paused.presentation.home_proximity is HomeProximity.WIDE
+    assert session.special_evening_boundary_paused is True
+
+    session.user_sent()
+    assert session.special_evening_boundary_paused is True
+
+    resumed = session.set_special_proximity(HomeProximity.CLOSE)
+    assert resumed is not None
+    assert resumed.presentation.home_proximity is HomeProximity.CLOSE
+    assert session.special_evening_boundary_paused is False
+
+    assert repository.read_document() == before

@@ -374,6 +374,8 @@ class ConversationApplicationService:
         allow_capability_routing: bool = True,
         active_continuity_thread_id: str | None = None,
         home_moment: str = "ordinary",
+        home_proximity: str = "wide",
+        home_boundary_pause: bool = False,
         document_receipt: DocumentReadReceipt | None = None,
     ) -> ConversationTurnResult:
         active_profile_id = self._models.current().profile_id
@@ -398,6 +400,8 @@ class ConversationApplicationService:
                 allow_capability_routing=allow_capability_routing,
                 active_continuity_thread_id=active_thread_id,
                 home_moment=home_moment,
+                home_proximity=home_proximity,
+                home_boundary_pause=home_boundary_pause,
                 document_receipt=document_receipt,
             )
         except ConversationUnavailableError as error:
@@ -509,6 +513,8 @@ class ConversationApplicationService:
         project_id: str,
         conversation_id: str | None = None,
         home_moment: str = "ordinary",
+        home_proximity: str = "wide",
+        home_boundary_pause: bool = False,
     ) -> ConversationTurnResult:
         if self._local_documents is None:
             raise RuntimeError("local_document_unavailable")
@@ -518,6 +524,8 @@ class ConversationApplicationService:
             project_id=project_id,
             conversation_id=conversation_id,
             home_moment=home_moment,
+            home_proximity=home_proximity,
+            home_boundary_pause=home_boundary_pause,
             document_receipt=receipt,
         )
 
