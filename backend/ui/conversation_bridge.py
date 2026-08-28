@@ -1430,6 +1430,9 @@ class LocalConversationBridge(QObject):
                         summary=result.pending_confirmation.subject,
                     )
                 else:
+                    self._apply_response_proximity_cue(
+                        result.proximity_cue
+                    )
                     snapshot = self._session_snapshot(
                         "assistant_responded",
                         expression_cue=result.expression_cue,
@@ -1461,6 +1464,9 @@ class LocalConversationBridge(QObject):
         else:
             self._conversation_id = result.conversation_id or self._conversation_id
             result_payload = result.model_dump(mode="json")
+            self._apply_response_proximity_cue(
+                result.proximity_cue
+            )
             snapshot = self._session_snapshot(
                 "assistant_responded",
                 expression_cue=result.expression_cue,
@@ -1627,6 +1633,15 @@ class LocalConversationBridge(QObject):
             if self._session.home_moment.value != "special_evening":
                 return
             self._session.pause_special_evening_closeness()
+
+    def _apply_response_proximity_cue(self, cue: str) -> None:
+        """Let Home validate one model-suggested presentation step."""
+        if cue == "hold":
+            return
+        with self._session_lock:
+            if self._session is None:
+                return
+            self._session.apply_special_proximity_suggestion(cue)
 
 
     def _active_continuity_payload(self) -> dict | None:

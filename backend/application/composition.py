@@ -63,6 +63,7 @@ from backend.temporal.proactive_daemon import ProactiveDaemon, request_proactive
 from backend.temporal.proactive_interaction import ProactiveInteractionStore
 from backend.temporal.reminder_trace import ReminderDeliveryTrace
 from backend.temporal.temporal_engine import TemporalEngine
+from backend.temporal.date_resolution import HomeCalendarDateResolver
 from backend.temporal.timezone_provider import HomeTimeZoneProvider, HomeTimeZoneStore
 from backend.conversation.response_expression import (
     ResponseExpressionClassifier,
@@ -223,6 +224,9 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
         catalog=capability_catalog,
         specifications=deterministic_discovery.specifications,
         allowed_operation_ids=adoption.supported_operation_ids,
+        date_resolver=HomeCalendarDateResolver(
+            core.conversation.temporal_engine,
+        ),
     )
     semantic_resolver = LocalSemanticResolver(
         router=core.router,

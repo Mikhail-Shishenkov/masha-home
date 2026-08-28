@@ -81,6 +81,44 @@ def test_provider_sends_json_format_only_for_required_structured_output(monkeypa
     assert response.text == '{"ok":true}'
 
 
+def test_provider_forwards_generic_json_schema_and_temperature(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        return _Response({"message": {"content": '{"kind":"ordinary"}'}, "done": True})
+
+    monkeypatch.setattr("backend.llm.ollama_provider.urlopen", fake_urlopen)
+    schema = {
+        "type": "object",
+        "properties": {"kind": {"const": "ordinary"}},
+        "required": ["kind"],
+        "additionalProperties": False,
+    }
+    request = _request().model_copy(update={
+        "required_capabilities": ModelCapabilities(structured_output=True),
+        "structured_output_schema": schema,
+        "generation_temperature": 0,
+    })
+
+    OllamaProvider().generate(request)
+
+    assert captured["payload"]["format"] == schema
+    assert captured["payload"]["options"] == {"temperature": 0.0}
+
+
+def test_model_request_rejects_schema_without_structured_capability():
+    with pytest.raises(ValueError, match="requires structured_output"):
+        _request().model_copy(
+            update={"structured_output_schema": {"type": "object"}},
+        ).model_validate(
+            {
+                **_request().model_dump(mode="python"),
+                "structured_output_schema": {"type": "object"},
+            }
+        )
+
+
 def test_provider_uses_selected_execution_model_without_fallback(monkeypatch):
     captured = {}
 

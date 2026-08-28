@@ -12,11 +12,12 @@ from backend.conversation.resolution_coordinator import NaturalLanguageResolutio
 from backend.conversation.semantic_resolver import (
     SemanticFollowUpProposal,
     SemanticFollowUpResult,
-    SemanticInterpretationProposal,
+    parse_semantic_interpretation,
     SemanticProposalValidator,
     SemanticResolverFailure,
 )
 from backend.temporal.temporal_engine import FixedClock, TemporalEngine
+from backend.temporal.date_resolution import HomeCalendarDateResolver
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -60,6 +61,9 @@ def test_contextual_follow_up_benchmark_preserves_and_refines_pending_state(tmp_
             catalog=catalog,
             specifications=discovery.specifications,
             allowed_operation_ids=adoption.supported_operation_ids,
+            date_resolver=HomeCalendarDateResolver(
+                TemporalEngine(clock=FixedClock(NOW)),
+            ),
         )
         clock = FixedClock(NOW)
         store = PendingResolutionStore(tmp_path / f"{case['case_id']}.json", clock=clock.now_utc)
@@ -81,7 +85,7 @@ def test_contextual_follow_up_benchmark_preserves_and_refines_pending_state(tmp_
         if "initial_proposal" in case:
             frame = validator.validate(
                 case["initial"],
-                SemanticInterpretationProposal.model_validate(case["initial_proposal"]),
+                parse_semantic_interpretation(case["initial_proposal"]),
             )
             _, pending = coordinator.builder.build(frame, conversation_id="benchmark")
             store.save(pending)

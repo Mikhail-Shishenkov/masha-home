@@ -234,6 +234,44 @@ class HomePresentationSession:
             )
         )
 
+    def apply_special_proximity_suggestion(
+            self,
+            suggestion: str,
+    ) -> HomeSnapshotView | None:
+        """Apply one untrusted model hint through Home-owned scene rules."""
+        if (
+            self._runtime.model.home_moment
+            is not HomeMoment.SPECIAL_EVENING
+            or self._special_evening_boundary_paused
+        ):
+            return None
+
+        current = self._runtime.model.home_proximity
+        target = current
+
+        if suggestion == "closer":
+            if current is HomeProximity.WIDE:
+                target = HomeProximity.CLOSE
+            elif current is HomeProximity.CLOSE:
+                target = HomeProximity.NEAR
+        elif suggestion == "farther":
+            if current is HomeProximity.NEAR:
+                target = HomeProximity.CLOSE
+            elif current is HomeProximity.CLOSE:
+                target = HomeProximity.WIDE
+        elif suggestion != "hold":
+            return None
+
+        if target is current:
+            return None
+
+        return self._dispatch(
+            HomeProximityChanged(
+                occurred_at=self._now(),
+                proximity=target,
+            )
+        )
+
     def user_sent(self) -> HomeSnapshotView:
         return self._dispatch(UserSentMessage(occurred_at=self._now()))
 

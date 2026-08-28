@@ -38,6 +38,7 @@ from .contracts import (
     FetchedPageView,
     MessageView,
     ResponseExpressionCue,
+    ResponseProximityCue,
     PendingConfirmationView,
 )
 from .model_settings import ModelSettingsService
@@ -464,6 +465,7 @@ class ConversationApplicationService:
                 )
 
         expression_cue: ResponseExpressionCue = "warm"
+        proximity_cue: ResponseProximityCue = "hold"
 
         if (
                 resolved_id is not None
@@ -489,13 +491,21 @@ class ConversationApplicationService:
                     and latest.origin is ConversationMessageOrigin.MODEL
             ):
                 try:
-                    expression_cue = self._expression_classifier.classify(
-                        user_message=content,
-                        assistant_message=response_text,
+                    presentation_cue = (
+                        self._expression_classifier.classify_presentation(
+                            user_message=content,
+                            assistant_message=response_text,
+                            home_moment=home_moment,
+                            home_proximity=home_proximity,
+                            boundary_pause=home_boundary_pause,
+                        )
                     )
+                    expression_cue = presentation_cue.expression
+                    proximity_cue = presentation_cue.proximity
                 except Exception:
-                    # Эмоциональный слой не имеет права ломать разговор.
+                    # Presentation hints never have the right to break dialogue.
                     expression_cue = "warm"
+                    proximity_cue = "hold"
 
         return self._result(
             content=content,
@@ -503,6 +513,7 @@ class ConversationApplicationService:
             status=ConversationTurnStatus.COMPLETED,
             profile_id=active_profile_id,
             expression_cue=expression_cue,
+            proximity_cue=proximity_cue,
         )
 
     def send_message_with_document(
@@ -626,6 +637,7 @@ class ConversationApplicationService:
         status: ConversationTurnStatus,
         profile_id: str,
         expression_cue: ResponseExpressionCue = "warm",
+        proximity_cue: ResponseProximityCue = "hold",
         error_code: ApplicationErrorCode | None = None,
     ) -> ConversationTurnResult:
         messages = ()
@@ -664,6 +676,7 @@ class ConversationApplicationService:
             status=status,
             active_profile_id=profile_id,
             expression_cue=expression_cue,
+            proximity_cue=proximity_cue,
             error_code=error_code,
             error_label=None if error_code is None else error_label(error_code),
             pending_confirmation=(

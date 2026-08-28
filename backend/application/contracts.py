@@ -28,6 +28,12 @@ ResponseExpressionCue = Literal[
     "playful",
 ]
 
+ResponseProximityCue = Literal[
+    "hold",
+    "closer",
+    "farther",
+]
+
 class ApplicationErrorCode(str, Enum):
     MODEL_UNAVAILABLE = "MODEL_UNAVAILABLE"
     MODEL_TIMEOUT = "MODEL_TIMEOUT"
@@ -414,6 +420,7 @@ class ConversationTurnResult(UiContract):
     status: ConversationTurnStatus
     active_profile_id: str
     expression_cue: ResponseExpressionCue = "warm"
+    proximity_cue: ResponseProximityCue = "hold"
     error_code: ApplicationErrorCode | None = None
     error_label: str | None = None
     pending_confirmation: PendingConfirmationView | None = None

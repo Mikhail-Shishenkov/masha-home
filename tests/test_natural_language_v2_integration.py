@@ -69,18 +69,20 @@ def test_live_wrapped_request_accumulates_into_calendar_proposal_without_slot_lo
     import socket
 
     provider = LocalProvider(json.dumps({
-        "ordinary_conversation": False,
+        "kind": "supported_action",
         "candidate_operation_ids": [
             "google_calendar.event.create",
             "home.timed_commitments",
         ],
+        "nearby_operation_ids": [],
         "extracted_slots": [
-            {"name": "subject", "value": "занятие"},
-            {"name": "date", "value": "завтра"},
-            {"name": "time", "value": "12:00"},
+            {"name": "subject", "evidence_text": "занятие"},
+            {"name": "date", "evidence_text": "завтра"},
+            {"name": "time", "evidence_text": "12"},
         ],
         "unresolved_referents": [],
         "ambiguity_hint": "capability",
+        "operation_selection_evidence": None,
     }, ensure_ascii=False))
     provider.capabilities = ModelCapabilities(structured_output=True)
     _, _, application = _application(tmp_path, provider=provider)
@@ -138,16 +140,16 @@ def test_live_wrapped_request_accumulates_into_calendar_proposal_without_slot_lo
 def test_unsupported_external_registration_gets_human_truthful_fallback(tmp_path):
     provider = SemanticThenConversationProvider(
         json.dumps({
-            "ordinary_conversation": False,
-            "unsupported_action": True,
+            "kind": "unsupported_action",
+            "candidate_operation_ids": [],
             "nearby_operation_ids": [
                 "google_calendar.event.create",
                 "home.timed_commitments"
             ],
-            "candidate_operation_ids": [],
             "extracted_slots": [],
             "unresolved_referents": [],
             "ambiguity_hint": "none",
+            "operation_selection_evidence": None,
         }),
         "Я записала тебя на внешнее занятие.",
     )
@@ -233,7 +235,7 @@ def test_missing_subject_reaches_calendar_preview_without_losing_known_slots(tmp
         "relation": "follow_up",
         "selected_operation_id": None,
         "slot_updates": [
-            {"name": "subject", "value": "Занятие по AI", "mode": "add"},
+            {"name": "subject", "evidence_text": "Занятие по AI", "mode": "add"},
         ],
     }, ensure_ascii=False))
     provider.capabilities = ModelCapabilities(structured_output=True)
@@ -357,18 +359,20 @@ def test_ordinary_phrases_never_create_pending_semantic_state(tmp_path):
 
 def test_live_wrapped_schedule_uses_semantics_then_existing_clarification(tmp_path):
     provider = LocalProvider(json.dumps({
-        "ordinary_conversation": False,
+        "kind": "supported_action",
         "candidate_operation_ids": [
             "google_calendar.event.create",
             "home.timed_commitments",
         ],
+        "nearby_operation_ids": [],
         "extracted_slots": [
-            {"name": "subject", "value": "занятие"},
-            {"name": "date", "value": "завтра"},
-            {"name": "time", "value": "11:00"},
+            {"name": "subject", "evidence_text": "занятие"},
+            {"name": "date", "evidence_text": "завтра"},
+            {"name": "time", "evidence_text": "11"},
         ],
         "unresolved_referents": [],
         "ambiguity_hint": "capability",
+        "operation_selection_evidence": None,
     }, ensure_ascii=False))
     provider.capabilities = ModelCapabilities(structured_output=True)
     _, _, application = _application(tmp_path, provider=provider)
@@ -388,15 +392,20 @@ def test_live_wrapped_schedule_uses_semantics_then_existing_clarification(tmp_pa
 
 def test_semantically_resolved_indirect_reminder_still_requires_confirmation(tmp_path):
     provider = LocalProvider(json.dumps({
-        "ordinary_conversation": False,
+        "kind": "supported_action",
         "candidate_operation_ids": ["home.timed_commitments"],
+        "nearby_operation_ids": [],
         "extracted_slots": [
-            {"name": "subject", "value": "занятие"},
-            {"name": "date", "value": "завтра"},
-            {"name": "time", "value": "11:00"},
+            {"name": "subject", "evidence_text": "занятие"},
+            {"name": "date", "evidence_text": "завтра"},
+            {"name": "time", "evidence_text": "одиннадцать"},
         ],
         "unresolved_referents": [],
         "ambiguity_hint": "none",
+        "operation_selection_evidence": {
+            "operation_id": "home.timed_commitments",
+            "evidence_text": "надо не забыть",
+        },
     }, ensure_ascii=False))
     provider.capabilities = ModelCapabilities(structured_output=True)
     _, _, application = _application(tmp_path, provider=provider)

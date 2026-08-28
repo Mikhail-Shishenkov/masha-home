@@ -62,7 +62,11 @@ class OllamaProvider(ModelProvider):
             "stream": False,
         }
         if request.required_capabilities.structured_output:
-            payload["format"] = "json"
+            payload["format"] = request.structured_output_schema or "json"
+        if request.generation_temperature is not None:
+            payload["options"] = {
+                "temperature": request.generation_temperature,
+            }
         http_request = Request(
             f"{self.endpoint}/api/chat",
             data=json.dumps(payload).encode("utf-8"),

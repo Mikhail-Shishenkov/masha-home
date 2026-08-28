@@ -12,20 +12,27 @@ from backend.conversation.resolution_coordinator import V2LiveAdoptionPolicy
 from backend.conversation.semantic_resolver import (
     HybridCapabilityCandidateDiscovery,
     LocalSemanticResolver,
+    OrdinaryProposal,
+    SemanticFollowUpProposal,
     SemanticAmbiguityHint,
-    SemanticInterpretationProposal,
+    SupportedActionProposal,
+    UnsupportedActionProposal,
     SemanticProposalValidator,
     SemanticResolverFailure,
     SemanticResolverResult,
     SemanticPendingContext,
     SemanticSlotProposal,
     SemanticValidationError,
+    parse_semantic_interpretation,
 )
 from backend.llm.fake_provider import FakeProvider
 from backend.llm.model_models import ModelCapabilities
 from backend.llm.model_profiles import ModelProfileStore
 from backend.llm.model_roles import ModelRole, ModelRoleProfileStore
 from backend.llm.model_router import ModelRouter
+from backend.temporal.date_resolution import HomeCalendarDateResolver
+from backend.temporal.temporal_engine import FixedClock, TemporalEngine
+from datetime import datetime, timezone
 
 
 def _boundaries(tmp_path, *, provider=None):
@@ -36,6 +43,9 @@ def _boundaries(tmp_path, *, provider=None):
         catalog=catalog,
         specifications=deterministic.specifications,
         allowed_operation_ids=adoption.supported_operation_ids,
+        date_resolver=HomeCalendarDateResolver(TemporalEngine(clock=FixedClock(
+            datetime(2026, 8, 28, 8, 0, tzinfo=timezone.utc)
+        ))),
     )
     profiles = ModelProfileStore(tmp_path / "model-profiles.json")
     roles = ModelRoleProfileStore(tmp_path / "model-roles.json", profiles=profiles)
@@ -55,20 +65,25 @@ def _boundaries(tmp_path, *, provider=None):
     return provider, resolver, validator, hybrid, roles
 
 
-def _schedule_proposal(*, candidates=None, subject="занятие", time="11:00"):
+def _schedule_proposal(
+    *, candidates=None, subject="занятие", time="11",
+    selection_evidence=None,
+):
     return {
-        "ordinary_conversation": False,
+        "kind": "supported_action",
         "candidate_operation_ids": candidates or [
             "google_calendar.event.create",
             "home.timed_commitments",
         ],
+        "nearby_operation_ids": [],
         "extracted_slots": [
-            {"name": "subject", "value": subject},
-            {"name": "date", "value": "завтра"},
-            {"name": "time", "value": time},
+            {"name": "subject", "evidence_text": subject},
+            {"name": "date", "evidence_text": "завтра"},
+            {"name": "time", "evidence_text": time},
         ],
         "unresolved_referents": [],
         "ambiguity_hint": "capability" if len(candidates or (1, 2)) > 1 else "none",
+        "operation_selection_evidence": selection_evidence,
     }
 
 
@@ -88,7 +103,21 @@ def test_local_resolver_uses_configured_role_and_strict_structured_request(tmp_p
     assert provider.last_request.execution_model_id == "qwen3.5:9b"
     assert provider.last_request.identity_context.persona_id == "semantic-resolver"
     assert "qwen3.5" not in provider.last_request.messages[0].content
-    assert '"unsupported_action":bool' in provider.last_request.messages[0].content
+    assert "supported_action" in provider.last_request.messages[0].content
+    assert provider.last_request.structured_output_schema is not None
+    assert provider.last_request.generation_temperature == 0
+    schema = provider.last_request.structured_output_schema
+    assert schema["type"] == "object"
+    assert "anyOf" not in schema
+    assert set(schema["required"]) >= {
+        "kind",
+        "candidate_operation_ids",
+        "nearby_operation_ids",
+        "extracted_slots",
+        "unresolved_referents",
+        "ambiguity_hint",
+        "operation_selection_evidence",
+    }
     assert roles.profile_for(ModelRole.SEMANTIC_RESOLVER).profile_id == "primary"
 
 
@@ -97,6 +126,7 @@ def test_follow_up_resolver_receives_only_bounded_pending_context(tmp_path):
     provider.response_text = json.dumps({
         "relation": "follow_up",
         "selected_operation_id": "google_calendar.event.create",
+        "operation_selection_evidence": "в календарь",
         "slot_updates": [],
     })
     frame = CapabilityCandidateDiscovery(
@@ -152,6 +182,34 @@ def test_follow_up_timeout_is_controlled_and_cannot_patch_pending_state(tmp_path
     }
 
 
+def test_follow_up_operation_selection_evidence_must_be_grounded(tmp_path):
+    _, _, validator, _, _ = _boundaries(tmp_path)
+    frame = CapabilityCandidateDiscovery(
+        catalog=default_home_capability_catalog(),
+    ).interpret("Запиши занятие завтра в 11")
+    _, pending = DeterministicClarificationBuilder(
+        catalog=default_home_capability_catalog(),
+    ).build(frame, conversation_id="selection-grounding")
+    proposal = SemanticFollowUpProposal.model_validate({
+        "relation": "follow_up",
+        "selected_operation_id": "google_calendar.event.create",
+        "operation_selection_evidence": "в календарь",
+        "slot_updates": [],
+        "referent_updates": [],
+    })
+
+    with pytest.raises(
+        SemanticValidationError,
+        match="follow_up_operation_selection_not_grounded",
+    ):
+        validator.validate_follow_up(
+            pending,
+            "давай туда",
+            proposal,
+            date_resolver=validator.date_resolver,
+        )
+
+
 def test_hybrid_understands_wrapped_schedule_and_home_derives_ambiguity(tmp_path):
     provider, _, _, hybrid, _ = _boundaries(tmp_path)
     provider.response_text = json.dumps(_schedule_proposal(), ensure_ascii=False)
@@ -167,15 +225,22 @@ def test_hybrid_understands_wrapped_schedule_and_home_derives_ambiguity(tmp_path
     ]
     assert {item.name: item.value for item in frame.slots} == {
         "subject": "занятие",
-        "date": "завтра",
+        "date": "2026-08-29",
         "time": "11:00",
     }
 
 
 def test_word_time_is_validated_against_current_utterance(tmp_path):
     _, _, validator, _, _ = _boundaries(tmp_path)
-    proposal = SemanticInterpretationProposal.model_validate(
-        _schedule_proposal(candidates=["home.timed_commitments"])
+    proposal = parse_semantic_interpretation(
+        _schedule_proposal(
+            candidates=["home.timed_commitments"],
+            time="одиннадцать",
+            selection_evidence={
+                "operation_id": "home.timed_commitments",
+                "evidence_text": "надо не забыть",
+            },
+        )
     )
 
     frame = validator.validate(
@@ -201,7 +266,7 @@ def test_word_time_is_validated_against_current_utterance(tmp_path):
         (
             {
                 **_schedule_proposal(candidates=["home.timed_commitments"]),
-                "extracted_slots": [{"name": "provider_id", "value": "secret"}],
+                "extracted_slots": [{"name": "provider_id", "evidence_text": "secret"}],
                 "ambiguity_hint": "slot",
             },
             "unknown_slot",
@@ -210,7 +275,7 @@ def test_word_time_is_validated_against_current_utterance(tmp_path):
 )
 def test_validator_rejects_unknown_unsupported_and_unknown_slot(tmp_path, payload, error):
     _, _, validator, _, _ = _boundaries(tmp_path)
-    proposal = SemanticInterpretationProposal.model_validate(payload)
+    proposal = parse_semantic_interpretation(payload)
 
     with pytest.raises(SemanticValidationError, match=error):
         validator.validate("Запиши занятие завтра в 11", proposal)
@@ -218,21 +283,23 @@ def test_validator_rejects_unknown_unsupported_and_unknown_slot(tmp_path, payloa
 
 def test_model_cannot_invent_subject_or_resolved_referent(tmp_path):
     _, _, validator, _, _ = _boundaries(tmp_path)
-    invented_subject = SemanticInterpretationProposal.model_validate(
+    invented_subject = parse_semantic_interpretation(
         _schedule_proposal(
             candidates=["home.timed_commitments"], subject="стоматолог"
         )
     )
-    invented_referent = SemanticInterpretationProposal(
-        ordinary_conversation=False,
+    invented_referent = SupportedActionProposal(
+        kind="supported_action",
         candidate_operation_ids=("home.timed_commitments",),
+        nearby_operation_ids=(),
         extracted_slots=(
-            SemanticSlotProposal(name="subject", value="занятие"),
-            SemanticSlotProposal(name="date", value="завтра"),
-            SemanticSlotProposal(name="time", value="11:00"),
+            SemanticSlotProposal(name="subject", evidence_text="занятие"),
+            SemanticSlotProposal(name="date", evidence_text="завтра"),
+            SemanticSlotProposal(name="time", evidence_text="11"),
         ),
         unresolved_referents=("это",),
         ambiguity_hint=SemanticAmbiguityHint.REFERENT,
+        operation_selection_evidence=None,
     )
 
     with pytest.raises(SemanticValidationError, match="invented_subject"):
@@ -243,7 +310,7 @@ def test_model_cannot_invent_subject_or_resolved_referent(tmp_path):
 
 def test_subject_provenance_rejects_supported_noun_with_invented_detail(tmp_path):
     _, _, validator, _, _ = _boundaries(tmp_path)
-    proposal = SemanticInterpretationProposal.model_validate(
+    proposal = parse_semantic_interpretation(
         _schedule_proposal(
             candidates=["home.timed_commitments"],
             subject="занятие с выдуманным преподавателем",
@@ -257,8 +324,8 @@ def test_subject_provenance_rejects_supported_noun_with_invented_detail(tmp_path
 @pytest.mark.parametrize(
     "response_text,simulate_timeout,failure",
     (
-        ("not-json", False, SemanticResolverFailure.MALFORMED_OUTPUT),
-        ("{}", False, SemanticResolverFailure.MALFORMED_OUTPUT),
+        ("not-json", False, SemanticResolverFailure.JSON_WIRE_ERROR),
+        ("{}", False, SemanticResolverFailure.SCHEMA_ERROR),
         ("{}", True, SemanticResolverFailure.TIMEOUT),
     ),
 )
@@ -282,11 +349,13 @@ def test_malformed_and_timeout_fail_to_deterministic_ordinary_path(
 def test_semantic_ordinary_conversation_remains_ordinary(tmp_path):
     provider, _, _, hybrid, _ = _boundaries(tmp_path)
     provider.response_text = json.dumps({
-        "ordinary_conversation": True,
+        "kind": "ordinary",
         "candidate_operation_ids": [],
+        "nearby_operation_ids": [],
         "extracted_slots": [],
         "unresolved_referents": [],
         "ambiguity_hint": "none",
+        "operation_selection_evidence": None,
     })
 
     frame = hybrid.interpret("Как ты сегодня?")
@@ -296,13 +365,17 @@ def test_semantic_ordinary_conversation_remains_ordinary(tmp_path):
 
 def test_semantic_explicit_unsupported_action_stays_distinct_from_conversation(tmp_path):
     _, _, validator, _, _ = _boundaries(tmp_path)
-    proposal = SemanticInterpretationProposal(
-        ordinary_conversation=False,
-        unsupported_action=True,
+    proposal = UnsupportedActionProposal(
+        kind="unsupported_action",
+        candidate_operation_ids=(),
         nearby_operation_ids=(
             "google_calendar.event.create",
             "home.timed_commitments",
         ),
+        extracted_slots=(),
+        unresolved_referents=(),
+        ambiguity_hint="none",
+        operation_selection_evidence=None,
     )
 
     frame = validator.validate(
@@ -318,11 +391,13 @@ def test_semantic_explicit_unsupported_action_stays_distinct_from_conversation(t
 def test_untrusted_semantics_cannot_erase_strict_structural_calendar_owner(tmp_path):
     provider, _, _, hybrid, _ = _boundaries(tmp_path)
     provider.response_text = json.dumps({
-        "ordinary_conversation": True,
+        "kind": "ordinary",
         "candidate_operation_ids": [],
+        "nearby_operation_ids": [],
         "extracted_slots": [],
         "unresolved_referents": [],
         "ambiguity_hint": "none",
+        "operation_selection_evidence": None,
     })
 
     frame = hybrid.interpret("Поставь встречу завтра в 19 на час")
@@ -337,13 +412,13 @@ def test_untrusted_semantics_cannot_erase_strict_structural_calendar_owner(tmp_p
 def test_unsupported_without_adopted_evidence_does_not_steal_legacy_route(tmp_path):
     provider, _, _, hybrid, _ = _boundaries(tmp_path)
     provider.response_text = json.dumps({
-        "ordinary_conversation": False,
-        "unsupported_action": True,
+        "kind": "unsupported_action",
         "candidate_operation_ids": [],
         "nearby_operation_ids": [],
         "extracted_slots": [],
         "unresolved_referents": [],
         "ambiguity_hint": "none",
+        "operation_selection_evidence": None,
     })
 
     frame = hybrid.interpret("Обнови память о выбранной модели")
@@ -355,13 +430,13 @@ def test_unsupported_without_adopted_evidence_does_not_steal_legacy_route(tmp_pa
 def test_untrusted_unsupported_proposal_cannot_steal_connector_read_owner(tmp_path):
     provider, _, _, hybrid, _ = _boundaries(tmp_path)
     provider.response_text = json.dumps({
-        "ordinary_conversation": False,
-        "unsupported_action": True,
+        "kind": "unsupported_action",
         "candidate_operation_ids": [],
         "nearby_operation_ids": [],
         "extracted_slots": [],
         "unresolved_referents": [],
         "ambiguity_hint": "none",
+        "operation_selection_evidence": None,
     })
 
     frame = hybrid.interpret("Посмотри мою почту")

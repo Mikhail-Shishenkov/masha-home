@@ -347,6 +347,12 @@ class DialogueCore:
         binder = getattr(discovery, "bind_temporal_engine", None)
         if binder is not None:
             binder(temporal_engine)
+        validator = getattr(self.discovery, "validator", None)
+        validator_binder = getattr(validator, "bind_date_resolver", None)
+        if validator_binder is not None:
+            from backend.temporal.date_resolution import HomeCalendarDateResolver
+
+            validator_binder(HomeCalendarDateResolver(temporal_engine))
         engine_binder = getattr(self.engine, "bind_temporal_engine", None)
         if engine_binder is not None:
             engine_binder(temporal_engine)

@@ -168,6 +168,10 @@ class InterpretationSpecification(StrictInterpretationModel):
 
     operation_id: str = Field(pattern=_OPERATION_ID, max_length=100)
     required_slots: tuple[str, ...] = Field(default=(), max_length=16)
+    operation_selection_group: str | None = Field(
+        default=None,
+        pattern=r"^[a-z][a-z0-9_]{0,63}$",
+    )
 
     @model_validator(mode="after")
     def required_slots_are_valid_and_unique(self):
@@ -229,6 +233,7 @@ def default_interpretation_specifications() -> tuple[InterpretationSpecification
         InterpretationSpecification(
             operation_id="google_calendar.event.create",
             required_slots=("subject", "date", "time", "duration_minutes"),
+            operation_selection_group="personal_scheduling",
         ),
         InterpretationSpecification(
             operation_id="google_drive.document.create",
@@ -242,6 +247,7 @@ def default_interpretation_specifications() -> tuple[InterpretationSpecification
         InterpretationSpecification(
             operation_id="home.timed_commitments",
             required_slots=("subject", "date", "time"),
+            operation_selection_group="personal_scheduling",
         ),
         InterpretationSpecification(operation_id="yandex_mail.read"),
         InterpretationSpecification(operation_id="yandex_disk.read"),

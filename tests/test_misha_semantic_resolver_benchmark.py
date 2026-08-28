@@ -85,12 +85,21 @@ def test_benchmark_metrics_have_stable_documented_meaning():
 
     assert score_observations(observations) == {
         "cases": 2,
+        "wire_schema_success_percent": 0.0,
+        "kind_accuracy_percent": 0.0,
         "exact_candidate_accuracy_percent": 50.0,
         "forbidden_action_false_positive_rate_percent": 50.0,
         "clarification_accuracy_percent": 50.0,
         "slot_extraction_accuracy_percent": 50.0,
+        "slot_evidence_grounding_percent": 0.0,
+        "home_normalization_acceptance_percent": 0.0,
         "ordinary_conversation_false_positive_rate_percent": 100.0,
         "malformed_output_rate_percent": 50.0,
+        "diagnostic_category_counts": {},
+        "dialogue_core_resolution_success_percent": 0.0,
+        "cold_latency_ms": 10.0,
+        "warm_median_latency_ms": 30.0,
+        "warm_p95_latency_ms": 30.0,
         "median_latency_ms": 20.0,
         "p95_latency_ms": 30.0,
     }

@@ -45,14 +45,17 @@ class FollowUpResolver:
         return SemanticFollowUpResult(proposal=self.proposals.pop(0), latency_ms=0)
 
 
-def _proposal(*, selected=None, updates=(), relation="follow_up"):
+def _proposal(
+    *, selected=None, selection_evidence=None, updates=(), relation="follow_up"
+):
     return SemanticFollowUpProposal(
         relation=SemanticFollowUpRelation(relation),
         selected_operation_id=selected,
+        operation_selection_evidence=selection_evidence,
         slot_updates=tuple(
             SemanticSlotUpdateProposal(
                 name=name,
-                value=value,
+                evidence_text=value,
                 mode=SemanticSlotMergeMode(mode),
             )
             for name, value, mode in updates
@@ -68,6 +71,7 @@ def _coordinator(tmp_path, resolver=None):
         catalog=catalog,
         specifications=discovery.specifications,
         allowed_operation_ids=adoption.supported_operation_ids,
+        date_resolver=HomeCalendarDateResolver(TemporalEngine(clock=FixedClock(NOW))),
     )
     clock = FixedClock(NOW)
     temporal = TemporalEngine(clock=clock)
@@ -176,7 +180,10 @@ def test_semantic_enrichment_and_correction_accumulate_before_choice(tmp_path):
 
 def test_semantic_capability_choice_cannot_drop_original_slots(tmp_path):
     resolver = FollowUpResolver(
-        _proposal(selected="home.timed_commitments"),
+        _proposal(
+            selected="home.timed_commitments",
+            selection_evidence="для Дома",
+        ),
     )
     coordinator, _ = _coordinator(tmp_path, resolver)
     coordinator.coordinate("Запиши занятие завтра в 12", conversation_id="c1")

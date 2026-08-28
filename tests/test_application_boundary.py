@@ -1936,3 +1936,49 @@ def test_special_evening_boundary_pause_is_session_only_and_manual_closeness_res
     assert session.special_evening_boundary_paused is False
 
     assert repository.read_document() == before
+
+
+def test_special_evening_model_proximity_hint_is_one_step_home_owned_and_pause_safe(tmp_path):
+    _, _, application = _application(tmp_path)
+    current_time = [datetime(2026, 8, 28, 20, 0, tzinfo=timezone.utc)]
+    application._home_snapshot._clock = lambda: current_time[0]
+
+    session = application.open_home_session()
+    session.opened()
+
+    # Ordinary mode ignores model proximity hints.
+    assert session.apply_special_proximity_suggestion("closer") is None
+    assert session.home_proximity is HomeProximity.WIDE
+
+    assert session.enter_special_evening() is not None
+
+    first = session.apply_special_proximity_suggestion("closer")
+    assert first is not None
+    assert first.presentation.home_proximity is HomeProximity.CLOSE
+
+    second = session.apply_special_proximity_suggestion("closer")
+    assert second is not None
+    assert second.presentation.home_proximity is HomeProximity.NEAR
+
+    # Never jump beyond an edge.
+    assert session.apply_special_proximity_suggestion("closer") is None
+    assert session.home_proximity is HomeProximity.NEAR
+
+    back = session.apply_special_proximity_suggestion("farther")
+    assert back is not None
+    assert back.presentation.home_proximity is HomeProximity.CLOSE
+
+    # Step 2 boundary remains absolute for model-origin hints.
+    assert session.pause_special_evening_closeness() is not None
+    assert session.special_evening_boundary_paused is True
+    assert session.home_proximity is HomeProximity.WIDE
+    assert session.apply_special_proximity_suggestion("closer") is None
+    assert session.home_proximity is HomeProximity.WIDE
+    assert session.special_evening_boundary_paused is True
+
+    # Explicit manual UI closeness is still the re-entry authority.
+    assert session.set_special_proximity(HomeProximity.CLOSE) is not None
+    assert session.special_evening_boundary_paused is False
+    resumed = session.apply_special_proximity_suggestion("closer")
+    assert resumed is not None
+    assert resumed.presentation.home_proximity is HomeProximity.NEAR
