@@ -4,6 +4,11 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
 # Virtual environment
 .venv/
@@ -32,6 +37,11 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+.tmp/
+node_modules/
+coverage/
+dist/
+build/
 local-data/model-benchmarks/
 local-data/conversations/
 local-data/behavioral-regressions/

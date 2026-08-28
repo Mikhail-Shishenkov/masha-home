@@ -6,10 +6,14 @@ Masha Home — local-first персональная AI-система и циф�
 визуальный канон принадлежат приложению; языковая модель является заменяемым
 когнитивным движком.
 
-Текущий checkpoint: v0.3.1 Slice A — Human Information Model, lifecycle,
-restore, Recall foundation и model-facing privacy для памяти.
+Текущая engineering-линия: Living Home Core и Natural Language Router V2.
+Semantic Resolver Slice 2D остаётся ограниченным application-owned adoption:
+новые capability families подключаются по одной, не через скрытое расширение
+полномочий модели.
 
-Следующее направление: v0.3.1 Slice B — человеческий UX памяти, поиска,
-пассивных кандидатов и истории в Home.
+Актуальные источники истины:
 
-Текущий архитектурный канон и roadmap: [docs/MASHA_HOME_CANON.md](docs/MASHA_HOME_CANON.md).
+- [Конституция](CONSTITUTION.md);
+- [архитектурный канон и roadmap](docs/MASHA_HOME_CANON.md);
+- [принятые решения](docs/DECISIONS.md);
+- [нормативный Memory contract](docs/MEMORY_SPEC.md).

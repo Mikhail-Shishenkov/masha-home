@@ -77,5 +77,5 @@ test("prototype remains offline, disposable and disconnected from production sta
 });
 
 test("canonical room asset exists outside the disposable workshop", () => {
-  assert.ok(fs.existsSync(path.resolve(__dirname, "../../../frontend/assets/canonical-master.png")));
+  assert.ok(fs.existsSync(path.resolve(__dirname, "../../../frontend/assets/presence/evening/idle.png")));
 });
