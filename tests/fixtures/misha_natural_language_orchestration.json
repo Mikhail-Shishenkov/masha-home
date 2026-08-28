@@ -3,7 +3,7 @@
   "cases": [
     {
       "case_id": "schedule_initial_clarification",
-      "initial": "Запиши занятие завтра в 10",
+      "initial": "Запиши занятие завтра в 10 на час",
       "follow_up": null,
       "advance_minutes": 0,
       "expected_status": "clarification",
@@ -12,7 +12,7 @@
     },
     {
       "case_id": "schedule_calendar_handoff",
-      "initial": "Запиши занятие завтра в 10",
+      "initial": "Запиши занятие завтра в 10 на час",
       "follow_up": "В календарь",
       "advance_minutes": 0,
       "expected_status": "resolved_handoff",
@@ -30,7 +30,7 @@
     },
     {
       "case_id": "calendar_missing_subject_clarification",
-      "initial": "Поставь завтра в 10",
+      "initial": "Поставь завтра в 10 на час",
       "follow_up": null,
       "advance_minutes": 0,
       "expected_status": "clarification",
@@ -39,7 +39,7 @@
     },
     {
       "case_id": "calendar_missing_subject_handoff",
-      "initial": "Поставь завтра в 10",
+      "initial": "Поставь завтра в 10 на час",
       "follow_up": "Занятие по AI",
       "advance_minutes": 0,
       "expected_status": "resolved_handoff",

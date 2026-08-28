@@ -70,17 +70,18 @@ def test_capability_clarification_uses_human_labels_and_internal_operation_ids()
 
 @pytest.mark.parametrize("answer", ("в календарь", "календарь", "поставь в календарь"))
 def test_calendar_choice_patches_same_frame_and_preserves_known_structure(answer):
-    _, pending = _build("Запиши занятие завтра в 10")
+    _, pending = _build("Запиши занятие завтра в 10 на час")
     original_evidence = pending.interpretation.candidates[0].evidence
 
     result = FollowUpResolutionEngine().resolve(pending, answer)
 
     assert result.outcome is FollowUpOutcome.RESOLVED
     assert result.selected_operation_id == "google_calendar.event.create"
-    assert result.interpretation.original_utterance == "Запиши занятие завтра в 10"
+    assert result.interpretation.original_utterance == "Запиши занятие завтра в 10 на час"
     assert _slots(result.interpretation) == {
         "date": "завтра",
         "time": "10:00",
+        "duration_minutes": "60",
         "subject": "занятие",
     }
     assert result.interpretation.candidates[0].evidence == original_evidence
@@ -98,7 +99,7 @@ def test_timed_reminder_choice_selects_existing_candidate(answer):
 
 
 def test_missing_subject_builder_and_follow_up_fill_only_the_requested_slot():
-    request, pending = _build("Поставь завтра в 19")
+    request, pending = _build("Поставь завтра в 19 на час")
 
     assert request.clarification_kind is ClarificationKind.SLOT
     assert request.requested_slot == "subject"
@@ -115,6 +116,7 @@ def test_missing_subject_builder_and_follow_up_fill_only_the_requested_slot():
     assert _slots(result.interpretation) == {
         "date": "завтра",
         "time": "19:00",
+        "duration_minutes": "60",
         "subject": "Занятие по AI",
     }
 

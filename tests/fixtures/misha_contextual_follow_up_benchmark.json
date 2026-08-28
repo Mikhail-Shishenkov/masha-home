@@ -3,10 +3,10 @@
   "cases": [
     {
       "case_id": "indirect_dentist_choose_calendar",
-      "initial": "Маш, завтра в девять у меня стоматолог, куда-нибудь запиши",
-      "initial_proposal": {"ordinary_conversation": false, "candidate_operation_ids": ["google_calendar.event.create", "home.timed_commitments"], "extracted_slots": [{"name": "subject", "value": "стоматолог"}, {"name": "date", "value": "завтра"}, {"name": "time", "value": "09:00"}], "unresolved_referents": [], "ambiguity_hint": "capability"},
+      "initial": "Маш, завтра в девять у меня стоматолог на час, куда-нибудь запиши",
+      "initial_proposal": {"ordinary_conversation": false, "candidate_operation_ids": ["google_calendar.event.create", "home.timed_commitments"], "extracted_slots": [{"name": "subject", "value": "стоматолог"}, {"name": "date", "value": "завтра"}, {"name": "time", "value": "09:00"}, {"name": "duration_minutes", "value": "на час"}], "unresolved_referents": [], "ambiguity_hint": "capability"},
       "follow_ups": [{"utterance": "давай в календарь", "proposal": {"relation": "follow_up", "selected_operation_id": "google_calendar.event.create", "slot_updates": []}}],
-      "expected_status": "resolved_handoff", "expected_operation_id": "google_calendar.event.create", "expected_slots": {"subject": "стоматолог", "date": "2026-08-29", "time": "09:00"}, "pending_survives": false
+      "expected_status": "resolved_handoff", "expected_operation_id": "google_calendar.event.create", "expected_slots": {"subject": "стоматолог", "date": "2026-08-29", "time": "09:00", "duration_minutes": "60"}, "pending_survives": false
     },
     {
       "case_id": "indirect_dentist_choose_reminder",
@@ -17,27 +17,27 @@
     },
     {
       "case_id": "fill_title_only",
-      "initial": "Поставь завтра в 10",
+      "initial": "Поставь завтра в 10 на час",
       "follow_ups": [{"utterance": "это тренировка", "proposal": {"relation": "follow_up", "selected_operation_id": null, "slot_updates": [{"name": "subject", "value": "тренировка", "mode": "add"}]}}],
-      "expected_status": "resolved_handoff", "expected_operation_id": "google_calendar.event.create", "expected_slots": {"subject": "тренировка", "date": "2026-08-29", "time": "10:00"}, "pending_survives": false
+      "expected_status": "resolved_handoff", "expected_operation_id": "google_calendar.event.create", "expected_slots": {"subject": "тренировка", "date": "2026-08-29", "time": "10:00", "duration_minutes": "60"}, "pending_survives": false
     },
     {
       "case_id": "fill_saturday_only",
-      "initial": "Поставь тренировку в 10",
+      "initial": "Поставь тренировку в 10 на час",
       "follow_ups": [{"utterance": "в субботу"}],
-      "expected_status": "resolved_handoff", "expected_operation_id": "google_calendar.event.create", "expected_slots": {"subject": "тренировку", "date": "2026-08-29", "time": "10:00"}, "pending_survives": false
+      "expected_status": "resolved_handoff", "expected_operation_id": "google_calendar.event.create", "expected_slots": {"subject": "тренировку", "date": "2026-08-29", "time": "10:00", "duration_minutes": "60"}, "pending_survives": false
     },
     {
       "case_id": "correct_time_then_choose",
-      "initial": "Запиши занятие завтра в 10",
+      "initial": "Запиши занятие завтра в 10 на час",
       "follow_ups": [{"utterance": "не в 10, а в 11", "proposal": {"relation": "follow_up", "selected_operation_id": null, "slot_updates": [{"name": "time", "value": "11", "mode": "correct"}]}}, {"utterance": "в календарь"}],
-      "expected_status": "resolved_handoff", "expected_operation_id": "google_calendar.event.create", "expected_slots": {"subject": "занятие", "date": "2026-08-29", "time": "11:00"}, "pending_survives": false
+      "expected_status": "resolved_handoff", "expected_operation_id": "google_calendar.event.create", "expected_slots": {"subject": "занятие", "date": "2026-08-29", "time": "11:00", "duration_minutes": "60"}, "pending_survives": false
     },
     {
       "case_id": "correct_date_then_choose",
-      "initial": "Запиши занятие завтра в 10",
+      "initial": "Запиши занятие завтра в 10 на час",
       "follow_ups": [{"utterance": "нет, в воскресенье", "proposal": {"relation": "follow_up", "selected_operation_id": null, "slot_updates": [{"name": "date", "value": "в воскресенье", "mode": "correct"}]}}, {"utterance": "в календарь"}],
-      "expected_status": "resolved_handoff", "expected_operation_id": "google_calendar.event.create", "expected_slots": {"subject": "занятие", "date": "2026-08-30", "time": "10:00"}, "pending_survives": false
+      "expected_status": "resolved_handoff", "expected_operation_id": "google_calendar.event.create", "expected_slots": {"subject": "занятие", "date": "2026-08-30", "time": "10:00", "duration_minutes": "60"}, "pending_survives": false
     },
     {
       "case_id": "cancel_accumulated_intent",

@@ -105,6 +105,11 @@ class ConversationApplicationService:
             return None
         return self.conversation(latest_message.conversation_id, limit=limit)
 
+    def dialogue_diagnostics(self, conversation_id: str):
+        """Read-only bounded Dialogue Core snapshot for tests and local diagnostics."""
+
+        return self._conversation.dialogue_snapshot(conversation_id)
+
     def recent_conversations(self, *, limit: int | None = None) -> tuple[ConversationSummaryView, ...]:
         """Return short human-readable summaries without duplicating history."""
         summaries: list[ConversationSummaryView] = []

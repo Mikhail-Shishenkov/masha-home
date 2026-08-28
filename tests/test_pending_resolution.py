@@ -34,7 +34,7 @@ class MutableClock:
 def _pending(clock: MutableClock, *, resolution_id: str, conversation_id: str = "conversation-1"):
     catalog = default_home_capability_catalog()
     frame = CapabilityCandidateDiscovery(catalog=catalog).interpret(
-        "Запиши занятие завтра в 10"
+        "Запиши занятие завтра в 10 на час"
     )
     return DeterministicClarificationBuilder(
         catalog=catalog,
@@ -152,6 +152,7 @@ def test_restart_between_question_and_reply_recovers_same_frame_and_resolves(tmp
     assert {slot.name: slot.value for slot in final.interpretation.slots} == {
         "date": "завтра",
         "time": "10:00",
+        "duration_minutes": "60",
         "subject": "занятие",
     }
 
@@ -180,8 +181,37 @@ def test_store_is_versioned_bounded_and_compacts_old_terminal_records(tmp_path):
         clock.value += timedelta(minutes=1)
 
     payload = json.loads(path.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == "1.0"
+    assert payload["schema_version"] == "2.0"
     assert [item["resolution_id"] for item in payload["resolutions"]] == [ids[-1]]
+
+
+def test_version_one_question_shape_migrates_to_first_class_active_question(tmp_path):
+    clock = MutableClock(datetime(2026, 8, 27, 12, 0, tzinfo=timezone.utc))
+    path = tmp_path / "pending-resolutions.json"
+    pending = _pending(
+        clock,
+        resolution_id="00000000-0000-0000-0000-000000000049",
+    )
+    row = pending.model_dump(mode="json")
+    question = row.pop("active_question")
+    row.update({
+        "clarification_kind": question["kind"],
+        "choices": question["choices"],
+        "requested_slot": question["requested_slot"],
+        "referent_expression": question["referent_expression"],
+    })
+    path.write_text(
+        json.dumps({"schema_version": "1.0", "resolutions": [row]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    recovered = PendingResolutionStore(path, clock=clock).active_for_conversation(
+        "conversation-1"
+    )
+
+    assert recovered.resolution_id == pending.resolution_id
+    assert recovered.active_question.kind.value == "capability"
+    assert recovered.active_question.choices == pending.active_question.choices
 
 
 def test_corrupt_store_is_reported_and_never_silently_discarded(tmp_path):

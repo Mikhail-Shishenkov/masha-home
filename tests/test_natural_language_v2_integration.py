@@ -96,9 +96,16 @@ def test_live_wrapped_request_accumulates_into_calendar_proposal_without_slot_lo
         "Доброе утро, Маша! Запиши занятие завтра в 12",
         project_id=PROJECT_ID,
     )
+    first_diagnostic = application.dialogue_diagnostics(first.conversation_id)
     model_calls_after_first = len(provider.requests)
     second = application.send_message(
         "Поставь в календарь",
+        project_id=PROJECT_ID,
+        conversation_id=first.conversation_id,
+    )
+    second_diagnostic = application.dialogue_diagnostics(first.conversation_id)
+    third = application.send_message(
+        "на час",
         project_id=PROJECT_ID,
         conversation_id=first.conversation_id,
     )
@@ -106,10 +113,22 @@ def test_live_wrapped_request_accumulates_into_calendar_proposal_without_slot_lo
     assert first.assistant_message.content == (
         "Занятие — поставить в календарь или просто напомнить в 12:00?"
     )
-    assert second.pending_confirmation is not None
-    assert second.pending_confirmation.confirmation_type == "google_calendar_create"
-    assert "занятие" in second.assistant_message.content.casefold()
-    assert "12:00–13:00" in second.assistant_message.content
+    assert first_diagnostic.dialogue_state.last_decision.semantic_command_status == "accepted"
+    assert first_diagnostic.dialogue_state.last_decision.proposed_semantic_command is not None
+    assert second.pending_confirmation is None
+    assert second.assistant_message.content == "На сколько времени поставить?"
+    assert {
+        slot.name: slot.value
+        for slot in second_diagnostic.dialogue_state.flow_stack[0].validated_slots
+    } == {
+        "subject": "занятие",
+        "date": "2026-08-29",
+        "time": "12:00",
+    }
+    assert third.pending_confirmation is not None
+    assert third.pending_confirmation.confirmation_type == "google_calendar_create"
+    assert "занятие" in third.assistant_message.content.casefold()
+    assert "12:00–13:00" in third.assistant_message.content
     assert len(provider.requests) == model_calls_after_first
     receipts = conversation.google_calendar_create_service.writer.receipt_store._items
     assert {item.status for item in receipts.values()} == {"proposed"}
@@ -119,7 +138,12 @@ def test_live_wrapped_request_accumulates_into_calendar_proposal_without_slot_lo
 def test_unsupported_external_registration_gets_human_truthful_fallback(tmp_path):
     provider = SemanticThenConversationProvider(
         json.dumps({
-            "ordinary_conversation": True,
+            "ordinary_conversation": False,
+            "unsupported_action": True,
+            "nearby_operation_ids": [
+                "google_calendar.event.create",
+                "home.timed_commitments"
+            ],
             "candidate_operation_ids": [],
             "extracted_slots": [],
             "unresolved_referents": [],
@@ -130,14 +154,16 @@ def test_unsupported_external_registration_gets_human_truthful_fallback(tmp_path
     _, _, application = _application(tmp_path, provider=provider)
 
     turn = application.send_message(
-        "Привет, моя хорошая! запиши меня на занятие в 9 утра",
+        "Привет, моя хорошая! запиши меня на внешнее занятие завтра в 9",
         project_id=PROJECT_ID,
     )
 
     assert turn.pending_confirmation is None
-    assert "Я пока ничего не меняла" in turn.assistant_message.content
-    assert "в этом сообщении Дом" not in turn.assistant_message.content
+    assert "пока не умею выполнять" in turn.assistant_message.content
+    assert "календар" in turn.assistant_message.content.casefold()
+    assert "напом" in turn.assistant_message.content.casefold()
     assert "записала тебя" not in turn.assistant_message.content.casefold()
+    assert len(provider.requests) == 1
 
 
 def test_calendar_choice_reaches_existing_preview_with_zero_provider_effects(tmp_path, monkeypatch):
@@ -151,7 +177,7 @@ def test_calendar_choice_reaches_existing_preview_with_zero_provider_effects(tmp
     )
 
     first = application.send_message(
-        "Маша, запиши занятие завтра в 10", project_id=PROJECT_ID
+        "Маша, запиши занятие завтра в 10 на час", project_id=PROJECT_ID
     )
     second = application.send_message(
         "В календарь",
@@ -173,7 +199,7 @@ def test_calendar_choice_reaches_existing_preview_with_zero_provider_effects(tmp
     assert all(item.confirmed_at is None for item in writer.receipt_store._items.values())
     transcript = application.conversation(first.conversation_id).messages
     assert [item.content for item in transcript] == [
-        "Маша, запиши занятие завтра в 10",
+        "Маша, запиши занятие завтра в 10 на час",
         first.assistant_message.content,
         "В календарь",
         second.assistant_message.content,
@@ -220,21 +246,27 @@ def test_missing_subject_reaches_calendar_preview_without_losing_known_slots(tmp
     )
 
     assert first.assistant_message.content == "Что именно поставить в календарь?"
-    assert "Занятие по AI" in second.assistant_message.content
-    assert "10:00–11:00" in second.assistant_message.content
-    assert second.pending_confirmation.confirmation_type == "google_calendar_create"
+    assert second.assistant_message.content == "На сколько времени поставить?"
+    third = application.send_message(
+        "на час",
+        project_id=PROJECT_ID,
+        conversation_id=first.conversation_id,
+    )
+    assert "Занятие по AI" in third.assistant_message.content
+    assert "10:00–11:00" in third.assistant_message.content
+    assert third.pending_confirmation.confirmation_type == "google_calendar_create"
 
 
 def test_restart_recovers_pending_meaning_and_proposes_without_provider_mutation(tmp_path):
     root, provider, application = _application(tmp_path)
     first = application.send_message(
-        "Запиши занятие завтра в 10", project_id=PROJECT_ID
+        "Запиши занятие завтра в 10 на час", project_id=PROJECT_ID
     )
     state_path = root / "local-data" / "runtime" / "pending-resolutions.json"
     assert state_path.exists()
-    resolution_id = application._conversation._conversation.natural_language_coordinator.store.active_for_conversation(
+    resolution_id = application.dialogue_diagnostics(
         first.conversation_id
-    ).resolution_id
+    ).dialogue_state.active_flow_id
 
     restarted = build_masha_application(
         project_root=root,
@@ -245,12 +277,11 @@ def test_restart_recovers_pending_meaning_and_proposes_without_provider_mutation
         project_id=PROJECT_ID,
         conversation_id=first.conversation_id,
     )
-    stored = restarted._conversation._conversation.natural_language_coordinator.store.get(
-        resolution_id
-    )
+    restarted_diagnostic = restarted.dialogue_diagnostics(first.conversation_id)
 
     assert second.pending_confirmation.confirmation_type == "google_calendar_create"
-    assert stored.status.value == "resolved"
+    assert restarted_diagnostic.dialogue_state.active_flow_id is None
+    assert restarted_diagnostic.dialogue_state.last_decision.pending_resolution_id == resolution_id
     assert provider.requests == []
     receipts = restarted._conversation._conversation.google_calendar_create_service.writer.receipt_store._items
     assert {item.status for item in receipts.values()} == {"proposed"}
@@ -262,7 +293,7 @@ def test_not_a_follow_up_reaches_model_and_pending_can_resolve_later(tmp_path):
         tmp_path, provider=LocalProvider("Завтра будет спокойно.")
     )
     first = application.send_message(
-        "Запиши занятие завтра в 10", project_id=PROJECT_ID
+        "Запиши занятие завтра в 10 на час", project_id=PROJECT_ID
     )
     question = application.send_message(
         "Какая завтра погода?",
@@ -274,8 +305,9 @@ def test_not_a_follow_up_reaches_model_and_pending_can_resolve_later(tmp_path):
         project_id=PROJECT_ID,
         conversation_id=first.conversation_id,
     )
-    store = application._conversation._conversation.natural_language_coordinator.store
-    assert store.active_for_conversation(first.conversation_id) is not None
+    assert application.dialogue_diagnostics(
+        first.conversation_id
+    ).dialogue_state.active_flow_id is not None
     final = application.send_message(
         "В календарь",
         project_id=PROJECT_ID,
@@ -290,10 +322,10 @@ def test_not_a_follow_up_reaches_model_and_pending_can_resolve_later(tmp_path):
 def test_new_schedule_supersedes_old_and_preview_uses_only_new_meaning(tmp_path):
     _, _, application = _application(tmp_path)
     first = application.send_message(
-        "Запиши занятие завтра в 10", project_id=PROJECT_ID
+        "Запиши занятие завтра в 10 на час", project_id=PROJECT_ID
     )
     second = application.send_message(
-        "Запиши тренировку завтра в 12",
+        "Запиши тренировку завтра в 12 на час",
         project_id=PROJECT_ID,
         conversation_id=first.conversation_id,
     )
@@ -317,8 +349,9 @@ def test_ordinary_phrases_never_create_pending_semantic_state(tmp_path):
         "Сегодня мы продолжили делать наш Дом...",
     ):
         turn = application.send_message(message, project_id=PROJECT_ID)
-        store = application._conversation._conversation.natural_language_coordinator.store
-        assert store.active_for_conversation(turn.conversation_id) is None
+        assert application.dialogue_diagnostics(
+            turn.conversation_id
+        ).dialogue_state.active_flow_id is None
         assert turn.pending_confirmation is None
 
 
@@ -377,3 +410,26 @@ def test_semantically_resolved_indirect_reminder_still_requires_confirmation(tmp
     assert turn.pending_confirmation is not None
     assert turn.pending_confirmation.confirmation_type == "commitment_create"
     assert application.commitments().items == before
+
+
+def test_public_dialogue_diagnostics_reports_handoff_without_private_store_access(tmp_path):
+    _, _, application = _application(tmp_path)
+    first = application.send_message(
+        "Запиши занятие завтра в 10 на час",
+        project_id=PROJECT_ID,
+    )
+    second = application.send_message(
+        "В календарь",
+        project_id=PROJECT_ID,
+        conversation_id=first.conversation_id,
+    )
+
+    diagnostic = application.dialogue_diagnostics(first.conversation_id)
+
+    assert second.pending_confirmation is not None
+    assert diagnostic.dialogue_state.active_flow_id is None
+    assert diagnostic.application_handoff_type == "google_calendar.event.create"
+    assert diagnostic.response_projection_state == "waiting_confirmation"
+    serialized = diagnostic.model_dump_json()
+    assert "proposal_id" not in serialized
+    assert "provider" not in serialized

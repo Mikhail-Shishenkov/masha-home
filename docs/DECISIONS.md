@@ -936,6 +936,45 @@ unless the turn carries application-owned execution evidence. This is a
 general result-boundary invariant for current and future mutation families;
 model confidence and phrasing are not application truth.
 
+### DEC-107. DialogueCore is the one task-dialogue state authority
+
+Статус: **Принято и реализовано в Slice 2E; требуется live acceptance**
+
+`DialogueCore` is the only production owner of conversation-scoped task state
+for adopted operations. `FollowUpResolutionEngine` remains a pure transition
+component and `PendingResolutionStore` is its repository, not a peer
+orchestrator. The former coordinator class name is only an import-compatible
+alias and does not create another state machine.
+
+The bounded flow stack currently has depth one. Ordinary conversation preserves
+the active frame; a proven new supported action explicitly supersedes it.
+Nested mutation flows remain deferred rather than being simulated unsafely.
+
+### DEC-108. ActiveQuestion is durable context, not conversational text
+
+Статус: **Принято и реализовано в Slice 2E; требуется live acceptance**
+
+The current capability choice, missing slot or unresolved referent is persisted
+as a first-class `ActiveQuestion`. A short answer is first interpreted against
+that question. It may also correct another grounded slot without erasing known
+values. Runtime JSON schema 2.0 migrates existing schema 1.0 clarification
+records on read and retains the existing atomic, TTL and terminal-immutability
+contracts.
+
+### DEC-109. Meaning, proposal, confirmation, operation and receipt remain separate
+
+Статус: **Принято и реализовано в Slice 2E; требуется live acceptance**
+
+The canonical lifecycle is `meaning proposal -> dialogue resolution -> domain
+ActionProposal -> policy/confirmation -> Operation -> Receipt -> response
+projection`. An `InterpretationFrame`, selected operation or model phrase never
+authorizes a mutation and never proves success. Application receipts remain the
+source of factual action truth; the lexical truthfulness guard is defense in
+depth only.
+
+The detailed ownership and compatibility matrix lives in
+`docs/DIALOGUE_ACTION_LIFECYCLE.md`.
+
 ## 6. Открытые вопросы ближайших этапов
 
 - Точный Human Home UX для v0.3.1 Slice B: passive memory review, possible

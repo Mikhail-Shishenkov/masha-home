@@ -3,12 +3,12 @@
   "cases": [
     {
       "case_id": "schedule_choose_calendar",
-      "turn1": "Запиши занятие завтра в 10",
+      "turn1": "Запиши занятие завтра в 10 на час",
       "clarification_kind": "capability",
       "turn2": "В календарь",
       "expected_outcome": "resolved",
       "expected_operation_id": "google_calendar.event.create",
-      "expected_known_slots": {"date": "завтра", "time": "10:00", "subject": "занятие"},
+      "expected_known_slots": {"date": "завтра", "time": "10:00", "duration_minutes": "60", "subject": "занятие"},
       "comment": "Короткий ответ выбирает календарь в исходном frame."
     },
     {
@@ -23,12 +23,12 @@
     },
     {
       "case_id": "calendar_fill_subject",
-      "turn1": "Поставь завтра в 19",
+      "turn1": "Поставь завтра в 19 на час",
       "clarification_kind": "slot",
       "turn2": "Занятие по AI",
       "expected_outcome": "resolved",
       "expected_operation_id": "google_calendar.event.create",
-      "expected_known_slots": {"date": "завтра", "time": "19:00", "subject": "Занятие по AI"},
+      "expected_known_slots": {"date": "завтра", "time": "19:00", "duration_minutes": "60", "subject": "Занятие по AI"},
       "comment": "Follow-up заполняет только отсутствующий subject."
     },
     {

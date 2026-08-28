@@ -35,6 +35,7 @@ from backend.llm.model_router import ModelCapabilityUnavailableError
 from backend.memory.text_normalization import meaningful_tokens
 from backend.external_observation.intent import InformationSpace, classify_information_space
 from backend.temporal.date_resolution import HomeCalendarDateResolver
+from backend.temporal.duration_resolution import HomeDurationResolver
 
 from .capability_router import normalize_utterance
 from .interpretation_v2 import (
@@ -110,6 +111,7 @@ class SemanticPendingContext(StrictSemanticModel):
     unresolved_referents: tuple[str, ...] = Field(default=(), max_length=8)
     clarification_kind: str = Field(min_length=1, max_length=40)
     requested_slot: str | None = Field(default=None, pattern=_SLOT_NAME)
+    question_value_hint: str | None = Field(default=None, min_length=1, max_length=80)
 
     @classmethod
     def from_pending(cls, pending) -> "SemanticPendingContext":
@@ -131,6 +133,7 @@ class SemanticPendingContext(StrictSemanticModel):
             ),
             clarification_kind=pending.clarification_kind.value,
             requested_slot=pending.requested_slot,
+            question_value_hint=pending.active_question.value_hint,
         )
 
 
@@ -170,6 +173,8 @@ class SemanticInterpretationProposal(StrictSemanticModel):
     """Strict but untrusted JSON returned by the helper model."""
 
     ordinary_conversation: bool
+    unsupported_action: bool = False
+    nearby_operation_ids: tuple[str, ...] = Field(default=(), max_length=4)
     candidate_operation_ids: tuple[str, ...] = Field(
         default=(), max_length=8
     )
@@ -185,19 +190,39 @@ class SemanticInterpretationProposal(StrictSemanticModel):
             raise ValueError("semantic proposal contains invalid operation id")
         if len(self.candidate_operation_ids) != len(set(self.candidate_operation_ids)):
             raise ValueError("semantic proposal repeats an operation")
+        if any(re.fullmatch(_OPERATION_ID, item) is None for item in self.nearby_operation_ids):
+            raise ValueError("semantic proposal contains invalid nearby operation id")
+        if len(self.nearby_operation_ids) != len(set(self.nearby_operation_ids)):
+            raise ValueError("semantic proposal repeats a nearby operation")
         names = [item.name for item in self.extracted_slots]
         if len(names) != len(set(names)):
             raise ValueError("semantic proposal repeats a slot")
         if len(self.unresolved_referents) != len(set(self.unresolved_referents)):
             raise ValueError("semantic proposal repeats a referent")
+        if self.ordinary_conversation and self.unsupported_action:
+            raise ValueError("proposal cannot be both ordinary and unsupported")
         if self.ordinary_conversation and (
+            self.candidate_operation_ids
+            or self.extracted_slots
+            or self.unresolved_referents
+            or self.nearby_operation_ids
+            or self.ambiguity_hint is not SemanticAmbiguityHint.NONE
+        ):
+            raise ValueError("ordinary proposal cannot carry capability structure")
+        if self.unsupported_action and (
             self.candidate_operation_ids
             or self.extracted_slots
             or self.unresolved_referents
             or self.ambiguity_hint is not SemanticAmbiguityHint.NONE
         ):
-            raise ValueError("ordinary proposal cannot carry capability structure")
-        if not self.ordinary_conversation and not self.candidate_operation_ids:
+            raise ValueError("unsupported action cannot carry supported capability structure")
+        if not self.unsupported_action and self.nearby_operation_ids:
+            raise ValueError("only unsupported action may carry nearby operations")
+        if (
+            not self.ordinary_conversation
+            and not self.unsupported_action
+            and not self.candidate_operation_ids
+        ):
             raise ValueError("action proposal requires a candidate")
         return self
 
@@ -474,11 +499,15 @@ class LocalSemanticResolver:
             "переданного списка и только смысл текущей реплики. Не выдумывай значения. "
             "Для неоднозначного планирования верни все правдоподобные операции. "
             "Верни строго один JSON-объект без Markdown по схеме: "
-            '{"ordinary_conversation":bool,"candidate_operation_ids":[string],'
+            '{"ordinary_conversation":bool,"unsupported_action":bool,'
+            '"candidate_operation_ids":[string],"nearby_operation_ids":[string],'
             '"extracted_slots":[{"name":string,"value":string}],'
             '"unresolved_referents":[string],'
             '"ambiguity_hint":"none|capability|slot|referent|provider_scope"}. '
-            "ordinary_conversation=true означает отсутствие application action. "
+            "ordinary_conversation=true означает, что человек не просит выполнить действие. "
+            "unsupported_action=true означает явную просьбу о действии, для которого в "
+            "каталоге нет подходящей операции; candidate/slots/referents тогда пусты, "
+            "а nearby_operation_ids может содержать только действительно близкие операции каталога. "
             "Безопасный каталог операций и требуемых смысловых слотов:\n"
             + json.dumps(operations, ensure_ascii=False, separators=(",", ":"))
         )
@@ -533,7 +562,11 @@ class SemanticProposalValidator:
 
     def vocabulary(self) -> tuple[SemanticVocabularyItem, ...]:
         items = []
-        for operation_id in sorted(self.allowed_operation_ids):
+        # The language model must see the descriptive whole-Home catalog so a
+        # mature compatibility capability is not mislabeled unsupported.  The
+        # separate allowed set below still prevents unadopted operations from
+        # becoming Dialogue Core handoffs.
+        for operation_id in self.specifications.operation_ids:
             try:
                 descriptor = self.catalog.get(operation_id)
                 specification = self.specifications.get(operation_id)
@@ -563,6 +596,16 @@ class SemanticProposalValidator:
             return InterpretationFrame(
                 original_utterance=original,
                 resolution_state=InterpretationResolutionState.ORDINARY_CONVERSATION,
+            )
+        if proposal.unsupported_action:
+            if any(
+                operation_id not in self.allowed_operation_ids
+                for operation_id in proposal.nearby_operation_ids
+            ):
+                raise SemanticValidationError("unsupported_nearby_operation")
+            return InterpretationFrame(
+                original_utterance=original,
+                resolution_state=InterpretationResolutionState.UNSUPPORTED_ACTION,
             )
         specifications = []
         for operation_id in proposal.candidate_operation_ids:
@@ -732,6 +775,17 @@ class SemanticProposalValidator:
                 value=next(iter(matches)),
                 origin=InterpretationValueOrigin.TEMPORAL_NORMALIZED,
             )
+        if proposal.name == "duration_minutes":
+            if normalize_utterance(value) not in normalized:
+                raise SemanticValidationError("follow_up_duration_not_grounded")
+            resolved = HomeDurationResolver().resolve(value)
+            if resolved is None or resolved.minutes is None:
+                raise SemanticValidationError("follow_up_duration_ambiguous")
+            return InterpretationSlot(
+                name="duration_minutes",
+                value=resolved.canonical,
+                origin=InterpretationValueOrigin.TEMPORAL_NORMALIZED,
+            )
         if proposal.name == "subject":
             utterance_tokens = set(meaningful_tokens(normalized))
             value_tokens = set(meaningful_tokens(value))
@@ -795,6 +849,17 @@ class SemanticProposalValidator:
         elif proposal.name == "time":
             if value not in _utterance_times(normalized):
                 raise SemanticValidationError("unsupported_time")
+        elif proposal.name == "duration_minutes":
+            if normalize_utterance(value) not in normalized:
+                raise SemanticValidationError("unsupported_duration")
+            resolved = HomeDurationResolver().resolve(value)
+            if resolved is None or resolved.minutes is None:
+                raise SemanticValidationError("unsupported_duration")
+            return InterpretationSlot(
+                name="duration_minutes",
+                value=resolved.canonical,
+                origin=InterpretationValueOrigin.TEMPORAL_NORMALIZED,
+            )
         elif proposal.name == "subject":
             utterance_tokens = set(meaningful_tokens(normalized))
             value_tokens = set(meaningful_tokens(value))
@@ -839,7 +904,7 @@ def _utterance_times(normalized: str) -> frozenset[str]:
 
 
 class HybridCapabilityCandidateDiscovery:
-    """Preserve deterministic ownership, then consult bounded local semantics."""
+    """One language ingress: structural evidence plus bounded local semantics."""
 
     def __init__(
         self,
@@ -858,8 +923,6 @@ class HybridCapabilityCandidateDiscovery:
         deterministic = self.deterministic.interpret(utterance)
         self.last_result = None
         self.last_rejection = None
-        if deterministic.candidates:
-            return deterministic
         if classify_information_space(utterance) is not InformationSpace.ORDINARY_CONVERSATION:
             return deterministic
         if normalize_utterance(utterance) in _PROTECTED_SHORT_FOLLOW_UP:
@@ -874,7 +937,52 @@ class HybridCapabilityCandidateDiscovery:
         if result.proposal is None:
             return deterministic
         try:
-            return self.validator.validate(utterance, result.proposal)
+            semantic = self.validator.validate(utterance, result.proposal)
+            if (
+                semantic.resolution_state
+                is InterpretationResolutionState.UNSUPPORTED_ACTION
+                and not result.proposal.nearby_operation_ids
+                and not any(
+                    candidate.operation_id in self.validator.allowed_operation_ids
+                    for candidate in deterministic.candidates
+                )
+            ):
+                # The current Catalog does not yet describe every mature V1
+                # Memory/Reflection/read route.  Surface unsupported only when
+                # Dialogue Core already has grounded candidate evidence for
+                # the adopted scheduling space; otherwise preserve the legacy
+                # compatibility route instead of stealing its raw utterance.
+                self.last_rejection = "unsupported_action_outside_adopted_space"
+                return deterministic
+            if self._strict_structural_conflict(deterministic, semantic):
+                self.last_rejection = "semantic_conflicts_with_structural_owner"
+                return deterministic
+            return semantic
         except SemanticValidationError as error:
             self.last_rejection = str(error)
             return deterministic
+
+    @staticmethod
+    def _strict_structural_conflict(
+        deterministic: InterpretationFrame,
+        semantic: InterpretationFrame,
+    ) -> bool:
+        strict = any(
+            evidence.signal in {
+                "explicit_home_reminder_language",
+                "explicit_calendar_create_language",
+            }
+            for candidate in deterministic.candidates
+            for evidence in candidate.evidence
+        )
+        if not strict:
+            return False
+        deterministic_operations = {
+            candidate.operation_id for candidate in deterministic.candidates
+        }
+        semantic_operations = {
+            candidate.operation_id for candidate in semantic.candidates
+        }
+        return not semantic_operations or not semantic_operations.issubset(
+            deterministic_operations
+        )

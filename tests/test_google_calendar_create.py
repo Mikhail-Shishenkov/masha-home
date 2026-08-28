@@ -121,6 +121,7 @@ def test_resolved_v2_slots_enter_existing_proposal_boundary_without_network(tmp_
         subject="Занятие по AI",
         date="завтра",
         time="10:00",
+        duration_minutes="60",
         conversation_id="v2-conversation",
         now_local=datetime(2026, 8, 25, 12, tzinfo=timezone.utc),
     )

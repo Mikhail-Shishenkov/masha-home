@@ -255,6 +255,7 @@ class ConversationService:
         yandex_mail_service=None,
         yandex_disk_service=None,
         home_capability_provider=None,
+        dialogue_core=None,
         natural_language_coordinator=None,
         resolved_capability_adapters=None,
     ):
@@ -284,12 +285,17 @@ class ConversationService:
         self.yandex_mail_service = yandex_mail_service
         self.yandex_disk_service = yandex_disk_service
         self.home_capability_provider = home_capability_provider
-        self.natural_language_coordinator = natural_language_coordinator
+        if dialogue_core is not None and natural_language_coordinator is not None:
+            raise ValueError("dialogue core has multiple configured owners")
+        self._dialogue_core = dialogue_core or natural_language_coordinator
         self.resolved_capability_adapters = resolved_capability_adapters
         self.last_recall_result = None
         self.last_external_observation = None
         self.last_external_observations = ()
-        self.last_v2_routing_decision = None
+        self.last_dialogue_decision = None
+        self.last_dialogue_handoff_type = None
+        self.last_response_projection_state = "none"
+        self._dialogue_projection_by_conversation = {}
 
     def send(
         self,
@@ -304,7 +310,9 @@ class ConversationService:
     ) -> tuple[str, str]:
         self.last_external_observation = None
         self.last_external_observations = ()
-        self.last_v2_routing_decision = None
+        self.last_dialogue_decision = None
+        self.last_dialogue_handoff_type = None
+        self.last_response_projection_state = "none"
         conversation = self.history.create() if conversation_id is None else self.history.get(conversation_id)
         last_interaction_at = self.history.last_interaction_at(conversation.id)
         temporal_context = self.temporal_engine.context(
@@ -375,15 +383,17 @@ class ConversationService:
             document_receipt is None
             and allow_capability_routing
             and not pending_mutation
-            and self.natural_language_coordinator is not None
+            and self.dialogue_core is not None
         ):
-            coordination = self.natural_language_coordinator.coordinate(
+            self.dialogue_core.bind_temporal_engine(self.temporal_engine)
+            coordination = self.dialogue_core.coordinate(
                 user_message,
                 conversation_id=conversation.id,
             )
-            self.last_v2_routing_decision = coordination.diagnostic
+            self.last_dialogue_decision = coordination.diagnostic
             v2_response = coordination.response
             if coordination.status.value == "resolved_handoff":
+                self.last_dialogue_handoff_type = coordination.handoff.operation_id
                 try:
                     # Lazy import avoids making the foundational conversation
                     # module depend on application package initialization.
@@ -397,11 +407,18 @@ class ConversationService:
                         ),
                     )
                     v2_response = proposal.response
+                    self.last_response_projection_state = proposal.projection_state
                 except (AttributeError, RuntimeError):
+                    self.last_response_projection_state = "failed"
                     v2_response = (
                         "Не смогла безопасно подготовить это действие. "
                         "Ничего не выполняю."
                     )
+            elif coordination.status.value in {"clarification", "still_unresolved"}:
+                self.last_response_projection_state = "clarification"
+            elif coordination.status.value == "unsupported_action":
+                self.last_response_projection_state = "unsupported"
+            self._remember_dialogue_projection(conversation.id)
             if coordination.status.value != "pass_through":
                 assert v2_response is not None
                 self.history.append(
@@ -453,7 +470,11 @@ class ConversationService:
                 self._retire_v2_pending_for_domain_proposal(conversation.id)
                 self.history.append(conversation.id, ConversationRole.ASSISTANT, calendar_update_response, origin=ConversationMessageOrigin.APPLICATION)
                 return conversation.id, calendar_update_response
-        if document_receipt is None and self.google_calendar_create_service is not None:
+        if (
+            document_receipt is None
+            and self.google_calendar_create_service is not None
+            and self.dialogue_core is None
+        ):
             calendar_create_response = self.google_calendar_create_service.propose(
                 user_message, conversation_id=conversation.id,
                 now_local=temporal_context.current_local_time,
@@ -835,9 +856,59 @@ class ConversationService:
         return conversation.id, rendered
 
     def _retire_v2_pending_for_domain_proposal(self, conversation_id: str) -> None:
-        if self.natural_language_coordinator is not None:
-            self.natural_language_coordinator.supersede_for_domain_proposal(
+        if self.dialogue_core is not None:
+            self.dialogue_core.supersede_for_domain_proposal(
                 conversation_id
+            )
+
+    @property
+    def dialogue_core(self):
+        return self._dialogue_core
+
+    @dialogue_core.setter
+    def dialogue_core(self, value) -> None:
+        self._dialogue_core = value
+
+    @property
+    def natural_language_coordinator(self):
+        """Compatibility projection; DialogueCore is the only stored owner."""
+
+        return self._dialogue_core
+
+    @natural_language_coordinator.setter
+    def natural_language_coordinator(self, value) -> None:
+        self._dialogue_core = value
+
+    @property
+    def last_v2_routing_decision(self):
+        """Compatibility projection for Slice 2A–2D diagnostics."""
+
+        return self.last_dialogue_decision
+
+    def dialogue_snapshot(self, conversation_id: str):
+        self.history.get(conversation_id)
+        if self.dialogue_core is None:
+            return None
+        from .resolution_coordinator import DialogueDiagnosticSnapshot
+
+        return DialogueDiagnosticSnapshot(
+            dialogue_state=self.dialogue_core.snapshot(conversation_id),
+            application_handoff_type=self._dialogue_projection_by_conversation.get(
+                conversation_id, (None, "none")
+            )[0],
+            response_projection_state=self._dialogue_projection_by_conversation.get(
+                conversation_id, (None, "none")
+            )[1],
+        )
+
+    def _remember_dialogue_projection(self, conversation_id: str) -> None:
+        self._dialogue_projection_by_conversation[conversation_id] = (
+            self.last_dialogue_handoff_type,
+            self.last_response_projection_state,
+        )
+        while len(self._dialogue_projection_by_conversation) > 100:
+            self._dialogue_projection_by_conversation.pop(
+                next(iter(self._dialogue_projection_by_conversation))
             )
 
     def external_observation_for_message(self, message_id: str):

@@ -26,6 +26,7 @@ class CalendarCreateHandoffAdapter:
                 subject=handoff.slot("subject").value,
                 date=handoff.slot("date").value,
                 time=handoff.slot("time").value,
+                duration_minutes=handoff.slot("duration_minutes").value,
                 conversation_id=handoff.conversation_id,
                 now_local=context.now_local,
             )

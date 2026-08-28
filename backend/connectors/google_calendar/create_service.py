@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 from backend.conversation.memory_intent import MemoryProposal, MemoryProposalStore, ProposalStatus, PendingProposalConflict
@@ -39,6 +39,7 @@ class GoogleCalendarCreateConversationService:
         subject: str,
         date: str,
         time: str,
+        duration_minutes: str,
         conversation_id: str,
         now_local: datetime,
     ):
@@ -46,6 +47,7 @@ class GoogleCalendarCreateConversationService:
             subject=subject,
             date=date,
             time_value=time,
+            duration=timedelta(minutes=int(duration_minutes)),
             now_local=now_local,
         )
         return self._propose_intent(

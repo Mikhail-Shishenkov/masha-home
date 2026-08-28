@@ -2,7 +2,9 @@
 
 This module discovers descriptive candidates only.  It cannot execute a Home
 operation, grant authority, ask a clarification question, or persist state.
-The production V1 router remains the live routing boundary.
+Dialogue Core is the production owner for adopted conversational operations;
+legacy capability services remain implementation adapters or non-overlapping
+compatibility routes while their migrations are incomplete.
 """
 
 from __future__ import annotations
@@ -22,6 +24,8 @@ from backend.connectors.google_drive.document_create import (
 )
 from backend.connectors.provider_language import normalize_explicit_provider
 from backend.connectors.yandex_mail.intent import mail_intent
+from backend.temporal.duration_resolution import HomeDurationResolver
+from backend.temporal.temporal_engine import TemporalEngine
 
 from .capability_router import normalize_utterance
 
@@ -38,6 +42,7 @@ class InterpretationResolutionState(str, Enum):
     RESOLVED = "resolved"
     CLARIFICATION_REQUIRED = "clarification_required"
     ORDINARY_CONVERSATION = "ordinary_conversation"
+    UNSUPPORTED_ACTION = "unsupported_action"
 
 
 class InterpretationAmbiguity(str, Enum):
@@ -140,6 +145,11 @@ class InterpretationFrame(StrictInterpretationModel):
                 raise ValueError("ordinary conversation cannot contain capability structure")
             if self.ambiguity is not InterpretationAmbiguity.NONE:
                 raise ValueError("ordinary conversation cannot be ambiguous")
+        if self.resolution_state is InterpretationResolutionState.UNSUPPORTED_ACTION:
+            if self.candidates or self.slots or self.missing_slots or self.referents:
+                raise ValueError("unsupported action cannot carry supported capability structure")
+            if self.ambiguity is not InterpretationAmbiguity.NONE:
+                raise ValueError("unsupported action cannot be ambiguous")
         if self.resolution_state is InterpretationResolutionState.RESOLVED:
             if len(self.candidates) != 1 or self.missing_slots or self.ambiguity is not InterpretationAmbiguity.NONE:
                 raise ValueError("resolved interpretation requires one complete unambiguous candidate")
@@ -200,6 +210,10 @@ class InterpretationSpecificationRegistry:
         except KeyError as error:
             raise InterpretationSpecificationError(operation_id) from error
 
+    @property
+    def operation_ids(self) -> tuple[str, ...]:
+        return tuple(sorted(self._items))
+
 
 def default_interpretation_specifications() -> tuple[InterpretationSpecification, ...]:
     return (
@@ -208,12 +222,21 @@ def default_interpretation_specifications() -> tuple[InterpretationSpecification
             required_slots=("query",),
         ),
         InterpretationSpecification(
+            operation_id="web.fetch",
+            required_slots=("target",),
+        ),
+        InterpretationSpecification(operation_id="google_calendar.read"),
+        InterpretationSpecification(
             operation_id="google_calendar.event.create",
-            required_slots=("subject", "date", "time"),
+            required_slots=("subject", "date", "time", "duration_minutes"),
         ),
         InterpretationSpecification(
             operation_id="google_drive.document.create",
             required_slots=("content",),
+        ),
+        InterpretationSpecification(
+            operation_id="google_calendar.event.update",
+            required_slots=("referent", "change"),
         ),
         InterpretationSpecification(operation_id="google_drive.read"),
         InterpretationSpecification(
@@ -222,15 +245,38 @@ def default_interpretation_specifications() -> tuple[InterpretationSpecification
         ),
         InterpretationSpecification(operation_id="yandex_mail.read"),
         InterpretationSpecification(operation_id="yandex_disk.read"),
+        InterpretationSpecification(
+            operation_id="home.commitments",
+            required_slots=("subject",),
+        ),
+        InterpretationSpecification(operation_id="home.proactive_reminders"),
     )
 
 
 _CALENDAR_EXPLICIT = re.compile(r"^(?:поставь|запланируй|создай)\b")
+_CALENDAR_STRUCTURAL = re.compile(
+    r"^(?:добавь|внеси)\b.*\b(?:в\s+)?календар(?:ь|е)\b"
+)
 _SCHEDULE_AMBIGUOUS = re.compile(r"^запиши\b")
+_REMINDER_EXPLICIT = re.compile(r"^(?:напомни|создай\s+напоминание|поставь\s+напоминание)\b")
 _SAVE_REFERENTIAL = re.compile(r"^сохрани\s+(?P<referent>это|этот\s+текст|эту\s+заметку)$")
 _MAIL_READ = re.compile(r"^(?:посмотри|проверь)\s+(?:мою\s+)?почту$")
-_DATE = re.compile(r"\b(?P<date>сегодня|завтра)\b")
-_TIME = re.compile(r"\bв\s*(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\b")
+_DATE = re.compile(r"\b(?P<date>сегодня|завтра)\b", re.IGNORECASE)
+_TIME = re.compile(
+    r"\b(?:в|на)\s*(?P<hour>\d{1,2})(?:(?::|\s)(?P<minute>\d{2}))?\b",
+    re.IGNORECASE,
+)
+_DURATION_TEXT = re.compile(
+    r"\bна\s+(?:(?:\d{1,3}|один|одна|одну|два|две|три|четыре|пять|шесть|"
+    r"семь|восемь|девять|десять|одиннадцать|двенадцать)\s+)?"
+    r"(?:час(?:а|ов)?|минут(?:у|ы)?)\b",
+    re.IGNORECASE,
+)
+_RELATIVE_DUE = re.compile(
+    r"\bчерез\s+\d+\s+(?:дн(?:я|ей)?|час(?:а|ов)?|минут(?:у|ы)?)\b|"
+    r"\bчерез\s+неделю\b",
+    re.IGNORECASE,
+)
 
 
 class CapabilityCandidateDiscovery:
@@ -241,8 +287,10 @@ class CapabilityCandidateDiscovery:
         *,
         catalog: CapabilityCatalog,
         specifications: Iterable[InterpretationSpecification] | None = None,
+        temporal_engine: TemporalEngine | None = None,
     ):
         self.catalog = catalog
+        self.temporal_engine = temporal_engine
         self.specifications = InterpretationSpecificationRegistry(
             catalog=catalog,
             specifications=(
@@ -251,6 +299,11 @@ class CapabilityCandidateDiscovery:
                 else specifications
             ),
         )
+
+    def bind_temporal_engine(self, temporal_engine: TemporalEngine) -> None:
+        """Refresh the injected Home clock without changing interpretation state."""
+
+        self.temporal_engine = temporal_engine
 
     def interpret(self, utterance: str) -> InterpretationFrame:
         original = utterance.strip()
@@ -264,8 +317,21 @@ class CapabilityCandidateDiscovery:
 
         candidates: list[CapabilityCandidate] = []
         slots = self._temporal_slots(text)
-        if _CALENDAR_EXPLICIT.search(text):
-            subject = self._schedule_subject(text)
+        if _REMINDER_EXPLICIT.search(text):
+            subject = self._schedule_subject(original)
+            if subject is not None:
+                slots = (*slots, InterpretationSlot(
+                    name="subject", value=subject,
+                    origin=InterpretationValueOrigin.DETERMINISTIC,
+                ))
+            candidate = self._candidate(
+                "home.timed_commitments", slots,
+                "explicit_home_reminder_language",
+            )
+            if candidate is not None:
+                candidates.append(candidate)
+        elif _CALENDAR_EXPLICIT.search(text) or _CALENDAR_STRUCTURAL.search(text):
+            subject = self._schedule_subject(original)
             if subject is not None:
                 slots = (*slots, InterpretationSlot(
                     name="subject", value=subject,
@@ -278,7 +344,7 @@ class CapabilityCandidateDiscovery:
             if candidate is not None:
                 candidates.append(candidate)
         elif _SCHEDULE_AMBIGUOUS.search(text):
-            subject = self._schedule_subject(text)
+            subject = self._schedule_subject(original)
             if subject is not None:
                 slots = (*slots, InterpretationSlot(
                     name="subject", value=subject,
@@ -341,9 +407,26 @@ class CapabilityCandidateDiscovery:
         )
         return None if candidate is None else (candidate, tuple(slots))
 
-    @staticmethod
-    def _temporal_slots(text: str) -> tuple[InterpretationSlot, ...]:
+    def _temporal_slots(self, text: str) -> tuple[InterpretationSlot, ...]:
         slots: list[InterpretationSlot] = []
+        if self.temporal_engine is not None:
+            _, due = self.temporal_engine.extract_due(text)
+            if due is None and (relative := _RELATIVE_DUE.search(text)) is not None:
+                due = self.temporal_engine.parse_due(relative.group(0))
+            if due is not None and due.resolved_local is not None and due.ambiguity is None:
+                local = due.resolved_local
+                return (
+                    InterpretationSlot(
+                        name="date",
+                        value=local.date().isoformat(),
+                        origin=InterpretationValueOrigin.TEMPORAL_NORMALIZED,
+                    ),
+                    InterpretationSlot(
+                        name="time",
+                        value=local.strftime("%H:%M"),
+                        origin=InterpretationValueOrigin.TEMPORAL_NORMALIZED,
+                    ),
+                )
         date = _DATE.search(text)
         if date is not None:
             slots.append(InterpretationSlot(
@@ -359,14 +442,47 @@ class CapabilityCandidateDiscovery:
                     name="time", value=f"{hour:02d}:{minute:02d}",
                     origin=InterpretationValueOrigin.DETERMINISTIC,
                 ))
+        duration = HomeDurationResolver().resolve(text)
+        if duration is not None and duration.minutes is not None:
+            slots.append(InterpretationSlot(
+                name="duration_minutes",
+                value=duration.canonical,
+                origin=InterpretationValueOrigin.TEMPORAL_NORMALIZED,
+            ))
         return tuple(slots)
 
     @staticmethod
     def _schedule_subject(text: str) -> str | None:
-        subject = re.sub(r"^(?:поставь|запланируй|создай|запиши)\s+", "", text)
+        # In constructions such as "добавь запись ..., что я буду учиться"
+        # the subordinate clause is the human meaning of the calendar entry.
+        # This is structural payload segmentation, not intent classification.
+        clauses = re.split(r"\bчто\b", text, flags=re.IGNORECASE)
+        if len(clauses) > 1:
+            text = clauses[-1]
+            text = re.sub(r"^\s*я\s+(?:буду\s+)?", "", text, flags=re.IGNORECASE)
+        text = re.sub(
+            r"^\s*маш(?:а|енька)?\s*[,!:-]?\s*",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+        subject = re.sub(
+            r"^(?:поставь|запланируй|создай|запиши|напомни|"
+            r"создай\s+напоминание|поставь\s+напоминание|добавь|внеси)"
+            r"\s*[:,—-]?\s*",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
         subject = _DATE.sub("", subject)
         subject = _TIME.sub("", subject)
-        subject = re.sub(r"\b(?:в|на)\s+календар(?:ь|е)\b", "", subject)
+        subject = _DURATION_TEXT.sub("", subject)
+        subject = _RELATIVE_DUE.sub("", subject)
+        subject = re.sub(
+            r"\b(?:в|на)\s+календар(?:ь|е)\b", "", subject, flags=re.IGNORECASE
+        )
+        subject = re.sub(r"\bнапоминание\b", "", subject, flags=re.IGNORECASE)
+        subject = re.sub(r"^\s*запись\s+", "", subject, flags=re.IGNORECASE)
         subject = re.sub(r"\s+", " ", subject).strip(" ,.-")
         return subject[:500] or None
 

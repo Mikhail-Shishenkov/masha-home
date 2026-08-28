@@ -36,7 +36,7 @@ def _slots(frame: InterpretationFrame) -> dict[str, str | None]:
 
 
 def test_explicit_calendar_language_is_a_resolved_structural_candidate():
-    frame = _discovery().interpret("Поставь завтра в 19 занятие по AI")
+    frame = _discovery().interpret("Поставь завтра в 19 занятие по AI на час")
 
     assert [candidate.operation_id for candidate in frame.candidates] == [
         "google_calendar.event.create"
@@ -44,7 +44,8 @@ def test_explicit_calendar_language_is_a_resolved_structural_candidate():
     assert _slots(frame) == {
         "date": "завтра",
         "time": "19:00",
-        "subject": "занятие по ai",
+        "duration_minutes": "60",
+        "subject": "занятие по AI",
     }
     assert frame.ambiguity is InterpretationAmbiguity.NONE
     assert frame.resolution_state is InterpretationResolutionState.RESOLVED

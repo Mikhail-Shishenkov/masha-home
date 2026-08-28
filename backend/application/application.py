@@ -129,6 +129,11 @@ class MashaApplication:
     def conversation(self, conversation_id: str, *, limit: int | None = None) -> ConversationView:
         return self._conversation.conversation(conversation_id, limit=limit)
 
+    def dialogue_diagnostics(self, conversation_id: str):
+        """Return a bounded read-only Dialogue Core snapshot."""
+
+        return self._conversation.dialogue_diagnostics(conversation_id)
+
     def latest_conversation(self, *, limit: int | None = None) -> ConversationView | None:
         """Read the transcript with the latest actual interaction, if one exists."""
         return self._conversation.latest_conversation(limit=limit)

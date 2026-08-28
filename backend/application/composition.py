@@ -74,7 +74,7 @@ from backend.conversation.clarification import (
 from backend.conversation.interpretation_v2 import CapabilityCandidateDiscovery
 from backend.conversation.pending_resolution import PendingResolutionStore
 from backend.conversation.resolution_coordinator import (
-    NaturalLanguageResolutionCoordinator,
+    DialogueCore,
     ResolvedCapabilityAdapterRegistry,
     V2LiveAdoptionPolicy,
 )
@@ -215,7 +215,10 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
         clock=core.conversation.temporal_engine.clock.now_utc,
     )
     adoption = V2LiveAdoptionPolicy()
-    deterministic_discovery = CapabilityCandidateDiscovery(catalog=capability_catalog)
+    deterministic_discovery = CapabilityCandidateDiscovery(
+        catalog=capability_catalog,
+        temporal_engine=core.conversation.temporal_engine,
+    )
     semantic_validator = SemanticProposalValidator(
         catalog=capability_catalog,
         specifications=deterministic_discovery.specifications,
@@ -233,7 +236,7 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
         resolver=semantic_resolver,
         validator=semantic_validator,
     )
-    core.conversation.natural_language_coordinator = NaturalLanguageResolutionCoordinator(
+    core.conversation.dialogue_core = DialogueCore(
         discovery=semantic_discovery,
         builder=DeterministicClarificationBuilder(
             catalog=capability_catalog,

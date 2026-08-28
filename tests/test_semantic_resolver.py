@@ -88,6 +88,7 @@ def test_local_resolver_uses_configured_role_and_strict_structured_request(tmp_p
     assert provider.last_request.execution_model_id == "qwen3.5:9b"
     assert provider.last_request.identity_context.persona_id == "semantic-resolver"
     assert "qwen3.5" not in provider.last_request.messages[0].content
+    assert '"unsupported_action":bool' in provider.last_request.messages[0].content
     assert roles.profile_for(ModelRole.SEMANTIC_RESOLVER).profile_id == "primary"
 
 
@@ -291,6 +292,83 @@ def test_semantic_ordinary_conversation_remains_ordinary(tmp_path):
     frame = hybrid.interpret("Как ты сегодня?")
 
     assert frame.resolution_state is InterpretationResolutionState.ORDINARY_CONVERSATION
+
+
+def test_semantic_explicit_unsupported_action_stays_distinct_from_conversation(tmp_path):
+    _, _, validator, _, _ = _boundaries(tmp_path)
+    proposal = SemanticInterpretationProposal(
+        ordinary_conversation=False,
+        unsupported_action=True,
+        nearby_operation_ids=(
+            "google_calendar.event.create",
+            "home.timed_commitments",
+        ),
+    )
+
+    frame = validator.validate(
+        "Запиши меня на внешнее занятие завтра в 9",
+        proposal,
+    )
+
+    assert frame.resolution_state is InterpretationResolutionState.UNSUPPORTED_ACTION
+    assert frame.candidates == ()
+    assert frame.slots == ()
+
+
+def test_untrusted_semantics_cannot_erase_strict_structural_calendar_owner(tmp_path):
+    provider, _, _, hybrid, _ = _boundaries(tmp_path)
+    provider.response_text = json.dumps({
+        "ordinary_conversation": True,
+        "candidate_operation_ids": [],
+        "extracted_slots": [],
+        "unresolved_referents": [],
+        "ambiguity_hint": "none",
+    })
+
+    frame = hybrid.interpret("Поставь встречу завтра в 19 на час")
+
+    assert [item.operation_id for item in frame.candidates] == [
+        "google_calendar.event.create"
+    ]
+    assert frame.resolution_state is InterpretationResolutionState.RESOLVED
+    assert hybrid.last_rejection == "semantic_conflicts_with_structural_owner"
+
+
+def test_unsupported_without_adopted_evidence_does_not_steal_legacy_route(tmp_path):
+    provider, _, _, hybrid, _ = _boundaries(tmp_path)
+    provider.response_text = json.dumps({
+        "ordinary_conversation": False,
+        "unsupported_action": True,
+        "candidate_operation_ids": [],
+        "nearby_operation_ids": [],
+        "extracted_slots": [],
+        "unresolved_referents": [],
+        "ambiguity_hint": "none",
+    })
+
+    frame = hybrid.interpret("Обнови память о выбранной модели")
+
+    assert frame.resolution_state is InterpretationResolutionState.ORDINARY_CONVERSATION
+    assert hybrid.last_rejection == "unsupported_action_outside_adopted_space"
+
+
+def test_untrusted_unsupported_proposal_cannot_steal_connector_read_owner(tmp_path):
+    provider, _, _, hybrid, _ = _boundaries(tmp_path)
+    provider.response_text = json.dumps({
+        "ordinary_conversation": False,
+        "unsupported_action": True,
+        "candidate_operation_ids": [],
+        "nearby_operation_ids": [],
+        "extracted_slots": [],
+        "unresolved_referents": [],
+        "ambiguity_hint": "none",
+    })
+
+    frame = hybrid.interpret("Посмотри мою почту")
+
+    assert [item.operation_id for item in frame.candidates] == ["yandex_mail.read"]
+    assert provider.requests == []
+    assert hybrid.last_rejection is None
 
 
 def test_docs_content_and_explicit_information_spaces_never_reach_semantic_model(tmp_path):

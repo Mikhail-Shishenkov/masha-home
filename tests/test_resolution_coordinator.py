@@ -48,7 +48,7 @@ def test_capability_choice_persists_then_returns_strict_calendar_handoff(tmp_pat
     coordinator, store, _ = _coordinator(tmp_path)
 
     first = coordinator.coordinate(
-        "Запиши занятие завтра в 10", conversation_id="conversation-1"
+        "Запиши занятие завтра в 10 на час", conversation_id="conversation-1"
     )
     active = store.active_for_conversation("conversation-1")
     second = coordinator.coordinate("В календарь", conversation_id="conversation-1")
@@ -62,13 +62,14 @@ def test_capability_choice_persists_then_returns_strict_calendar_handoff(tmp_pat
     assert second.handoff == ResolvedCapabilityHandoff(
         conversation_id="conversation-1",
         operation_id="google_calendar.event.create",
-        original_utterance="Запиши занятие завтра в 10",
+        original_utterance="Запиши занятие завтра в 10 на час",
         slots=second.handoff.slots,
         resolution_id=active.resolution_id,
     )
     assert {item.name: item.value for item in second.handoff.slots} == {
         "date": "завтра",
         "time": "10:00",
+        "duration_minutes": "60",
         "subject": "занятие",
     }
     assert store.get(active.resolution_id).status is PendingResolutionStatus.RESOLVED
@@ -91,7 +92,7 @@ def test_reminder_choice_returns_same_original_meaning_without_authority(tmp_pat
 def test_missing_subject_follow_up_preserves_date_and_time(tmp_path):
     coordinator, _, _ = _coordinator(tmp_path)
 
-    first = coordinator.coordinate("Поставь завтра в 10", conversation_id="c1")
+    first = coordinator.coordinate("Поставь завтра в 10 на час", conversation_id="c1")
     second = coordinator.coordinate("Занятие по AI", conversation_id="c1")
 
     assert first.response == "Что именно поставить в календарь?"
@@ -99,6 +100,7 @@ def test_missing_subject_follow_up_preserves_date_and_time(tmp_path):
     assert {item.name: item.value for item in second.handoff.slots} == {
         "date": "завтра",
         "time": "10:00",
+        "duration_minutes": "60",
         "subject": "Занятие по AI",
     }
 
@@ -172,7 +174,7 @@ def test_cancel_and_expiry_are_terminal_and_never_create_a_handoff(tmp_path):
 
 def test_restart_recovers_same_resolution_and_resolves_it(tmp_path):
     first, store, clock = _coordinator(tmp_path)
-    first.coordinate("Запиши занятие завтра в 10", conversation_id="c1")
+    first.coordinate("Запиши занятие завтра в 10 на час", conversation_id="c1")
     resolution_id = store.active_for_conversation("c1").resolution_id
 
     restarted, restarted_store, _ = _coordinator(tmp_path, clock)

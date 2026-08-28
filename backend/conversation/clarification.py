@@ -15,6 +15,7 @@ from backend.application.capability_catalog import (
     CapabilityNotFoundError,
 )
 from backend.temporal.date_resolution import HomeCalendarDateResolver
+from backend.temporal.duration_resolution import HomeDurationResolver
 from backend.temporal.temporal_engine import TemporalEngine
 
 from .capability_router import normalize_utterance
@@ -29,6 +30,7 @@ from .interpretation_v2 import (
     explicit_file_provider_id,
 )
 from .pending_resolution import (
+    ActiveQuestion,
     ClarificationChoice,
     ClarificationKind,
     PendingResolution,
@@ -66,6 +68,9 @@ _EXPLICIT_MATERIAL = re.compile(
 )
 _DATE_VALUE = re.compile(r"^(?:сегодня|завтра)$")
 _TIME_VALUE = re.compile(r"^(?:в\s*)?(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?$")
+_CLOCK_HOUR_PHRASE = re.compile(
+    r"\b(?P<hour>\d{1,2})\s+час(?:а|ов)?\s+(?:дня|утра|вечера|ночи)\b"
+)
 _UNRESOLVED_ANSWERS = frozenset(("это", "вот это", "туда", "там", "не знаю"))
 
 _HUMAN_CHOICE_LABELS = {
@@ -103,6 +108,15 @@ class ClarificationRequest(StrictResolutionModel):
         if (self.clarification_kind is ClarificationKind.REFERENT) != (self.referent_expression is not None):
             raise ValueError("referent_expression must occur only for referent clarification")
         return self
+
+    def as_active_question(self, *, value_hint: str | None = None) -> ActiveQuestion:
+        return ActiveQuestion(
+            kind=self.clarification_kind,
+            choices=self.choices,
+            requested_slot=self.requested_slot,
+            referent_expression=self.referent_expression,
+            value_hint=value_hint,
+        )
 
 
 class ClarificationBuildError(RuntimeError):
@@ -144,10 +158,7 @@ class DeterministicClarificationBuilder:
             resolution_id=resolution_id,
             conversation_id=conversation_id,
             interpretation=frame,
-            clarification_kind=request.clarification_kind,
-            choices=request.choices,
-            requested_slot=request.requested_slot,
-            referent_expression=request.referent_expression,
+            active_question=request.as_active_question(),
             created_at=now,
             updated_at=now,
             expires_at=now + self.ttl,
@@ -160,21 +171,32 @@ class DeterministicClarificationBuilder:
         *,
         conversation_id: str,
         resolution_id: str,
+        active_question: ActiveQuestion | None = None,
     ) -> ClarificationRequest:
         """Describe the next unresolved dimension for the same durable state."""
 
         if frame.resolution_state is not InterpretationResolutionState.CLARIFICATION_REQUIRED:
             raise ClarificationBuildError("interpretation does not require clarification")
-        kind = self._kind(frame)
+        kind = self._kind(frame) if active_question is None else active_question.kind
         choices: tuple[ClarificationChoice, ...] = ()
         requested_slot = None
         referent_expression = None
         if kind in {ClarificationKind.CAPABILITY, ClarificationKind.PROVIDER_SCOPE}:
-            choices = self._choices(frame)
+            choices = self._choices(frame) if active_question is None else active_question.choices
             prompt = self._choice_prompt(frame, kind)
         elif kind is ClarificationKind.SLOT:
-            requested_slot = frame.missing_slots[0]
-            prompt = self._slot_prompt(frame, requested_slot)
+            requested_slot = (
+                frame.missing_slots[0]
+                if active_question is None
+                else active_question.requested_slot
+            )
+            if requested_slot is None or requested_slot not in frame.missing_slots:
+                raise ClarificationBuildError("active slot question is no longer missing")
+            prompt = self._slot_prompt(
+                frame,
+                requested_slot,
+                value_hint=None if active_question is None else active_question.value_hint,
+            )
         else:
             unresolved = next(
                 (
@@ -185,7 +207,11 @@ class DeterministicClarificationBuilder:
             )
             if unresolved is None:
                 raise ClarificationBuildError("referent ambiguity has no unresolved referent")
-            referent_expression = unresolved.expression
+            referent_expression = (
+                unresolved.expression
+                if active_question is None
+                else active_question.referent_expression
+            )
             prompt = "Что именно сохранить?"
         return ClarificationRequest(
             resolution_id=resolution_id,
@@ -228,6 +254,21 @@ class DeterministicClarificationBuilder:
             raise ClarificationBuildError("choice ambiguity requires multiple candidates")
         return tuple(choices)
 
+    def human_operation_labels(
+        self,
+        operation_ids: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        """Project application-approved labels without exposing operation ids."""
+
+        labels = []
+        for operation_id in operation_ids:
+            try:
+                descriptor = self.catalog.get(operation_id)
+            except CapabilityNotFoundError:
+                continue
+            labels.append(_HUMAN_CHOICE_LABELS.get(operation_id, descriptor.display_name))
+        return tuple(labels)
+
     @staticmethod
     def _choice_prompt(
         frame: InterpretationFrame,
@@ -248,7 +289,12 @@ class DeterministicClarificationBuilder:
         return "Как именно это сделать?"
 
     @staticmethod
-    def _slot_prompt(frame: InterpretationFrame, slot_name: str) -> str:
+    def _slot_prompt(
+        frame: InterpretationFrame,
+        slot_name: str,
+        *,
+        value_hint: str | None = None,
+    ) -> str:
         operation_id = frame.candidates[0].operation_id
         if slot_name in {"subject", "title"} and operation_id == "google_calendar.event.create":
             return "Что именно поставить в календарь?"
@@ -257,6 +303,11 @@ class DeterministicClarificationBuilder:
             "title": "Как это назвать?",
             "date": "На какой день?",
             "time": "Во сколько?",
+            "duration_minutes": (
+                f"{value_hint} минут или {value_hint} часов?"
+                if value_hint is not None
+                else "На сколько времени поставить?"
+            ),
             "content": "Что именно сохранить?",
             "query": "Что именно найти?",
             "target": "Где это сделать?",
@@ -292,6 +343,7 @@ class FollowUpResolutionResult(BaseModel):
     prior_slots: tuple[InterpretationSlot, ...] = Field(default=(), max_length=24)
     merged_slots: tuple[InterpretationSlot, ...] = Field(default=(), max_length=24)
     remaining_missing_slots: tuple[str, ...] = Field(default=(), max_length=24)
+    active_question: ActiveQuestion | None = None
 
     @model_validator(mode="after")
     def outcome_matches_interpretation(self):
@@ -329,6 +381,10 @@ class FollowUpResolutionEngine:
             else HomeCalendarDateResolver(temporal_engine)
         )
         self.last_semantic_result: SemanticFollowUpResult | None = None
+        self.last_semantic_rejection: str | None = None
+
+    def bind_temporal_engine(self, temporal_engine: TemporalEngine) -> None:
+        self.date_resolver = HomeCalendarDateResolver(temporal_engine)
 
     def resolve(
         self,
@@ -337,6 +393,8 @@ class FollowUpResolutionEngine:
     ) -> FollowUpResolutionResult:
         if pending.status is not PendingResolutionStatus.PENDING:
             raise PendingResolutionTransitionError("only active pending meaning can be resolved")
+        self.last_semantic_result = None
+        self.last_semantic_rejection = None
         original = follow_up.strip()
         if not original:
             return self._unchanged(pending, FollowUpOutcome.STILL_UNRESOLVED)
@@ -355,10 +413,35 @@ class FollowUpResolutionEngine:
             # Free-form subjects do not: in production they cross the bounded
             # semantic follow-up contract so ordinary conversation cannot be
             # silently consumed as a task title.
-            slot = None
+            slot = self._cross_slot_temporal_update(pending, original, text)
             if (
-                pending.requested_slot != "subject"
-                or self.semantic_resolver is None
+                slot is None
+                and pending.requested_slot == "duration_minutes"
+            ):
+                duration = self._duration_from_follow_up(pending, original)
+                if duration is not None and duration.ambiguous_unit:
+                    return self._unchanged(
+                        pending,
+                        FollowUpOutcome.STILL_UNRESOLVED,
+                        active_question=ActiveQuestion(
+                            kind=ClarificationKind.SLOT,
+                            requested_slot="duration_minutes",
+                            value_hint=str(duration.amount),
+                        ),
+                    )
+                if duration is not None and duration.minutes is not None:
+                    slot = InterpretationSlot(
+                        name="duration_minutes",
+                        value=duration.canonical,
+                        origin=InterpretationValueOrigin.TEMPORAL_NORMALIZED,
+                    )
+            if (
+                slot is None
+                and pending.requested_slot != "duration_minutes"
+                and (
+                    pending.requested_slot != "subject"
+                    or self.semantic_resolver is None
+                )
             ):
                 slot = self._slot_from_follow_up(
                     pending.requested_slot,
@@ -410,6 +493,38 @@ class FollowUpResolutionEngine:
             prior_slots=pending.interpretation.slots,
             merged_slots=frame.slots,
             remaining_missing_slots=frame.missing_slots,
+            active_question=None,
+        )
+
+    @staticmethod
+    def _duration_from_follow_up(
+        pending: PendingResolution,
+        original: str,
+    ):
+        expression = original
+        hint = pending.active_question.value_hint
+        if hint is not None and not any(character.isdigit() for character in original):
+            expression = f"{hint} {original}"
+        return HomeDurationResolver().resolve(expression)
+
+    @staticmethod
+    def _cross_slot_temporal_update(
+        pending: PendingResolution,
+        original: str,
+        text: str,
+    ) -> InterpretationSlot | None:
+        if pending.requested_slot != "duration_minutes":
+            return None
+        match = _CLOCK_HOUR_PHRASE.search(text)
+        if match is None:
+            return None
+        hour = int(match.group("hour"))
+        if not 0 <= hour <= 23:
+            return None
+        return InterpretationSlot(
+            name="time",
+            value=f"{hour:02d}:00",
+            origin=InterpretationValueOrigin.TEMPORAL_NORMALIZED,
         )
 
     def _semantic_follow_up(
@@ -432,14 +547,22 @@ class FollowUpResolutionEngine:
             )
             self.last_semantic_result = result
             if result.proposal is None:
+                self.last_semantic_rejection = (
+                    None if result.failure is None else result.failure.value
+                )
                 return None
+        except ValueError as error:
+            self.last_semantic_rejection = str(error)
+            return None
+        try:
             validated = self.semantic_validator.validate_follow_up(
                 pending,
                 follow_up,
                 result.proposal,
                 date_resolver=self.date_resolver,
             )
-        except (SemanticValidationError, ValueError):
+        except (SemanticValidationError, ValueError) as error:
+            self.last_semantic_rejection = str(error)
             return None
         if validated.relation is SemanticFollowUpRelation.NOT_A_FOLLOW_UP:
             return self._unchanged(
@@ -702,6 +825,7 @@ class FollowUpResolutionEngine:
         outcome: FollowUpOutcome,
         *,
         semantic_proposal: SemanticFollowUpProposal | None = None,
+        active_question: ActiveQuestion | None = None,
     ) -> FollowUpResolutionResult:
         return FollowUpResolutionResult(
             outcome=outcome,
@@ -710,4 +834,5 @@ class FollowUpResolutionEngine:
             prior_slots=pending.interpretation.slots,
             merged_slots=pending.interpretation.slots,
             remaining_missing_slots=pending.interpretation.missing_slots,
+            active_question=active_question,
         )

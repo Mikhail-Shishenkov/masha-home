@@ -60,19 +60,80 @@ class ClarificationChoice(StrictResolutionModel):
     label: str = Field(min_length=1, max_length=120)
 
 
+class ActiveQuestion(StrictResolutionModel):
+    """The one explicit question that owns interpretation of the next turn."""
+
+    kind: ClarificationKind
+    choices: tuple[ClarificationChoice, ...] = Field(default=(), max_length=8)
+    requested_slot: str | None = Field(default=None, pattern=_SLOT_NAME)
+    referent_expression: str | None = Field(default=None, min_length=1, max_length=300)
+    value_hint: str | None = Field(default=None, min_length=1, max_length=80)
+
+    @model_validator(mode="after")
+    def shape_matches_kind(self):
+        if self.kind in {ClarificationKind.CAPABILITY, ClarificationKind.PROVIDER_SCOPE}:
+            if len(self.choices) < 2:
+                raise ValueError("choice question requires multiple choices")
+        elif self.choices:
+            raise ValueError("only a choice question may contain choices")
+        if (self.kind is ClarificationKind.SLOT) != (self.requested_slot is not None):
+            raise ValueError("slot question requires requested_slot")
+        if (self.kind is ClarificationKind.REFERENT) != (self.referent_expression is not None):
+            raise ValueError("referent question requires referent_expression")
+        if self.value_hint is not None and self.kind is not ClarificationKind.SLOT:
+            raise ValueError("only a slot question may retain a value hint")
+        return self
+
+
 class PendingResolution(StrictResolutionModel):
     resolution_id: str = Field(min_length=36, max_length=36)
     conversation_id: str = Field(min_length=1, max_length=200)
     interpretation: InterpretationFrame
-    clarification_kind: ClarificationKind
-    choices: tuple[ClarificationChoice, ...] = Field(default=(), max_length=8)
-    requested_slot: str | None = Field(default=None, pattern=_SLOT_NAME)
-    referent_expression: str | None = Field(default=None, min_length=1, max_length=300)
+    active_question: ActiveQuestion
     created_at: AwareDatetime
     updated_at: AwareDatetime
     expires_at: AwareDatetime
     status: PendingResolutionStatus = PendingResolutionStatus.PENDING
     terminal_reason: str | None = Field(default=None, min_length=1, max_length=200)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_question_shape(cls, value):
+        if not isinstance(value, dict) or "active_question" in value:
+            return value
+        migrated = dict(value)
+        kind = migrated.pop("clarification_kind", None)
+        choices = migrated.pop("choices", ())
+        requested_slot = migrated.pop("requested_slot", None)
+        referent_expression = migrated.pop("referent_expression", None)
+        if kind is not None:
+            migrated["active_question"] = {
+                "kind": kind,
+                "choices": choices,
+                "requested_slot": requested_slot,
+                "referent_expression": referent_expression,
+            }
+        return migrated
+
+    @property
+    def flow_id(self) -> str:
+        return self.resolution_id
+
+    @property
+    def clarification_kind(self) -> ClarificationKind:
+        return self.active_question.kind
+
+    @property
+    def choices(self) -> tuple[ClarificationChoice, ...]:
+        return self.active_question.choices
+
+    @property
+    def requested_slot(self) -> str | None:
+        return self.active_question.requested_slot
+
+    @property
+    def referent_expression(self) -> str | None:
+        return self.active_question.referent_expression
 
     @field_validator("resolution_id")
     @classmethod
@@ -143,7 +204,7 @@ class PendingResolution(StrictResolutionModel):
 
 
 class PendingResolutionDocument(StrictResolutionModel):
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["2.0"] = "2.0"
     resolutions: tuple[PendingResolution, ...] = Field(default=(), max_length=1000)
 
     @model_validator(mode="after")
@@ -288,6 +349,7 @@ class PendingResolutionStore:
         choices: tuple[ClarificationChoice, ...] = (),
         requested_slot: str | None = None,
         referent_expression: str | None = None,
+        active_question: ActiveQuestion | None = None,
     ) -> PendingResolution:
         if interpretation.resolution_state is not InterpretationResolutionState.CLARIFICATION_REQUIRED:
             raise PendingResolutionTransitionError("pending update must remain unresolved")
@@ -296,10 +358,12 @@ class PendingResolutionStore:
             status=PendingResolutionStatus.PENDING,
             interpretation=interpretation,
             clarification_update={
-                "clarification_kind": clarification_kind,
-                "choices": choices,
-                "requested_slot": requested_slot,
-                "referent_expression": referent_expression,
+                "active_question": active_question or ActiveQuestion(
+                    kind=clarification_kind,
+                    choices=choices,
+                    requested_slot=requested_slot,
+                    referent_expression=referent_expression,
+                ),
             },
         )
 
@@ -487,9 +551,10 @@ class PendingResolutionStore:
         if not self.path.exists():
             return PendingResolutionDocument()
         try:
-            return PendingResolutionDocument.model_validate(
-                json.loads(self.path.read_text(encoding="utf-8"))
-            )
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+            if payload.get("schema_version") == "1.0":
+                payload = {**payload, "schema_version": "2.0"}
+            return PendingResolutionDocument.model_validate(payload)
         except Exception as error:
             raise PendingResolutionStoreCorruptError(str(self.path)) from error
 

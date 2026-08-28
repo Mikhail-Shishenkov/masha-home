@@ -100,7 +100,7 @@ def _slots(outcome):
 def test_capability_answer_preserves_accumulated_slots_and_normalizes_home_date(tmp_path):
     coordinator, store = _coordinator(tmp_path)
     first = coordinator.coordinate(
-        "Запиши занятие завтра в 12", conversation_id="c1",
+        "Запиши занятие завтра в 12 на час", conversation_id="c1",
     )
     resolution_id = first.clarification.resolution_id
 
@@ -111,6 +111,7 @@ def test_capability_answer_preserves_accumulated_slots_and_normalizes_home_date(
     assert _slots(second) == {
         "date": "2026-08-29",
         "time": "12:00",
+        "duration_minutes": "60",
         "subject": "занятие",
     }
     assert second.handoff.resolution_id == resolution_id
@@ -128,7 +129,7 @@ def test_explicit_date_fills_only_missing_date_without_semantic_guessing(
 ):
     resolver = FollowUpResolver()
     coordinator, _ = _coordinator(tmp_path, resolver)
-    coordinator.coordinate("Поставь занятие в 12", conversation_id="c1")
+    coordinator.coordinate("Поставь занятие в 12 на час", conversation_id="c1")
 
     result = coordinator.coordinate(answer, conversation_id="c1")
 
@@ -136,6 +137,7 @@ def test_explicit_date_fills_only_missing_date_without_semantic_guessing(
     assert _slots(result) == {
         "date": expected,
         "time": "12:00",
+        "duration_minutes": "60",
         "subject": "занятие",
     }
     assert resolver.calls == []
@@ -148,7 +150,7 @@ def test_semantic_enrichment_and_correction_accumulate_before_choice(tmp_path):
     )
     coordinator, store = _coordinator(tmp_path, resolver)
     first = coordinator.coordinate(
-        "Запиши занятие завтра в 12", conversation_id="c1",
+        "Запиши занятие завтра в 12 на час", conversation_id="c1",
     )
     resolution_id = first.clarification.resolution_id
 
@@ -165,6 +167,7 @@ def test_semantic_enrichment_and_correction_accumulate_before_choice(tmp_path):
     assert _slots(resolved) == {
         "date": "2026-08-29",
         "time": "11:00",
+        "duration_minutes": "60",
         "subject": "занятие по вождению",
     }
     stored = store.get(resolution_id)
@@ -217,6 +220,9 @@ def test_invalid_semantic_update_fails_closed_and_keeps_pending(tmp_path):
     result = coordinator.coordinate("Просто продолжим разговор", conversation_id="c1")
 
     assert result.status is CoordinationStatus.STILL_UNRESOLVED
+    assert result.diagnostic.semantic_command_status == "rejected"
+    assert result.diagnostic.proposed_semantic_command is not None
+    assert result.diagnostic.semantic_rejection == "follow_up_subject_not_grounded"
     assert store.active_for_conversation("c1").resolution_id == first.clarification.resolution_id
 
 
@@ -225,7 +231,7 @@ def test_restart_preserves_refined_slots_and_same_resolution(tmp_path):
         _proposal(updates=(("subject", "занятие по вождению", "enrich"),)),
     )
     coordinator, store = _coordinator(tmp_path, resolver)
-    first = coordinator.coordinate("Запиши занятие завтра в 12", conversation_id="c1")
+    first = coordinator.coordinate("Запиши занятие завтра в 12 на час", conversation_id="c1")
     coordinator.coordinate("Занятие по вождению", conversation_id="c1")
 
     restarted, _ = _coordinator(tmp_path)

@@ -44,6 +44,17 @@ LLM может понять намерение, предложить, сформ
 
 Мутации принадлежат application/domain layer.
 
+Обычный языковой путь имеет одного владельца task-dialogue state:
+
+```text
+UserTurn -> DialogueCore -> validated ActionProposal -> Confirmation
+         -> Operation -> Receipt -> ResponseProjection
+```
+
+Semantic Resolver предлагает только значение реплики. `DialogueCore` хранит
+активный flow и вопрос, но не подтверждение. Domain/application layer проверяет
+реальный payload; receipt остаётся единственной истиной о выполнении.
+
 ### Human Confirmation остаётся границей безопасности
 
 Чувствительные и изменяющие состояние действия проходят путь:
@@ -307,6 +318,15 @@ Production composition использует SQLite `masha.sqlite3`, Identity Ker
 `MemoryRetriever`, `TemporalEngine`, local Ollama provider и
 `PassiveMemoryService`.
 
+Для Natural Language Router V2 production composition использует один
+`DialogueCore`. Calendar Create и timed commitments входят в него через
+application-owned adapters. Активный вопрос и накопленные slots хранятся в
+атомарном runtime JSON schema 2.0 с TTL и миграцией schema 1.0. Confirmation,
+provider operation и receipt в этом состоянии не дублируются. Остальные
+connector/read capability временно сохраняют зрелые compatibility services
+после `DialogueCore.PASS_THROUGH`; условия их удаления описаны в
+`docs/DIALOGUE_ACTION_LIFECYCLE.md`.
+
 ## 19. Известный технический долг
 
 Не blockers текущего этапа, но отслеживаются:
@@ -315,6 +335,8 @@ Production composition использует SQLite `masha.sqlite3`, Identity Ker
 - `MemoryIntentHandler` уже слишком велик и не должен принимать новые доменные
   обязанности;
 - `ConversationStore` JSON не рассчитан на годы transcript history;
+- оставшиеся V1 compatibility routes должны мигрировать capability-by-capability
+  в DialogueCore adapters без второго глобального state owner;
 - raw conversation search отсутствует;
 - backup покрывает прежде всего memory DB, а не весь Дом;
 - frontend `app.js` и Qt bridge нуждаются в ограниченном структурном разделении

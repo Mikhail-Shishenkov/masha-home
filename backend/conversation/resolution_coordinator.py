@@ -8,7 +8,7 @@ application adapter, domain validation, policy and confirmation boundaries.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Protocol
+from typing import Literal, Protocol
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
@@ -21,7 +21,6 @@ from .clarification import (
     FollowUpResolutionEngine,
 )
 from .interpretation_v2 import (
-    CandidateEvidenceSource,
     CapabilityCandidateDiscovery,
     InterpretationFrame,
     InterpretationResolutionState,
@@ -29,10 +28,15 @@ from .interpretation_v2 import (
     InterpretationValueOrigin,
 )
 from .pending_resolution import (
+    ActiveQuestion,
     PendingResolutionStore,
     PendingResolutionStoreError,
+    PendingResolutionStatus,
 )
-from .semantic_resolver import SemanticFollowUpProposal
+from .semantic_resolver import (
+    SemanticFollowUpProposal,
+    SemanticInterpretationProposal,
+)
 
 
 _OPERATION_ID = r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$"
@@ -49,6 +53,7 @@ class CoordinationStatus(str, Enum):
     CANCELLED = "cancelled"
     STILL_UNRESOLVED = "still_unresolved"
     FAILED = "failed"
+    UNSUPPORTED_ACTION = "unsupported_action"
 
 
 class ResolvedCapabilityHandoff(StrictCoordinatorModel):
@@ -109,11 +114,52 @@ class V2RoutingDiagnostic(StrictCoordinatorModel):
     pending_resolution_id: str | None = Field(default=None, min_length=36, max_length=36)
     prior_known_slots: tuple[InterpretationSlot, ...] = Field(default=(), max_length=24)
     follow_up_proposal: SemanticFollowUpProposal | None = None
+    proposed_semantic_command: (
+        SemanticInterpretationProposal | SemanticFollowUpProposal | None
+    ) = None
+    semantic_command_status: Literal["accepted", "rejected"] | None = None
+    semantic_rejection: str | None = Field(default=None, max_length=120)
     merged_slots: tuple[InterpretationSlot, ...] = Field(default=(), max_length=24)
     remaining_missing_slots: tuple[str, ...] = Field(default=(), max_length=24)
     resolved_candidate: str | None = Field(
         default=None, pattern=_OPERATION_ID, max_length=100,
     )
+
+
+class DialogueFlowSnapshot(StrictCoordinatorModel):
+    flow_id: str = Field(min_length=36, max_length=36)
+    status: PendingResolutionStatus
+    original_utterance: str = Field(min_length=1, max_length=20_000)
+    candidate_operation_ids: tuple[str, ...] = Field(default=(), max_length=8)
+    selected_operation_id: str | None = Field(
+        default=None, pattern=_OPERATION_ID, max_length=100,
+    )
+    validated_slots: tuple[InterpretationSlot, ...] = Field(default=(), max_length=24)
+    missing_slots: tuple[str, ...] = Field(default=(), max_length=24)
+    active_question: ActiveQuestion
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+    expires_at: AwareDatetime
+
+
+class DialogueStateSnapshot(StrictCoordinatorModel):
+    version: Literal["2.0"] = "2.0"
+    conversation_id: str = Field(min_length=1, max_length=200)
+    flow_stack: tuple[DialogueFlowSnapshot, ...] = Field(default=(), max_length=1)
+    active_flow_id: str | None = Field(default=None, min_length=36, max_length=36)
+    last_decision: V2RoutingDiagnostic | None = None
+
+
+class DialogueDiagnosticSnapshot(StrictCoordinatorModel):
+    """Bounded read-only observation of routing and application handoff truth."""
+
+    dialogue_state: DialogueStateSnapshot
+    application_handoff_type: str | None = Field(
+        default=None, pattern=_OPERATION_ID, max_length=100,
+    )
+    response_projection_state: Literal[
+        "none", "clarification", "waiting_confirmation", "failed", "unsupported"
+    ] = "none"
 
 
 class ConversationCoordinationOutcome(StrictCoordinatorModel):
@@ -159,8 +205,8 @@ class V2LiveAdoptionPolicy:
         return operation_id in self.supported_operation_ids
 
 
-class NaturalLanguageResolutionCoordinator:
-    """Coordinate V2 meaning while leaving domain execution to adapters."""
+class DialogueCore:
+    """The sole owner of conversation-scoped task-dialogue transitions."""
 
     FAILURE_RESPONSE = "Не смогла безопасно сохранить уточнение. Ничего не выполняю."
     CANCELLED_RESPONSE = "Хорошо, это пока не делаем."
@@ -180,6 +226,8 @@ class NaturalLanguageResolutionCoordinator:
         self.store = store
         self.adoption = adoption or V2LiveAdoptionPolicy()
         self.last_decision: V2RoutingDiagnostic | None = None
+        self._diagnostic_conversation_id: str | None = None
+        self._decisions_by_conversation: dict[str, V2RoutingDiagnostic] = {}
 
     def coordinate(
         self,
@@ -187,6 +235,7 @@ class NaturalLanguageResolutionCoordinator:
         *,
         conversation_id: str,
     ) -> ConversationCoordinationOutcome:
+        self._diagnostic_conversation_id = conversation_id
         try:
             active = self.store.active_for_conversation(conversation_id)
             frame = None
@@ -210,10 +259,16 @@ class NaturalLanguageResolutionCoordinator:
                         return continued
             frame = frame or self.discovery.interpret(utterance)
             if active is None:
+                if frame.resolution_state is InterpretationResolutionState.UNSUPPORTED_ACTION:
+                    return self._handled(
+                        CoordinationStatus.UNSUPPORTED_ACTION,
+                        frame,
+                        response=self._unsupported_action_response(),
+                        pending_outcome="unsupported_action",
+                    )
                 if (
                     frame.resolution_state is InterpretationResolutionState.RESOLVED
                     and self.adoption.supports_frame(frame)
-                    and self._is_semantic(frame)
                 ):
                     return self._handled(
                         CoordinationStatus.RESOLVED_HANDOFF,
@@ -244,6 +299,13 @@ class NaturalLanguageResolutionCoordinator:
 
             # A proven new adopted request replaces an older semantic question.
             # Unsupported candidates never supersede state in this migration slice.
+            if frame.resolution_state is InterpretationResolutionState.UNSUPPORTED_ACTION:
+                return self._handled(
+                    CoordinationStatus.UNSUPPORTED_ACTION,
+                    frame,
+                    response=self._unsupported_action_response(),
+                    pending_outcome="unsupported_action_active_flow_preserved",
+                )
             if frame.candidates:
                 if not self.adoption.supports_frame(frame):
                     return self._pass(frame, pending_outcome="unsupported_new_intent")
@@ -259,29 +321,35 @@ class NaturalLanguageResolutionCoordinator:
                         clarification=request,
                         pending_outcome="superseded",
                     )
-                # A complete adopted request remains owned by its mature legacy
-                # route unless it exists only because the semantic resolver
-                # understood a paraphrase that legacy syntax cannot own.
                 self.store.supersede(
                     active.resolution_id,
                     reason="superseded_by_supported_request",
                 )
-                if self._is_semantic(frame):
-                    return self._handled(
-                        CoordinationStatus.RESOLVED_HANDOFF,
+                return self._handled(
+                    CoordinationStatus.RESOLVED_HANDOFF,
+                    frame,
+                    handoff=ResolvedCapabilityHandoff.from_interpretation(
                         frame,
-                        handoff=ResolvedCapabilityHandoff.from_interpretation(
-                            frame,
-                            conversation_id=conversation_id,
-                            resolution_id=None,
-                        ),
-                        pending_outcome="superseded_semantic_resolved",
-                    )
-                return self._pass(frame, pending_outcome="superseded")
+                        conversation_id=conversation_id,
+                        resolution_id=None,
+                    ),
+                    pending_outcome="superseded_resolved",
+                )
 
             return self._pass(frame, pending_outcome="not_a_follow_up")
         except (PendingResolutionStoreError, ClarificationBuildError, ValueError):
             return self._failed()
+
+    def bind_temporal_engine(self, temporal_engine) -> None:
+        """Keep all Home-owned temporal normalization on the current injected clock."""
+
+        discovery = getattr(self.discovery, "deterministic", self.discovery)
+        binder = getattr(discovery, "bind_temporal_engine", None)
+        if binder is not None:
+            binder(temporal_engine)
+        engine_binder = getattr(self.engine, "bind_temporal_engine", None)
+        if engine_binder is not None:
+            engine_binder(temporal_engine)
 
     def _continue_pending(
         self,
@@ -332,8 +400,17 @@ class NaturalLanguageResolutionCoordinator:
             follow_up.interpretation,
             conversation_id=conversation_id,
             resolution_id=active.resolution_id,
+            active_question=follow_up.active_question,
         )
-        if follow_up.interpretation != active.interpretation:
+        next_question = (
+            follow_up.active_question
+            if follow_up.active_question is not None
+            else request.as_active_question()
+        )
+        if (
+            follow_up.interpretation != active.interpretation
+            or next_question != active.active_question
+        ):
             self.store.update_pending(
                 active.resolution_id,
                 follow_up.interpretation,
@@ -341,6 +418,7 @@ class NaturalLanguageResolutionCoordinator:
                 choices=request.choices,
                 requested_slot=request.requested_slot,
                 referent_expression=request.referent_expression,
+                active_question=next_question,
             )
         return self._handled(
             CoordinationStatus.STILL_UNRESOLVED,
@@ -350,15 +428,25 @@ class NaturalLanguageResolutionCoordinator:
             trace=trace,
         )
 
-    @staticmethod
     def _follow_up_trace(
+        self,
         resolution_id: str,
         follow_up: FollowUpResolutionResult,
     ) -> dict:
+        semantic_result = getattr(self.engine, "last_semantic_result", None)
+        proposed = follow_up.semantic_proposal or (
+            None if semantic_result is None else semantic_result.proposal
+        )
+        rejection = getattr(self.engine, "last_semantic_rejection", None)
         return {
             "pending_resolution_id": resolution_id,
             "prior_known_slots": follow_up.prior_slots,
             "follow_up_proposal": follow_up.semantic_proposal,
+            "proposed_semantic_command": proposed,
+            "semantic_command_status": (
+                "rejected" if rejection else ("accepted" if proposed is not None else None)
+            ),
+            "semantic_rejection": rejection,
             "merged_slots": follow_up.merged_slots,
             "remaining_missing_slots": follow_up.remaining_missing_slots,
             "resolved_candidate": follow_up.selected_operation_id,
@@ -380,6 +468,42 @@ class NaturalLanguageResolutionCoordinator:
             self._failed()
             return False
 
+    def snapshot(self, conversation_id: str) -> DialogueStateSnapshot:
+        """Return bounded read-only state; never expose store mutation methods."""
+
+        active = self.store.active_for_conversation(conversation_id)
+        if active is None:
+            stack = ()
+            active_flow_id = None
+        else:
+            selected = (
+                active.interpretation.candidates[0].operation_id
+                if len(active.interpretation.candidates) == 1
+                else None
+            )
+            stack = (DialogueFlowSnapshot(
+                flow_id=active.flow_id,
+                status=active.status,
+                original_utterance=active.interpretation.original_utterance,
+                candidate_operation_ids=tuple(
+                    item.operation_id for item in active.interpretation.candidates
+                ),
+                selected_operation_id=selected,
+                validated_slots=active.interpretation.slots,
+                missing_slots=active.interpretation.missing_slots,
+                active_question=active.active_question,
+                created_at=active.created_at,
+                updated_at=active.updated_at,
+                expires_at=active.expires_at,
+            ),)
+            active_flow_id = active.flow_id
+        return DialogueStateSnapshot(
+            conversation_id=conversation_id,
+            flow_stack=stack,
+            active_flow_id=active_flow_id,
+            last_decision=self._decisions_by_conversation.get(conversation_id),
+        )
+
     def _pass(
         self,
         frame: InterpretationFrame,
@@ -392,12 +516,19 @@ class NaturalLanguageResolutionCoordinator:
             pending_outcome=pending_outcome,
         )
 
-    @staticmethod
-    def _is_semantic(frame: InterpretationFrame) -> bool:
-        return any(
-            evidence.source is CandidateEvidenceSource.SEMANTIC
-            for candidate in frame.candidates
-            for evidence in candidate.evidence
+    def _unsupported_action_response(self) -> str:
+        result = getattr(self.discovery, "last_result", None)
+        proposal = None if result is None else getattr(result, "proposal", None)
+        nearby = () if proposal is None else proposal.nearby_operation_ids
+        labels = self.builder.human_operation_labels(
+            nearby or tuple(sorted(self.adoption.supported_operation_ids))
+        )
+        if not labels:
+            return "Такое действие я пока не умею выполнять. Ничего не делаю."
+        alternatives = " или ".join(label.casefold() for label in labels)
+        return (
+            "Такое действие я пока не умею выполнять. "
+            f"Могу предложить безопасные варианты: {alternatives}."
         )
 
     def _failed(self) -> ConversationCoordinationOutcome:
@@ -406,6 +537,7 @@ class NaturalLanguageResolutionCoordinator:
             pending_outcome="infrastructure_failure",
         )
         self.last_decision = diagnostic
+        self._remember_decision(diagnostic)
         return ConversationCoordinationOutcome(
             status=CoordinationStatus.FAILED,
             response=self.FAILURE_RESPONSE,
@@ -429,9 +561,10 @@ class NaturalLanguageResolutionCoordinator:
                 candidate.operation_id for candidate in frame.candidates
             ),
             pending_outcome=pending_outcome,
-            **(trace or {}),
+            **{**self._semantic_trace(), **(trace or {})},
         )
         self.last_decision = diagnostic
+        self._remember_decision(diagnostic)
         return ConversationCoordinationOutcome(
             status=status,
             response=response or (clarification.prompt if clarification else None),
@@ -439,6 +572,38 @@ class NaturalLanguageResolutionCoordinator:
             handoff=handoff,
             diagnostic=diagnostic,
         )
+
+    def _semantic_trace(self) -> dict:
+        result = getattr(self.discovery, "last_result", None)
+        rejection = getattr(self.discovery, "last_rejection", None)
+        if result is None:
+            return {}
+        proposal = getattr(result, "proposal", None)
+        failure = getattr(result, "failure", None)
+        if proposal is not None:
+            return {
+                "proposed_semantic_command": proposal,
+                "semantic_command_status": "rejected" if rejection else "accepted",
+                "semantic_rejection": rejection,
+            }
+        if failure is not None:
+            return {
+                "semantic_command_status": "rejected",
+                "semantic_rejection": getattr(failure, "value", str(failure)),
+            }
+        return {}
+
+    def _remember_decision(self, diagnostic: V2RoutingDiagnostic) -> None:
+        conversation_id = self._diagnostic_conversation_id
+        if conversation_id is None:
+            return
+        self._decisions_by_conversation[conversation_id] = diagnostic
+        while len(self._decisions_by_conversation) > 100:
+            self._decisions_by_conversation.pop(next(iter(self._decisions_by_conversation)))
+
+
+# Compatibility import for Slice 2A–2D callers. It is not a second owner.
+NaturalLanguageResolutionCoordinator = DialogueCore
 
 
 class DomainProposalContext(StrictCoordinatorModel):
@@ -448,6 +613,7 @@ class DomainProposalContext(StrictCoordinatorModel):
 
 class DomainProposalResult(StrictCoordinatorModel):
     response: str = Field(min_length=1, max_length=2000)
+    projection_state: Literal["waiting_confirmation"] = "waiting_confirmation"
 
 
 class ResolvedCapabilityAdapter(Protocol):
