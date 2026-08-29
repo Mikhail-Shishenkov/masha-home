@@ -45,7 +45,10 @@ def _supported(*, candidates, slots, selection=None):
         ],
         "unresolved_referents": [],
         "ambiguity_hint": "none",
-        "operation_selection_evidence": selection,
+        "operation_selection_evidence": selection or {
+            "operation_id": None,
+            "evidence_text": None,
+        },
     })
 
 

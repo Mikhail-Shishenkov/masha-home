@@ -79,6 +79,7 @@ def test_benchmark_metrics_have_stable_documented_meaning():
             "ordinary_conversation": True,
             "forbidden_operations": ["google_calendar.event.create"],
             "failure": "malformed_output",
+            "dialogue_core_status": "resolved_handoff",
             "latency_ms": 30.0,
         },
     ]
@@ -89,10 +90,21 @@ def test_benchmark_metrics_have_stable_documented_meaning():
         "kind_accuracy_percent": 0.0,
         "exact_candidate_accuracy_percent": 50.0,
         "forbidden_action_false_positive_rate_percent": 50.0,
+        "forbidden_candidate_presence_rate_percent": 50.0,
         "clarification_accuracy_percent": 50.0,
         "slot_extraction_accuracy_percent": 50.0,
         "slot_evidence_grounding_percent": 0.0,
         "home_normalization_acceptance_percent": 0.0,
+        "scheduling_operation_selection": {
+            "cases": 0,
+            "evidence_present_percent": 0.0,
+            "evidence_grounded_percent": 0.0,
+            "home_accepted_percent": 0.0,
+            "explicit_selection_correct_percent": 0.0,
+            "ambiguous_selection_correctly_absent_percent": 0.0,
+            "explicit_cases": 0,
+            "ambiguous_cases": 0,
+        },
         "ordinary_conversation_false_positive_rate_percent": 100.0,
         "malformed_output_rate_percent": 50.0,
         "diagnostic_category_counts": {},
@@ -102,4 +114,58 @@ def test_benchmark_metrics_have_stable_documented_meaning():
         "warm_p95_latency_ms": 30.0,
         "median_latency_ms": 20.0,
         "p95_latency_ms": 30.0,
+    }
+
+
+def test_scheduling_selection_metrics_distinguish_grounded_choice_from_ambiguity():
+    observations = [
+        {
+            "category": "scheduling",
+            "operation_selection_expectation": "explicit",
+            "expected_candidate_operations": ["home.timed_commitments"],
+            "actual_candidate_operations": ["home.timed_commitments"],
+            "clarification_required": False,
+            "actual_clarification_required": False,
+            "expected_known_slots": {},
+            "actual_known_slots": {},
+            "ordinary_conversation": False,
+            "forbidden_operations": [],
+            "operation_selection_evidence_present": True,
+            "operation_selection_evidence_grounded": True,
+            "operation_selection_operation_id": "home.timed_commitments",
+            "operation_selection_home_accepted": True,
+            "latency_ms": 10.0,
+        },
+        {
+            "category": "scheduling",
+            "operation_selection_expectation": "ambiguous",
+            "expected_candidate_operations": [
+                "google_calendar.event.create", "home.timed_commitments",
+            ],
+            "actual_candidate_operations": [
+                "google_calendar.event.create", "home.timed_commitments",
+            ],
+            "clarification_required": True,
+            "actual_clarification_required": True,
+            "expected_known_slots": {},
+            "actual_known_slots": {},
+            "ordinary_conversation": False,
+            "forbidden_operations": [],
+            "operation_selection_evidence_present": False,
+            "operation_selection_evidence_grounded": False,
+            "operation_selection_operation_id": None,
+            "operation_selection_home_accepted": False,
+            "latency_ms": 20.0,
+        },
+    ]
+
+    assert score_observations(observations)["scheduling_operation_selection"] == {
+        "cases": 2,
+        "evidence_present_percent": 50.0,
+        "evidence_grounded_percent": 100.0,
+        "home_accepted_percent": 100.0,
+        "explicit_selection_correct_percent": 100.0,
+        "ambiguous_selection_correctly_absent_percent": 100.0,
+        "explicit_cases": 1,
+        "ambiguous_cases": 1,
     }

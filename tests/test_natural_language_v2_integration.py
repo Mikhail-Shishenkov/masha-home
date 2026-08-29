@@ -82,7 +82,7 @@ def test_live_wrapped_request_accumulates_into_calendar_proposal_without_slot_lo
         ],
         "unresolved_referents": [],
         "ambiguity_hint": "capability",
-        "operation_selection_evidence": None,
+        "operation_selection_evidence": {"operation_id": None, "evidence_text": None},
     }, ensure_ascii=False))
     provider.capabilities = ModelCapabilities(structured_output=True)
     _, _, application = _application(tmp_path, provider=provider)
@@ -149,7 +149,7 @@ def test_unsupported_external_registration_gets_human_truthful_fallback(tmp_path
             "extracted_slots": [],
             "unresolved_referents": [],
             "ambiguity_hint": "none",
-            "operation_selection_evidence": None,
+            "operation_selection_evidence": {"operation_id": None, "evidence_text": None},
         }),
         "Я записала тебя на внешнее занятие.",
     )
@@ -372,7 +372,7 @@ def test_live_wrapped_schedule_uses_semantics_then_existing_clarification(tmp_pa
         ],
         "unresolved_referents": [],
         "ambiguity_hint": "capability",
-        "operation_selection_evidence": None,
+        "operation_selection_evidence": {"operation_id": None, "evidence_text": None},
     }, ensure_ascii=False))
     provider.capabilities = ModelCapabilities(structured_output=True)
     _, _, application = _application(tmp_path, provider=provider)

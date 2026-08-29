@@ -25,6 +25,7 @@
         "ordinary_conversation": {"type": "boolean"},
         "forbidden_operations": {"$ref": "#/$defs/operations"}
         ,"expectation_note": {"type": "string", "minLength": 1, "maxLength": 300}
+        ,"operation_selection_expectation": {"enum": ["explicit", "ambiguous"]}
       }
     }
   }

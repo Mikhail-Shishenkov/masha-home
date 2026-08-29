@@ -4,14 +4,14 @@
     {
       "case_id": "indirect_dentist_choose_calendar",
       "initial": "Маш, завтра в девять у меня стоматолог на час, куда-нибудь запиши",
-      "initial_proposal": {"kind": "supported_action", "candidate_operation_ids": ["google_calendar.event.create", "home.timed_commitments"], "nearby_operation_ids": [], "extracted_slots": [{"name": "subject", "evidence_text": "стоматолог"}, {"name": "date", "evidence_text": "завтра"}, {"name": "time", "evidence_text": "девять"}, {"name": "duration_minutes", "evidence_text": "на час"}], "unresolved_referents": [], "ambiguity_hint": "capability", "operation_selection_evidence": null},
+      "initial_proposal": {"kind": "supported_action", "candidate_operation_ids": ["google_calendar.event.create", "home.timed_commitments"], "nearby_operation_ids": [], "extracted_slots": [{"name": "subject", "evidence_text": "стоматолог"}, {"name": "date", "evidence_text": "завтра"}, {"name": "time", "evidence_text": "девять"}, {"name": "duration_minutes", "evidence_text": "на час"}], "unresolved_referents": [], "ambiguity_hint": "capability", "operation_selection_evidence": {"operation_id": null, "evidence_text": null}},
       "follow_ups": [{"utterance": "давай в календарь", "proposal": {"relation": "follow_up", "selected_operation_id": "google_calendar.event.create", "operation_selection_evidence": "в календарь", "slot_updates": []}}],
       "expected_status": "resolved_handoff", "expected_operation_id": "google_calendar.event.create", "expected_slots": {"subject": "стоматолог", "date": "2026-08-29", "time": "09:00", "duration_minutes": "60"}, "pending_survives": false
     },
     {
       "case_id": "indirect_dentist_choose_reminder",
       "initial": "Маш, завтра в девять у меня стоматолог, куда-нибудь запиши",
-      "initial_proposal": {"kind": "supported_action", "candidate_operation_ids": ["google_calendar.event.create", "home.timed_commitments"], "nearby_operation_ids": [], "extracted_slots": [{"name": "subject", "evidence_text": "стоматолог"}, {"name": "date", "evidence_text": "завтра"}, {"name": "time", "evidence_text": "девять"}], "unresolved_referents": [], "ambiguity_hint": "capability", "operation_selection_evidence": null},
+      "initial_proposal": {"kind": "supported_action", "candidate_operation_ids": ["google_calendar.event.create", "home.timed_commitments"], "nearby_operation_ids": [], "extracted_slots": [{"name": "subject", "evidence_text": "стоматолог"}, {"name": "date", "evidence_text": "завтра"}, {"name": "time", "evidence_text": "девять"}], "unresolved_referents": [], "ambiguity_hint": "capability", "operation_selection_evidence": {"operation_id": null, "evidence_text": null}},
       "follow_ups": [{"utterance": "лучше просто напомни", "proposal": {"relation": "follow_up", "selected_operation_id": "home.timed_commitments", "operation_selection_evidence": "просто напомни", "slot_updates": []}}],
       "expected_status": "resolved_handoff", "expected_operation_id": "home.timed_commitments", "expected_slots": {"subject": "стоматолог", "date": "2026-08-29", "time": "09:00"}, "pending_survives": false
     },

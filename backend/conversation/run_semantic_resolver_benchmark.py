@@ -65,6 +65,7 @@ def score_observations(observations: list[dict[str, Any]]) -> dict[str, Any]:
     clarification_correct = 0
     forbidden_cases = 0
     forbidden_false_positives = 0
+    forbidden_candidate_presences = 0
     ordinary_cases = 0
     ordinary_false_positives = 0
     expected_slots = 0
@@ -76,6 +77,14 @@ def score_observations(observations: list[dict[str, Any]]) -> dict[str, Any]:
     evidence_items = 0
     normalization_accepted = 0
     end_to_end_success = 0
+    scheduling_cases = 0
+    selection_present = 0
+    selection_grounded = 0
+    selection_home_accepted = 0
+    explicit_scheduling_cases = 0
+    explicit_scheduling_correct = 0
+    ambiguous_scheduling_cases = 0
+    ambiguous_scheduling_correct = 0
     failure_categories: dict[str, int] = {}
     latencies = []
     for item in observations:
@@ -89,6 +98,26 @@ def score_observations(observations: list[dict[str, Any]]) -> dict[str, Any]:
         grounded_evidence += item.get("grounded_evidence_items", 0)
         evidence_items += item.get("slot_evidence_items", 0)
         normalization_accepted += item.get("home_normalization_accepted", False)
+        if item.get("category") == "scheduling":
+            scheduling_cases += 1
+            selection_present += item.get("operation_selection_evidence_present", False)
+            selection_grounded += item.get("operation_selection_evidence_grounded", False)
+            selection_home_accepted += item.get("operation_selection_home_accepted", False)
+            expectation = item.get("operation_selection_expectation")
+            if expectation == "explicit":
+                explicit_scheduling_cases += 1
+                explicit_scheduling_correct += (
+                    item.get("operation_selection_home_accepted", False)
+                    and item.get("operation_selection_operation_id")
+                    == (expected_operations[0] if len(expected_operations) == 1 else None)
+                    and actual_operations == expected_operations
+                )
+            elif expectation == "ambiguous":
+                ambiguous_scheduling_cases += 1
+                ambiguous_scheduling_correct += (
+                    not item.get("operation_selection_evidence_present", False)
+                    and actual_operations == expected_operations
+                )
         exact_candidates += actual_operations == expected_operations
         clarification_correct += (
             item["actual_clarification_required"]
@@ -97,7 +126,16 @@ def score_observations(observations: list[dict[str, Any]]) -> dict[str, Any]:
         forbidden = set(item["forbidden_operations"])
         if forbidden:
             forbidden_cases += 1
-            forbidden_false_positives += bool(forbidden & set(actual_operations))
+            forbidden_candidate_presences += bool(
+                forbidden & set(actual_operations)
+            )
+            # A clarification retains choices but has not authorized an
+            # operation.  The action FPR therefore measures only an adopted
+            # Dialogue Core handoff; candidate noise remains separately visible.
+            forbidden_false_positives += bool(
+                forbidden & set(actual_operations)
+                and item.get("dialogue_core_status") == "resolved_handoff"
+            )
         if item["ordinary_conversation"]:
             ordinary_cases += 1
             ordinary_false_positives += bool(actual_operations)
@@ -125,6 +163,9 @@ def score_observations(observations: list[dict[str, Any]]) -> dict[str, Any]:
         "forbidden_action_false_positive_rate_percent": _percent(
             forbidden_false_positives, forbidden_cases,
         ),
+        "forbidden_candidate_presence_rate_percent": _percent(
+            forbidden_candidate_presences, forbidden_cases,
+        ),
         "clarification_accuracy_percent": _percent(clarification_correct, total),
         "slot_extraction_accuracy_percent": _percent(correct_slots, expected_slots),
         "slot_evidence_grounding_percent": _percent(
@@ -133,6 +174,20 @@ def score_observations(observations: list[dict[str, Any]]) -> dict[str, Any]:
         "home_normalization_acceptance_percent": _percent(
             normalization_accepted, total,
         ),
+        "scheduling_operation_selection": {
+            "cases": scheduling_cases,
+            "evidence_present_percent": _percent(selection_present, scheduling_cases),
+            "evidence_grounded_percent": _percent(selection_grounded, selection_present),
+            "home_accepted_percent": _percent(selection_home_accepted, selection_present),
+            "explicit_selection_correct_percent": _percent(
+                explicit_scheduling_correct, explicit_scheduling_cases,
+            ),
+            "ambiguous_selection_correctly_absent_percent": _percent(
+                ambiguous_scheduling_correct, ambiguous_scheduling_cases,
+            ),
+            "explicit_cases": explicit_scheduling_cases,
+            "ambiguous_cases": ambiguous_scheduling_cases,
+        },
         "ordinary_conversation_false_positive_rate_percent": _percent(
             ordinary_false_positives, ordinary_cases,
         ),
@@ -172,8 +227,22 @@ def run_profile(
         actual_kind = None
         evidence_items = 0
         grounded_items = 0
+        selection_present = False
+        selection_grounded = False
+        selection_operation_id = None
+        selection_home_accepted = False
+        proposed_operation_ids: list[str] = []
         if result.proposal is not None:
             actual_kind = result.proposal.kind
+            proposed_operation_ids = list(result.proposal.candidate_operation_ids)
+            selection = result.proposal.operation_selection_evidence
+            selection_present = selection.is_present
+            selection_operation_id = selection.operation_id
+            selection_grounded = (
+                selection_present
+                and normalize_utterance(selection.evidence_text or "")
+                in normalize_utterance(case["utterance"])
+            )
             if result.proposal.kind is SemanticProposalKind.SUPPORTED_ACTION:
                 evidence_items = len(result.proposal.extracted_slots)
                 source = normalize_utterance(case["utterance"])
@@ -192,6 +261,11 @@ def run_profile(
                 clarification = (
                     frame.resolution_state
                     is InterpretationResolutionState.CLARIFICATION_REQUIRED
+                )
+                selection_home_accepted = (
+                    selection_present
+                    and selection_grounded
+                    and operations == [selection_operation_id]
                 )
             except ValueError as error:
                 rejection = str(error)
@@ -219,6 +293,7 @@ def run_profile(
         observations.append({
             **case,
             "actual_candidate_operations": operations,
+            "model_proposed_operation_ids": proposed_operation_ids,
             "actual_known_slots": slots,
             "actual_clarification_required": clarification,
             "expected_kind": expected_kind,
@@ -226,6 +301,10 @@ def run_profile(
             "wire_schema_success": result.proposal is not None,
             "slot_evidence_items": evidence_items,
             "grounded_evidence_items": grounded_items,
+            "operation_selection_evidence_present": selection_present,
+            "operation_selection_evidence_grounded": selection_grounded,
+            "operation_selection_operation_id": selection_operation_id,
+            "operation_selection_home_accepted": selection_home_accepted,
             "home_normalization_accepted": (
                 result.proposal is not None and rejection is None
             ),

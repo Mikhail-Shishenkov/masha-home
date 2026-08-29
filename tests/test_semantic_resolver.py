@@ -12,6 +12,7 @@ from backend.conversation.resolution_coordinator import V2LiveAdoptionPolicy
 from backend.conversation.semantic_resolver import (
     HybridCapabilityCandidateDiscovery,
     LocalSemanticResolver,
+    OperationSelectionEvidence,
     OrdinaryProposal,
     SemanticFollowUpProposal,
     SemanticAmbiguityHint,
@@ -83,7 +84,10 @@ def _schedule_proposal(
         ],
         "unresolved_referents": [],
         "ambiguity_hint": "capability" if len(candidates or (1, 2)) > 1 else "none",
-        "operation_selection_evidence": selection_evidence,
+        "operation_selection_evidence": selection_evidence or {
+            "operation_id": None,
+            "evidence_text": None,
+        },
     }
 
 
@@ -118,6 +122,13 @@ def test_local_resolver_uses_configured_role_and_strict_structured_request(tmp_p
         "ambiguity_hint",
         "operation_selection_evidence",
     }
+    selection_schema = schema["$defs"]["OperationSelectionEvidence"]
+    assert set(selection_schema["required"]) == {
+        "operation_id", "evidence_text",
+    }
+    assert schema["properties"]["operation_selection_evidence"]["$ref"] == (
+        "#/$defs/OperationSelectionEvidence"
+    )
     assert roles.profile_for(ModelRole.SEMANTIC_RESOLVER).profile_id == "primary"
 
 
@@ -299,7 +310,10 @@ def test_model_cannot_invent_subject_or_resolved_referent(tmp_path):
         ),
         unresolved_referents=("это",),
         ambiguity_hint=SemanticAmbiguityHint.REFERENT,
-        operation_selection_evidence=None,
+        operation_selection_evidence=OperationSelectionEvidence(
+            operation_id=None,
+            evidence_text=None,
+        ),
     )
 
     with pytest.raises(SemanticValidationError, match="invented_subject"):
@@ -355,7 +369,7 @@ def test_semantic_ordinary_conversation_remains_ordinary(tmp_path):
         "extracted_slots": [],
         "unresolved_referents": [],
         "ambiguity_hint": "none",
-        "operation_selection_evidence": None,
+        "operation_selection_evidence": {"operation_id": None, "evidence_text": None},
     })
 
     frame = hybrid.interpret("Как ты сегодня?")
@@ -375,7 +389,10 @@ def test_semantic_explicit_unsupported_action_stays_distinct_from_conversation(t
         extracted_slots=(),
         unresolved_referents=(),
         ambiguity_hint="none",
-        operation_selection_evidence=None,
+        operation_selection_evidence=OperationSelectionEvidence(
+            operation_id=None,
+            evidence_text=None,
+        ),
     )
 
     frame = validator.validate(
@@ -397,7 +414,7 @@ def test_untrusted_semantics_cannot_erase_strict_structural_calendar_owner(tmp_p
         "extracted_slots": [],
         "unresolved_referents": [],
         "ambiguity_hint": "none",
-        "operation_selection_evidence": None,
+        "operation_selection_evidence": {"operation_id": None, "evidence_text": None},
     })
 
     frame = hybrid.interpret("Поставь встречу завтра в 19 на час")
@@ -418,7 +435,7 @@ def test_unsupported_without_adopted_evidence_does_not_steal_legacy_route(tmp_pa
         "extracted_slots": [],
         "unresolved_referents": [],
         "ambiguity_hint": "none",
-        "operation_selection_evidence": None,
+        "operation_selection_evidence": {"operation_id": None, "evidence_text": None},
     })
 
     frame = hybrid.interpret("Обнови память о выбранной модели")
@@ -436,7 +453,7 @@ def test_untrusted_unsupported_proposal_cannot_steal_connector_read_owner(tmp_pa
         "extracted_slots": [],
         "unresolved_referents": [],
         "ambiguity_hint": "none",
-        "operation_selection_evidence": None,
+        "operation_selection_evidence": {"operation_id": None, "evidence_text": None},
     })
 
     frame = hybrid.interpret("Посмотри мою почту")

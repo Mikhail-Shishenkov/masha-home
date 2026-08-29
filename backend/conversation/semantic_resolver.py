@@ -95,16 +95,34 @@ class SemanticKnownSlot(StrictSemanticModel):
 
 
 class OperationSelectionEvidence(StrictSemanticModel):
-    operation_id: str = Field(pattern=_OPERATION_ID, max_length=100)
-    evidence_text: str = Field(
+    """One explicitly selected operation, or an explicit no-selection object.
+
+    Keeping this object present in every fresh proposal avoids a top-level
+    nullable schema branch that local structured-output models can satisfy by
+    returning ``null`` without ever considering the selection question.
+    """
+
+    operation_id: str | None = Field(..., pattern=_OPERATION_ID, max_length=100)
+    evidence_text: str | None = Field(
+        ...,
         min_length=1,
         max_length=300,
         description=(
             "Exact current-utterance substring explicitly selecting this operation "
-            "inside its operation_selection_group; empty array when no destination "
-            "or operation type was explicitly selected."
+            "inside its operation_selection_group. Both fields are null only when "
+            "no destination or operation type was explicitly selected."
         ),
     )
+
+    @model_validator(mode="after")
+    def selection_is_complete_or_absent(self):
+        if (self.operation_id is None) != (self.evidence_text is None):
+            raise ValueError("operation selection requires id and evidence together")
+        return self
+
+    @property
+    def is_present(self) -> bool:
+        return self.operation_id is not None
 
 
 class SemanticSlotMergeMode(str, Enum):
@@ -224,10 +242,11 @@ class SemanticInterpretationProposal(StrictSemanticModel):
     )
     unresolved_referents: tuple[str, ...] = Field(max_length=8)
     ambiguity_hint: SemanticAmbiguityHint
-    operation_selection_evidence: OperationSelectionEvidence | None = Field(
+    operation_selection_evidence: OperationSelectionEvidence = Field(
         description=(
-            "One grounded explicit operation selection, or null when the user did "
-            "not choose a destination/type inside an ambiguity group."
+            "One grounded explicit operation selection, or an object whose two "
+            "fields are null when the user did not choose a destination/type inside "
+            "an ambiguity group."
         ),
     )
 
@@ -246,7 +265,7 @@ class SemanticInterpretationProposal(StrictSemanticModel):
         if len(self.unresolved_referents) != len(set(self.unresolved_referents)):
             raise ValueError("semantic proposal repeats a referent")
         if (
-            self.operation_selection_evidence is not None
+            self.operation_selection_evidence.is_present
             and self.operation_selection_evidence.operation_id
             not in self.candidate_operation_ids
         ):
@@ -256,7 +275,7 @@ class SemanticInterpretationProposal(StrictSemanticModel):
             or self.nearby_operation_ids
             or self.extracted_slots
             or self.unresolved_referents
-            or self.operation_selection_evidence
+            or self.operation_selection_evidence.is_present
             or self.ambiguity_hint is not SemanticAmbiguityHint.NONE
         ):
             raise ValueError("ordinary proposal cannot carry capability structure")
@@ -264,7 +283,7 @@ class SemanticInterpretationProposal(StrictSemanticModel):
             self.candidate_operation_ids
             or self.extracted_slots
             or self.unresolved_referents
-            or self.operation_selection_evidence
+            or self.operation_selection_evidence.is_present
             or self.ambiguity_hint is not SemanticAmbiguityHint.NONE
         ):
             raise ValueError("unsupported action cannot carry supported structure")
@@ -590,7 +609,8 @@ class LocalSemanticResolver:
             "явное указание календаря выбирает google_calendar.event.create, а "
             "явная просьба именно напомнить выбирает home.timed_commitments; скопируй "
             "реальные слова человека как evidence_text. Если явного выбора нет, "
-            "верни operation_selection_evidence=null, даже если предлагаешь один candidate. "
+            "верни operation_selection_evidence={\"operation_id\":null,\"evidence_text\":null}, "
+            "даже если предлагаешь один candidate. "
             "unresolved_referents содержит только реально присутствующее указание "
             "на неизвестный объект (например «это»), а не отсутствующий slot. "
             "Короткие примеры только для selection semantics: явное «напомни» -> "
@@ -601,6 +621,20 @@ class LocalSemanticResolver:
             "Верни только JSON, соответствующий response schema. "
             "Безопасный каталог операций и требуемых смысловых слотов:\n"
             + json.dumps(operations, ensure_ascii=False, separators=(",", ":"))
+            + "\nФинальная обязательная проверка перед JSON: если текущая реплика "
+            "буквально говорит «напомни»/«не дай забыть»/«не дай мне забыть», заполни "
+            "operation_selection_evidence operation_id=home.timed_commitments и "
+            "evidence_text этими словами. Если буквально говорит «в календарь», "
+            "заполни operation_id=google_calendar.event.create и evidence_text="
+            "«в календарь». Не оставляй оба поля null, когда сама уже предложила "
+            "ровно эту operation и в реплике есть такой явный фрагмент. Для общего "
+            "«запиши», «поставь» или «запланируем» оба поля остаются null."
+            "Это самостоятельный обязательный объект, а не необязательное пояснение "
+            "к candidate_operation_ids. Например, при «Напомни завтра позвонить» "
+            "нужен именно объект {\"operation_id\":\"home.timed_commitments\","
+            "\"evidence_text\":\"Напомни\"}; при «Добавь в календарь встречу» — "
+            "{\"operation_id\":\"google_calendar.event.create\","
+            "\"evidence_text\":\"в календарь\"}."
         )
 
     @staticmethod
@@ -782,7 +816,7 @@ class SemanticProposalValidator:
         utterance: str,
         proposal: SupportedActionProposal,
     ) -> str | None:
-        if proposal.operation_selection_evidence is None:
+        if not proposal.operation_selection_evidence.is_present:
             return None
         evidence = proposal.operation_selection_evidence
         if evidence.operation_id not in self.allowed_operation_ids:
