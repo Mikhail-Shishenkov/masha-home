@@ -8,7 +8,6 @@ from backend.conversation.interpretation_v2 import (
     InterpretationAmbiguity,
     InterpretationResolutionState,
 )
-from backend.conversation.resolution_coordinator import V2LiveAdoptionPolicy
 from backend.conversation.semantic_resolver import (
     SemanticProposalValidator,
     SemanticValidationError,
@@ -27,7 +26,7 @@ def _validator() -> SemanticProposalValidator:
     return SemanticProposalValidator(
         catalog=catalog,
         specifications=discovery.specifications,
-        allowed_operation_ids=V2LiveAdoptionPolicy().supported_operation_ids,
+        known_operation_ids=frozenset(discovery.specifications.operation_ids),
         date_resolver=HomeCalendarDateResolver(
             TemporalEngine(clock=FixedClock(NOW)),
         ),
@@ -96,7 +95,7 @@ def test_grounded_reminder_selection_narrows_group_without_calendar_guess():
     assert frame.resolution_state is InterpretationResolutionState.RESOLVED
 
 
-def test_grounded_calendar_selection_narrows_group_and_keeps_duration_missing():
+def test_grounded_calendar_selection_uses_declared_duration_default():
     utterance = "Машенька, добавь встречу в календарь завтра в 14:30"
     proposal = _supported(
         candidates=["google_calendar.event.create"],
@@ -112,8 +111,9 @@ def test_grounded_calendar_selection_narrows_group_and_keeps_duration_missing():
     assert tuple(item.operation_id for item in frame.candidates) == (
         "google_calendar.event.create",
     )
-    assert frame.missing_slots == ("duration_minutes",)
-    assert frame.ambiguity is InterpretationAmbiguity.SLOT
+    assert frame.missing_slots == ()
+    assert frame.ambiguity is InterpretationAmbiguity.NONE
+    assert {item.name: item.value for item in frame.slots}["duration_minutes"] == "60"
 
 
 def test_operation_selection_evidence_must_exist_in_current_utterance():
@@ -126,11 +126,36 @@ def test_operation_selection_evidence_must_exist_in_current_utterance():
         },
     )
 
-    with pytest.raises(
-        SemanticValidationError,
-        match="invented_operation_selection_evidence",
-    ):
-        _validator().validate("Добавь встречу завтра в 14:30", proposal)
+    validator = _validator()
+    frame = validator.validate("Добавь встречу завтра в 14:30", proposal)
+
+    assert frame.resolution_state is InterpretationResolutionState.CLARIFICATION_REQUIRED
+    assert tuple(item.operation_id for item in frame.candidates) == (
+        "google_calendar.event.create", "home.timed_commitments",
+    )
+    assert validator.last_trace.operation_selection.accepted is False
+    assert validator.last_trace.operation_selection.reason == "invented_operation_selection_evidence"
+
+
+def test_grounded_generic_scheduling_word_cannot_select_calendar():
+    proposal = _supported(
+        candidates=["google_calendar.event.create"],
+        slots=(("subject", "занятие"), ("date", "завтра"), ("time", "11")),
+        selection={
+            "operation_id": "google_calendar.event.create",
+            "evidence_text": "запланируем",
+        },
+    )
+    validator = _validator()
+
+    frame = validator.validate("Давай завтра запланируем занятие в 11", proposal)
+
+    assert tuple(item.operation_id for item in frame.candidates) == (
+        "google_calendar.event.create", "home.timed_commitments",
+    )
+    assert validator.last_trace.operation_selection.reason == (
+        "operation_selection_semantics_mismatch"
+    )
 
 
 def test_duration_and_date_evidence_are_canonicalized_only_by_home():
@@ -171,8 +196,14 @@ def test_model_generated_year_absent_from_utterance_fails_grounding():
         ),
     )
 
-    with pytest.raises(SemanticValidationError, match="slot_evidence_not_grounded"):
-        _validator().validate(
-            "Добавь встречу 29 августа в 14:30 на час",
-            proposal,
-        )
+    validator = _validator()
+    frame = validator.validate(
+        "Добавь встречу 29 августа в 14:30 на час",
+        proposal,
+    )
+
+    assert "date" in frame.missing_slots
+    assert any(
+        item.name == "date" and not item.accepted
+        for item in validator.last_trace.slots
+    )

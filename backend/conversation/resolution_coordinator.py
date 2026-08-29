@@ -36,6 +36,7 @@ from .pending_resolution import (
 from .semantic_resolver import (
     SemanticFollowUpProposal,
     SemanticInterpretationProposal,
+    SemanticValidationTrace,
 )
 
 
@@ -119,6 +120,8 @@ class V2RoutingDiagnostic(StrictCoordinatorModel):
     ) = None
     semantic_command_status: Literal["accepted", "rejected"] | None = None
     semantic_rejection: str | None = Field(default=None, max_length=120)
+    information_space: str | None = Field(default=None, max_length=80)
+    semantic_validation: SemanticValidationTrace | None = None
     merged_slots: tuple[InterpretationSlot, ...] = Field(default=(), max_length=24)
     remaining_missing_slots: tuple[str, ...] = Field(default=(), max_length=24)
     resolved_candidate: str | None = Field(
@@ -274,7 +277,7 @@ class DialogueCore:
                         CoordinationStatus.RESOLVED_HANDOFF,
                         frame,
                         handoff=ResolvedCapabilityHandoff.from_interpretation(
-                            frame,
+                            self._handoff_frame(frame),
                             conversation_id=conversation_id,
                             resolution_id=None,
                         ),
@@ -329,7 +332,7 @@ class DialogueCore:
                     CoordinationStatus.RESOLVED_HANDOFF,
                     frame,
                     handoff=ResolvedCapabilityHandoff.from_interpretation(
-                        frame,
+                        self._handoff_frame(frame),
                         conversation_id=conversation_id,
                         resolution_id=None,
                     ),
@@ -348,6 +351,8 @@ class DialogueCore:
         if binder is not None:
             binder(temporal_engine)
         validator = getattr(self.discovery, "validator", None)
+        if validator is None:
+            validator = getattr(self.engine, "semantic_validator", None)
         validator_binder = getattr(validator, "bind_date_resolver", None)
         if validator_binder is not None:
             from backend.temporal.date_resolution import HomeCalendarDateResolver
@@ -382,7 +387,7 @@ class DialogueCore:
                 follow_up.interpretation,
             )
             handoff = ResolvedCapabilityHandoff.from_interpretation(
-                stored.interpretation,
+                self._handoff_frame(stored.interpretation),
                 conversation_id=conversation_id,
                 resolution_id=stored.resolution_id,
             )
@@ -444,6 +449,10 @@ class DialogueCore:
             None if semantic_result is None else semantic_result.proposal
         )
         rejection = getattr(self.engine, "last_semantic_rejection", None)
+        validation = getattr(
+            getattr(self.engine, "semantic_validator", None),
+            "last_follow_up_trace", None,
+        )
         return {
             "pending_resolution_id": resolution_id,
             "prior_known_slots": follow_up.prior_slots,
@@ -453,6 +462,7 @@ class DialogueCore:
                 "rejected" if rejection else ("accepted" if proposed is not None else None)
             ),
             "semantic_rejection": rejection,
+            "semantic_validation": validation,
             "merged_slots": follow_up.merged_slots,
             "remaining_missing_slots": follow_up.remaining_missing_slots,
             "resolved_candidate": follow_up.selected_operation_id,
@@ -522,6 +532,15 @@ class DialogueCore:
             pending_outcome=pending_outcome,
         )
 
+    def _handoff_frame(self, frame: InterpretationFrame) -> InterpretationFrame:
+        """Add declared Home defaults only at the non-durable handoff boundary."""
+
+        validator = getattr(self.discovery, "validator", None)
+        if validator is None:
+            validator = getattr(self.engine, "semantic_validator", None)
+        materialize = getattr(validator, "materialize_defaults", None)
+        return materialize(frame) if materialize is not None else frame
+
     def _unsupported_action_response(self) -> str:
         result = getattr(self.discovery, "last_result", None)
         proposal = None if result is None else getattr(result, "proposal", None)
@@ -582,22 +601,32 @@ class DialogueCore:
     def _semantic_trace(self) -> dict:
         result = getattr(self.discovery, "last_result", None)
         rejection = getattr(self.discovery, "last_rejection", None)
+        information_space = getattr(self.discovery, "last_information_space", None)
+        validation = getattr(getattr(self.discovery, "validator", None), "last_trace", None)
+        base = {
+            "information_space": (
+                None if information_space is None else getattr(information_space, "value", str(information_space))
+            ),
+            "semantic_validation": validation,
+        }
         if result is None:
-            return {}
+            return base
         proposal = getattr(result, "proposal", None)
         failure = getattr(result, "failure", None)
         if proposal is not None:
             return {
+                **base,
                 "proposed_semantic_command": proposal,
                 "semantic_command_status": "rejected" if rejection else "accepted",
                 "semantic_rejection": rejection,
             }
         if failure is not None:
             return {
+                **base,
                 "semantic_command_status": "rejected",
                 "semantic_rejection": getattr(failure, "value", str(failure)),
             }
-        return {}
+        return base
 
     def _remember_decision(self, diagnostic: V2RoutingDiagnostic) -> None:
         conversation_id = self._diagnostic_conversation_id

@@ -223,7 +223,9 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
     semantic_validator = SemanticProposalValidator(
         catalog=capability_catalog,
         specifications=deterministic_discovery.specifications,
-        allowed_operation_ids=adoption.supported_operation_ids,
+        known_operation_ids=frozenset(
+            deterministic_discovery.specifications.operation_ids,
+        ),
         date_resolver=HomeCalendarDateResolver(
             core.conversation.temporal_engine,
         ),

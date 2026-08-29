@@ -564,6 +564,16 @@ class FollowUpResolutionEngine:
         except (SemanticValidationError, ValueError) as error:
             self.last_semantic_rejection = str(error)
             return None
+        validation = self.semantic_validator.last_follow_up_trace
+        if validation is not None and any(
+            not item.accepted
+            for item in (
+                *((validation.operation_selection,) if validation.operation_selection else ()),
+                *validation.slots,
+                *validation.referents,
+            )
+        ):
+            self.last_semantic_rejection = "field_validation_rejected"
         if validated.relation is SemanticFollowUpRelation.NOT_A_FOLLOW_UP:
             return self._unchanged(
                 pending,

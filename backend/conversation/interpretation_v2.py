@@ -168,6 +168,18 @@ class InterpretationSpecification(StrictInterpretationModel):
 
     operation_id: str = Field(pattern=_OPERATION_ID, max_length=100)
     required_slots: tuple[str, ...] = Field(default=(), max_length=16)
+    purpose: str = Field(
+        default="",
+        max_length=500,
+        description="Human semantic purpose only; never authority or credentials.",
+    )
+    operation_kind: str | None = Field(default=None, max_length=80)
+    selection_evidence_meaning: str | None = Field(default=None, max_length=300)
+    selection_evidence_examples: tuple[str, ...] = Field(default=(), max_length=6)
+    selection_evidence_terms: tuple[str, ...] = Field(default=(), max_length=6)
+    slots: tuple["InterpretationSlotSpecification", ...] = Field(
+        default=(), max_length=16,
+    )
     operation_selection_group: str | None = Field(
         default=None,
         pattern=r"^[a-z][a-z0-9_]{0,63}$",
@@ -179,6 +191,31 @@ class InterpretationSpecification(StrictInterpretationModel):
             raise ValueError("required slot name is invalid")
         if len(self.required_slots) != len(set(self.required_slots)):
             raise ValueError("interpretation specification repeats a required slot")
+        slot_names = [item.name for item in self.slots]
+        if len(slot_names) != len(set(slot_names)):
+            raise ValueError("interpretation specification repeats a slot")
+        declared_required = {item.name for item in self.slots if item.required}
+        if declared_required and declared_required != set(self.required_slots):
+            raise ValueError("slot metadata must match required slots")
+        return self
+
+    def slot_specification(self, name: str) -> "InterpretationSlotSpecification | None":
+        return next((item for item in self.slots if item.name == name), None)
+
+
+class InterpretationSlotSpecification(StrictInterpretationModel):
+    """Descriptive slot contract supplied to local language understanding."""
+
+    name: str = Field(pattern=_SLOT_NAME, max_length=64)
+    meaning: str = Field(min_length=1, max_length=300)
+    required: bool = True
+    normalizer: str | None = Field(default=None, max_length=80)
+    default_value: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def defaults_are_only_for_optional_slots(self):
+        if self.required and self.default_value is not None:
+            raise ValueError("required slot cannot declare a default")
         return self
 
 
@@ -224,38 +261,77 @@ def default_interpretation_specifications() -> tuple[InterpretationSpecification
         InterpretationSpecification(
             operation_id="web.search",
             required_slots=("query",),
+            purpose="find publicly available information on the web",
+            operation_kind="read",
+            slots=(InterpretationSlotSpecification(name="query", meaning="what to search for", normalizer="text"),),
         ),
         InterpretationSpecification(
             operation_id="web.fetch",
             required_slots=("target",),
+            purpose="read one already selected public web source",
+            operation_kind="read",
+            slots=(InterpretationSlotSpecification(name="target", meaning="selected source reference", normalizer="source_reference"),),
         ),
-        InterpretationSpecification(operation_id="google_calendar.read"),
+        InterpretationSpecification(operation_id="google_calendar.read", purpose="read calendar information", operation_kind="read"),
         InterpretationSpecification(
             operation_id="google_calendar.event.create",
-            required_slots=("subject", "date", "time", "duration_minutes"),
+            required_slots=("subject", "date", "time"),
+            purpose="create one calendar event",
+            operation_kind="create",
+            selection_evidence_meaning="человек прямо просит добавить или поставить это именно в календарь",
+            selection_evidence_examples=("в календарь", "в моём календаре"),
+            selection_evidence_terms=("календар",),
+            slots=(
+                InterpretationSlotSpecification(name="subject", meaning="event title or what happens", normalizer="text"),
+                InterpretationSlotSpecification(name="date", meaning="local calendar day", normalizer="date"),
+                InterpretationSlotSpecification(name="time", meaning="local event start time", normalizer="time"),
+                InterpretationSlotSpecification(name="duration_minutes", meaning="event length in minutes", required=False, normalizer="duration", default_value="60"),
+            ),
             operation_selection_group="personal_scheduling",
         ),
         InterpretationSpecification(
             operation_id="google_drive.document.create",
             required_slots=("content",),
+            purpose="create a Google document from explicitly supplied material",
+            operation_kind="create",
+            slots=(InterpretationSlotSpecification(name="content", meaning="document source material", normalizer="protected_content"),),
         ),
         InterpretationSpecification(
             operation_id="google_calendar.event.update",
             required_slots=("referent", "change"),
+            purpose="change one identified calendar event",
+            operation_kind="update",
+            slots=(
+                InterpretationSlotSpecification(name="referent", meaning="event to change", normalizer="reference"),
+                InterpretationSlotSpecification(name="change", meaning="requested event change", normalizer="text"),
+            ),
         ),
-        InterpretationSpecification(operation_id="google_drive.read"),
+        InterpretationSpecification(operation_id="google_drive.read", purpose="read or list files in Google Drive", operation_kind="read"),
         InterpretationSpecification(
             operation_id="home.timed_commitments",
             required_slots=("subject", "date", "time"),
+            purpose="create one Home reminder for a timed task",
+            operation_kind="create",
+            selection_evidence_meaning="человек прямо просит напомнить или не дать ему забыть",
+            selection_evidence_examples=("напомни", "не дай забыть", "не дай мне забыть", "для Дома"),
+            selection_evidence_terms=("напомн", "заб", "дом"),
+            slots=(
+                InterpretationSlotSpecification(name="subject", meaning="what to remember", normalizer="text"),
+                InterpretationSlotSpecification(name="date", meaning="local due day", normalizer="date"),
+                InterpretationSlotSpecification(name="time", meaning="local due time", normalizer="time"),
+            ),
             operation_selection_group="personal_scheduling",
         ),
-        InterpretationSpecification(operation_id="yandex_mail.read"),
-        InterpretationSpecification(operation_id="yandex_disk.read"),
+        InterpretationSpecification(operation_id="yandex_mail.read", purpose="read new or requested mail", operation_kind="read"),
+        InterpretationSpecification(operation_id="yandex_disk.read", purpose="read or list files on Yandex Disk", operation_kind="read"),
         InterpretationSpecification(
             operation_id="home.commitments",
             required_slots=("subject",),
+            purpose="create or manage a Home task",
+            operation_kind="manage",
+            slots=(InterpretationSlotSpecification(name="subject", meaning="task to manage", normalizer="text"),),
         ),
-        InterpretationSpecification(operation_id="home.proactive_reminders"),
+        InterpretationSpecification(operation_id="home.proactive_reminders", purpose="inspect Home reminders", operation_kind="read"),
     )
 
 

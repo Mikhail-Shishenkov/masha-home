@@ -231,6 +231,9 @@ def run_profile(
         selection_grounded = False
         selection_operation_id = None
         selection_home_accepted = False
+        selection_validation_reason = None
+        accepted_slot_fields: list[str] = []
+        rejected_slot_fields: list[dict[str, str]] = []
         proposed_operation_ids: list[str] = []
         if result.proposal is not None:
             actual_kind = result.proposal.kind
@@ -267,6 +270,21 @@ def run_profile(
                     and selection_grounded
                     and operations == [selection_operation_id]
                 )
+                trace = validator.last_trace
+                if trace is not None:
+                    if trace.operation_selection is not None:
+                        selection_home_accepted = (
+                            trace.operation_selection.accepted
+                            and operations == [selection_operation_id]
+                        )
+                        selection_validation_reason = trace.operation_selection.reason
+                    accepted_slot_fields = [
+                        item.name for item in trace.slots if item.accepted
+                    ]
+                    rejected_slot_fields = [
+                        {"name": item.name, "reason": item.reason or "rejected"}
+                        for item in trace.slots if not item.accepted
+                    ]
             except ValueError as error:
                 rejection = str(error)
                 diagnostic_category = _validation_category(rejection)
@@ -305,6 +323,9 @@ def run_profile(
             "operation_selection_evidence_grounded": selection_grounded,
             "operation_selection_operation_id": selection_operation_id,
             "operation_selection_home_accepted": selection_home_accepted,
+            "operation_selection_validation_reason": selection_validation_reason,
+            "accepted_slot_fields": accepted_slot_fields,
+            "rejected_slot_fields": rejected_slot_fields,
             "home_normalization_accepted": (
                 result.proposal is not None and rejection is None
             ),
@@ -347,7 +368,7 @@ def _dialogue_core_result(
     validator = SemanticProposalValidator(
         catalog=catalog,
         specifications=deterministic.specifications,
-        allowed_operation_ids=adoption.supported_operation_ids,
+        known_operation_ids=frozenset(deterministic.specifications.operation_ids),
         date_resolver=HomeCalendarDateResolver(temporal),
     )
     hybrid = HybridCapabilityCandidateDiscovery(
@@ -426,18 +447,10 @@ def main(argv: list[str] | None = None) -> int:
         catalog=catalog,
         specifications=default_interpretation_specifications(),
     )
-    benchmark_operations = frozenset(
-        operation_id
-        for case in corpus["cases"]
-        for operation_id in (
-            *case["expected_candidate_operations"],
-            *case["forbidden_operations"],
-        )
-    )
     validator = SemanticProposalValidator(
         catalog=catalog,
         specifications=specifications,
-        allowed_operation_ids=benchmark_operations,
+        known_operation_ids=frozenset(specifications.operation_ids),
         date_resolver=HomeCalendarDateResolver(
             TemporalEngine(clock=FixedClock(reference_now)),
         ),

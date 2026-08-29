@@ -229,7 +229,11 @@ def test_invalid_semantic_update_fails_closed_and_keeps_pending(tmp_path):
     assert result.status is CoordinationStatus.STILL_UNRESOLVED
     assert result.diagnostic.semantic_command_status == "rejected"
     assert result.diagnostic.proposed_semantic_command is not None
-    assert result.diagnostic.semantic_rejection == "follow_up_subject_not_grounded"
+    assert result.diagnostic.semantic_rejection == "field_validation_rejected"
+    assert any(
+        item.reason == "follow_up_subject_not_grounded"
+        for item in result.diagnostic.semantic_validation.slots
+    )
     assert store.active_for_conversation("c1").resolution_id == first.clarification.resolution_id
 
 

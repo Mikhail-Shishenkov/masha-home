@@ -311,8 +311,39 @@ UnsupportedActionProposal = SemanticInterpretationProposal
 class SemanticVocabularyItem(StrictSemanticModel):
     operation_id: str = Field(pattern=_OPERATION_ID, max_length=100)
     display_name: str = Field(min_length=3, max_length=120)
+    purpose: str = Field(default="", max_length=500)
+    operation_kind: str | None = Field(default=None, max_length=80)
+    selection_evidence_meaning: str | None = Field(default=None, max_length=300)
+    selection_evidence_examples: tuple[str, ...] = Field(default=(), max_length=6)
+    selection_evidence_terms: tuple[str, ...] = Field(default=(), max_length=6)
     required_slots: tuple[str, ...] = Field(default=(), max_length=16)
+    slots: tuple["SemanticVocabularySlot", ...] = Field(default=(), max_length=16)
     operation_selection_group: str | None = Field(default=None, max_length=64)
+
+
+class SemanticVocabularySlot(StrictSemanticModel):
+    name: str = Field(pattern=_SLOT_NAME, max_length=64)
+    meaning: str = Field(min_length=1, max_length=300)
+    required: bool = True
+    normalizer: str | None = Field(default=None, max_length=80)
+    default_value: str | None = Field(default=None, max_length=500)
+
+
+class SemanticFieldValidation(StrictSemanticModel):
+    field: str = Field(min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=120)
+    accepted: bool
+    reason: str | None = Field(default=None, max_length=120)
+
+
+class SemanticValidationTrace(StrictSemanticModel):
+    """Read-only account of Home validation; never model authority."""
+
+    accepted_operation_ids: tuple[str, ...] = Field(default=(), max_length=8)
+    rejected_operations: tuple[SemanticFieldValidation, ...] = Field(default=(), max_length=8)
+    operation_selection: SemanticFieldValidation | None = None
+    slots: tuple[SemanticFieldValidation, ...] = Field(default=(), max_length=24)
+    referents: tuple[SemanticFieldValidation, ...] = Field(default=(), max_length=8)
 
 
 class SemanticResolverFailure(str, Enum):
@@ -585,6 +616,26 @@ class LocalSemanticResolver:
     @staticmethod
     def _prompt(vocabulary: tuple[SemanticVocabularyItem, ...]) -> str:
         operations = [item.model_dump(mode="json") for item in vocabulary]
+        selection_rules = [
+            {
+                "operation_id": item.operation_id,
+                "meaning": item.selection_evidence_meaning,
+                "examples": item.selection_evidence_examples,
+            }
+            for item in vocabulary
+            if item.selection_evidence_meaning is not None
+        ]
+        selection_templates = [
+            {
+                "when_current_utterance_contains": example,
+                "operation_selection_evidence": {
+                    "operation_id": item.operation_id,
+                    "evidence_text": example,
+                },
+            }
+            for item in vocabulary
+            for example in item.selection_evidence_examples
+        ]
         return (
             "Ты локальный семантический интерпретатор одной текущей русской реплики. "
             "Ты не отвечаешь человеку, не выполняешь действия и не даёшь разрешений. "
@@ -605,36 +656,29 @@ class LocalSemanticResolver:
             "unsupported_action. "
             "operation_selection_evidence добавляй только когда точный фрагмент "
             "реплики явно выбирает конкретное место или тип действия; общая просьба "
-            "запланировать не является таким выбором. Для personal_scheduling "
-            "явное указание календаря выбирает google_calendar.event.create, а "
-            "явная просьба именно напомнить выбирает home.timed_commitments; скопируй "
-            "реальные слова человека как evidence_text. Если явного выбора нет, "
-            "верни operation_selection_evidence={\"operation_id\":null,\"evidence_text\":null}, "
+            "запланировать не является таким выбором. Для item с непустым "
+            "selection_evidence_meaning проверь, выражен ли этот человеческий смысл "
+            "буквально в текущей реплике: тогда выбери именно этот operation_id и "
+            "скопируй реальные слова человека как evidence_text. Если явного выбора "
+            "нет, верни operation_selection_evidence={\"operation_id\":null,\"evidence_text\":null}, "
             "даже если предлагаешь один candidate. "
             "unresolved_referents содержит только реально присутствующее указание "
             "на неизвестный объект (например «это»), а не отсутствующий slot. "
-            "Короткие примеры только для selection semantics: явное «напомни» -> "
-            '{"operation_id":"home.timed_commitments","evidence_text":"напомни"}; '
-            "явное «в календарь» -> "
-            '{"operation_id":"google_calendar.event.create","evidence_text":"в календарь"}; '
-            "общее «запланируй занятие» -> null. Не ставь confidence. "
+            "Не ставь confidence. "
             "Верни только JSON, соответствующий response schema. "
             "Безопасный каталог операций и требуемых смысловых слотов:\n"
             + json.dumps(operations, ensure_ascii=False, separators=(",", ":"))
-            + "\nФинальная обязательная проверка перед JSON: если текущая реплика "
-            "буквально говорит «напомни»/«не дай забыть»/«не дай мне забыть», заполни "
-            "operation_selection_evidence operation_id=home.timed_commitments и "
-            "evidence_text этими словами. Если буквально говорит «в календарь», "
-            "заполни operation_id=google_calendar.event.create и evidence_text="
-            "«в календарь». Не оставляй оба поля null, когда сама уже предложила "
-            "ровно эту operation и в реплике есть такой явный фрагмент. Для общего "
-            "«запиши», «поставь» или «запланируем» оба поля остаются null."
-            "Это самостоятельный обязательный объект, а не необязательное пояснение "
-            "к candidate_operation_ids. Например, при «Напомни завтра позвонить» "
-            "нужен именно объект {\"operation_id\":\"home.timed_commitments\","
-            "\"evidence_text\":\"Напомни\"}; при «Добавь в календарь встречу» — "
-            "{\"operation_id\":\"google_calendar.event.create\","
-            "\"evidence_text\":\"в календарь\"}."
+            + "\nRegistry-derived operation-selection rules:\n"
+            + json.dumps(selection_rules, ensure_ascii=False, separators=(",", ":"))
+            + "\nRegistry-derived selection output templates:\n"
+            + json.dumps(selection_templates, ensure_ascii=False, separators=(",", ":"))
+            + "\nФинальная обязательная проверка перед JSON: для каждой rule сравни "
+            "текущую реплику с meaning и examples. Если человек явно выражает этот "
+            "смысл (включая обычное склонение примера), НЕ оставляй "
+            "operation_selection_evidence null: верни operation_id rule и точный "
+            "фрагмент текущей реплики. Templates показывают точную форму этого поля; "
+            "замени evidence_text на совпадающий фрагмент текущей реплики. Если ни одна "
+            "rule не выражена явно, оба поля null."
         )
 
     @staticmethod
@@ -676,23 +720,35 @@ class SemanticProposalValidator:
         *,
         catalog: CapabilityCatalog,
         specifications: InterpretationSpecificationRegistry,
-        allowed_operation_ids: frozenset[str],
+        known_operation_ids: frozenset[str] | None = None,
+        # Compatibility for Slice 2A–2F construction sites.  This is now a
+        # knowledge boundary, not the Dialogue Core adoption boundary.
+        allowed_operation_ids: frozenset[str] | None = None,
         date_resolver: HomeCalendarDateResolver | None = None,
     ):
+        if known_operation_ids is not None and allowed_operation_ids is not None:
+            raise ValueError("provide one semantic operation set")
         self.catalog = catalog
         self.specifications = specifications
-        self.allowed_operation_ids = allowed_operation_ids
+        self.known_operation_ids = (
+            known_operation_ids
+            or allowed_operation_ids
+            or frozenset(specifications.operation_ids)
+        )
+        # Kept as a read-only source compatibility alias.  New production code
+        # must use known_operation_ids; adoption lives in DialogueCore.
+        self.allowed_operation_ids = self.known_operation_ids
         self.date_resolver = date_resolver
+        self.last_trace: SemanticValidationTrace | None = None
+        self.last_follow_up_trace: SemanticValidationTrace | None = None
 
     def bind_date_resolver(self, date_resolver: HomeCalendarDateResolver) -> None:
         self.date_resolver = date_resolver
 
     def vocabulary(self) -> tuple[SemanticVocabularyItem, ...]:
         items = []
-        # The language model must see the descriptive whole-Home catalog so a
-        # mature compatibility capability is not mislabeled unsupported.  The
-        # separate allowed set below still prevents unadopted operations from
-        # becoming Dialogue Core handoffs.
+        # This is a descriptive whole-Home catalog.  Execution adoption is a
+        # later application-owned decision in DialogueCore.
         for operation_id in self.specifications.operation_ids:
             try:
                 descriptor = self.catalog.get(operation_id)
@@ -702,13 +758,25 @@ class SemanticProposalValidator:
             items.append(SemanticVocabularyItem(
                 operation_id=operation_id,
                 display_name=descriptor.display_name,
+                purpose=specification.purpose,
+                operation_kind=specification.operation_kind,
+                selection_evidence_meaning=specification.selection_evidence_meaning,
+                selection_evidence_examples=specification.selection_evidence_examples,
+                selection_evidence_terms=specification.selection_evidence_terms,
                 required_slots=specification.required_slots,
+                slots=tuple(SemanticVocabularySlot(
+                    name=slot.name,
+                    meaning=slot.meaning,
+                    required=slot.required,
+                    normalizer=slot.normalizer,
+                    default_value=slot.default_value,
+                ) for slot in specification.slots),
                 operation_selection_group=specification.operation_selection_group,
             ))
         return tuple(items)
 
     def required_slots(self, operation_id: str) -> tuple[str, ...]:
-        if operation_id not in self.allowed_operation_ids:
+        if operation_id not in self.known_operation_ids:
             raise SemanticValidationError("unsupported_operation")
         return self.specifications.get(operation_id).required_slots
 
@@ -718,6 +786,7 @@ class SemanticProposalValidator:
         proposal: SemanticInterpretationProposal,
     ) -> InterpretationFrame:
         original = utterance.strip()
+        self.last_trace = None
         if not original:
             raise SemanticValidationError("empty_utterance")
         try:
@@ -725,33 +794,46 @@ class SemanticProposalValidator:
         except ValueError as error:
             raise SemanticValidationError(str(error)) from error
         if proposal.kind is SemanticProposalKind.ORDINARY:
+            self.last_trace = SemanticValidationTrace()
             return InterpretationFrame(
                 original_utterance=original,
                 resolution_state=InterpretationResolutionState.ORDINARY_CONVERSATION,
             )
         if proposal.kind is SemanticProposalKind.UNSUPPORTED_ACTION:
             if any(
-                operation_id not in self.allowed_operation_ids
+                operation_id not in self.known_operation_ids
                 for operation_id in proposal.nearby_operation_ids
             ):
                 raise SemanticValidationError("unsupported_nearby_operation")
+            self.last_trace = SemanticValidationTrace()
             return InterpretationFrame(
                 original_utterance=original,
                 resolution_state=InterpretationResolutionState.UNSUPPORTED_ACTION,
             )
         specifications = []
+        rejected_operations = []
         for operation_id in proposal.candidate_operation_ids:
             try:
                 self.catalog.get(operation_id)
-                specifications.append(self.specifications.get(operation_id))
-            except (CapabilityNotFoundError, InterpretationSpecificationError) as error:
-                raise SemanticValidationError("unknown_operation") from error
-        if any(
-            operation_id not in self.allowed_operation_ids
-            for operation_id in proposal.candidate_operation_ids
-        ):
-            raise SemanticValidationError("unsupported_operation")
-        selection = self._validated_operation_selection(original, proposal)
+                specification = self.specifications.get(operation_id)
+                if operation_id not in self.known_operation_ids:
+                    raise InterpretationSpecificationError(operation_id)
+            except (CapabilityNotFoundError, InterpretationSpecificationError):
+                rejected_operations.append(SemanticFieldValidation(
+                    field="candidate_operation", name=operation_id,
+                    accepted=False, reason="unknown_operation",
+                ))
+                continue
+            specifications.append(specification)
+        if not specifications:
+            self.last_trace = SemanticValidationTrace(
+                rejected_operations=tuple(rejected_operations),
+            )
+            raise SemanticValidationError(
+                rejected_operations[0].reason
+                if rejected_operations else "no_known_operation"
+            )
+        selection, selection_trace = self._validated_operation_selection(original, proposal)
         specifications = self._preserve_selection_group_ambiguity(
             specifications,
             selected_operation_id=selection,
@@ -759,14 +841,29 @@ class SemanticProposalValidator:
         allowed_slots = {
             slot
             for specification in specifications
-            for slot in specification.required_slots
+            for slot in self._all_slot_names(specification)
         }
-        if any(slot.name not in allowed_slots for slot in proposal.extracted_slots):
-            raise SemanticValidationError("unknown_slot")
-        slots = tuple(
-            self._validated_slot(original, slot)
-            for slot in proposal.extracted_slots
-        )
+        slots = []
+        slot_trace = []
+        for proposed_slot in proposal.extracted_slots:
+            if proposed_slot.name not in allowed_slots:
+                slot_trace.append(SemanticFieldValidation(
+                    field="slot", name=proposed_slot.name, accepted=False,
+                    reason="unknown_slot",
+                ))
+                continue
+            try:
+                slots.append(self._validated_slot(original, proposed_slot))
+            except SemanticValidationError as error:
+                slot_trace.append(SemanticFieldValidation(
+                    field="slot", name=proposed_slot.name, accepted=False,
+                    reason=str(error),
+                ))
+            else:
+                slot_trace.append(SemanticFieldValidation(
+                    field="slot", name=proposed_slot.name, accepted=True,
+                ))
+        slots = tuple(slots)
         slot_names = {slot.name for slot in slots}
         candidates = tuple(
             CapabilityCandidate(
@@ -784,13 +881,20 @@ class SemanticProposalValidator:
             for specification in specifications
         )
         normalized = normalize_utterance(original)
-        referents = tuple(
-            InterpretationReferent(expression=expression)
-            for expression in proposal.unresolved_referents
-            if self._referent_is_supported(normalized, expression)
-        )
-        if len(referents) != len(proposal.unresolved_referents):
-            raise SemanticValidationError("invented_referent")
+        referents = []
+        referent_trace = []
+        for expression in proposal.unresolved_referents:
+            if self._referent_is_supported(normalized, expression):
+                referents.append(InterpretationReferent(expression=expression))
+                referent_trace.append(SemanticFieldValidation(
+                    field="referent", name=expression, accepted=True,
+                ))
+            else:
+                referent_trace.append(SemanticFieldValidation(
+                    field="referent", name=expression, accepted=False,
+                    reason="invented_referent",
+                ))
+        referents = tuple(referents)
         missing = tuple(dict.fromkeys(
             name for candidate in candidates for name in candidate.missing_slots
         ))
@@ -800,7 +904,7 @@ class SemanticProposalValidator:
             if ambiguity is InterpretationAmbiguity.NONE
             else InterpretationResolutionState.CLARIFICATION_REQUIRED
         )
-        return InterpretationFrame(
+        frame = InterpretationFrame(
             original_utterance=original,
             normalized_goal=(candidates[0].operation_id if len(candidates) == 1 else None),
             candidates=candidates,
@@ -810,20 +914,46 @@ class SemanticProposalValidator:
             ambiguity=ambiguity,
             resolution_state=state,
         )
+        frame = self.materialize_defaults(frame)
+        self.last_trace = SemanticValidationTrace(
+            accepted_operation_ids=tuple(item.operation_id for item in specifications),
+            rejected_operations=tuple(rejected_operations),
+            operation_selection=selection_trace,
+            slots=tuple(slot_trace),
+            referents=tuple(referent_trace),
+        )
+        return frame
 
     def _validated_operation_selection(
         self,
         utterance: str,
         proposal: SupportedActionProposal,
-    ) -> str | None:
+    ) -> tuple[str | None, SemanticFieldValidation | None]:
         if not proposal.operation_selection_evidence.is_present:
-            return None
+            return None, None
         evidence = proposal.operation_selection_evidence
-        if evidence.operation_id not in self.allowed_operation_ids:
-            raise SemanticValidationError("unsupported_operation_selection")
+        if evidence.operation_id not in self.known_operation_ids:
+            return None, SemanticFieldValidation(
+                field="operation_selection", name=evidence.operation_id or "unknown",
+                accepted=False, reason="unknown_operation_selection",
+            )
         if not self._evidence_is_grounded(utterance, evidence.evidence_text):
-            raise SemanticValidationError("invented_operation_selection_evidence")
-        return evidence.operation_id
+            return None, SemanticFieldValidation(
+                field="operation_selection", name=evidence.operation_id,
+                accepted=False, reason="invented_operation_selection_evidence",
+            )
+        specification = self.specifications.get(evidence.operation_id)
+        if not self._selection_evidence_matches_spec(
+            evidence.evidence_text, specification,
+        ):
+            return None, SemanticFieldValidation(
+                field="operation_selection", name=evidence.operation_id,
+                accepted=False, reason="operation_selection_semantics_mismatch",
+            )
+        return evidence.operation_id, SemanticFieldValidation(
+            field="operation_selection", name=evidence.operation_id,
+            accepted=True,
+        )
 
     def _preserve_selection_group_ambiguity(
         self,
@@ -842,11 +972,77 @@ class SemanticProposalValidator:
             for item in proposed_specifications
             if item.operation_selection_group is not None
         }
-        for operation_id in sorted(self.allowed_operation_ids):
+        for operation_id in sorted(self.known_operation_ids):
             specification = self.specifications.get(operation_id)
             if specification.operation_selection_group in groups:
                 by_id.setdefault(operation_id, specification)
         return [by_id[operation_id] for operation_id in sorted(by_id)]
+
+    @staticmethod
+    def _all_slot_names(specification) -> tuple[str, ...]:
+        return tuple(dict.fromkeys((
+            *specification.required_slots,
+            *(item.name for item in specification.slots),
+        )))
+
+    @staticmethod
+    def _selection_evidence_matches_spec(evidence_text: str, specification) -> bool:
+        """Validate only catalog-declared literal selector meaning, never intent grammar."""
+
+        terms = specification.selection_evidence_terms
+        if not terms:
+            return False
+        tokens = meaningful_tokens(normalize_utterance(evidence_text))
+        return any(
+            token.startswith(term)
+            for token in tokens
+            for term in terms
+        )
+
+    def materialize_defaults(self, frame: InterpretationFrame) -> InterpretationFrame:
+        """Apply declared Home defaults only after one operation is known."""
+
+        if len(frame.candidates) != 1:
+            return frame
+        specification = self.specifications.get(frame.candidates[0].operation_id)
+        slots = {item.name: item for item in frame.slots}
+        current_date = slots.get("date")
+        if self.date_resolver is not None and current_date is not None and current_date.value:
+            resolved_date = self.date_resolver.resolve(current_date.value)
+            if resolved_date is not None:
+                slots["date"] = InterpretationSlot(
+                    name="date",
+                    value=resolved_date.canonical,
+                    origin=InterpretationValueOrigin.TEMPORAL_NORMALIZED,
+                )
+        for slot in specification.slots:
+            if not slot.required and slot.default_value is not None and slot.name not in slots:
+                slots[slot.name] = InterpretationSlot(
+                    name=slot.name,
+                    value=slot.default_value,
+                    origin=InterpretationValueOrigin.DETERMINISTIC,
+                )
+        missing = tuple(name for name in specification.required_slots if name not in slots)
+        candidate = CapabilityCandidate.model_validate({
+            **frame.candidates[0].model_dump(mode="python"),
+            "slot_names": tuple(slots),
+            "missing_slots": missing,
+        })
+        ambiguity = self._ambiguity((candidate,), missing, frame.referents)
+        return InterpretationFrame(
+            original_utterance=frame.original_utterance,
+            normalized_goal=frame.normalized_goal,
+            candidates=(candidate,),
+            slots=tuple(slots.values()),
+            missing_slots=missing,
+            referents=frame.referents,
+            ambiguity=ambiguity,
+            resolution_state=(
+                InterpretationResolutionState.RESOLVED
+                if ambiguity is InterpretationAmbiguity.NONE
+                else InterpretationResolutionState.CLARIFICATION_REQUIRED
+            ),
+        )
 
     def validate_follow_up(
         self,
@@ -858,60 +1054,101 @@ class SemanticProposalValidator:
     ) -> ValidatedSemanticFollowUp:
         """Validate a contextual proposal against the saved frame and this turn."""
 
+        self.last_follow_up_trace = None
         if proposal.relation is SemanticFollowUpRelation.NOT_A_FOLLOW_UP:
+            self.last_follow_up_trace = SemanticValidationTrace()
             return ValidatedSemanticFollowUp(relation=proposal.relation)
         candidate_ids = {
             candidate.operation_id for candidate in pending.interpretation.candidates
         }
-        if (
-            proposal.selected_operation_id is not None
-            and proposal.selected_operation_id not in candidate_ids
-        ):
-            raise SemanticValidationError("follow_up_invented_candidate")
-        if (
-            proposal.operation_selection_evidence is not None
-            and not self._evidence_is_grounded(
-                utterance,
+        selected_operation_id = proposal.selected_operation_id
+        selection_trace = None
+        if selected_operation_id is not None:
+            if selected_operation_id not in candidate_ids:
+                selection_trace = SemanticFieldValidation(
+                    field="operation_selection", name=selected_operation_id,
+                    accepted=False, reason="follow_up_invented_candidate",
+                )
+                selected_operation_id = None
+            elif proposal.operation_selection_evidence is None or not self._evidence_is_grounded(
+                utterance, proposal.operation_selection_evidence,
+            ):
+                selection_trace = SemanticFieldValidation(
+                    field="operation_selection", name=selected_operation_id,
+                    accepted=False, reason="follow_up_operation_selection_not_grounded",
+                )
+                selected_operation_id = None
+            elif not self._selection_evidence_matches_spec(
                 proposal.operation_selection_evidence,
-            )
-        ):
-            raise SemanticValidationError(
-                "follow_up_operation_selection_not_grounded"
-            )
+                self.specifications.get(selected_operation_id),
+            ):
+                selection_trace = SemanticFieldValidation(
+                    field="operation_selection", name=selected_operation_id,
+                    accepted=False, reason="follow_up_operation_selection_semantics_mismatch",
+                )
+                selected_operation_id = None
+            else:
+                selection_trace = SemanticFieldValidation(
+                    field="operation_selection", name=selected_operation_id,
+                    accepted=True,
+                )
         allowed_slots = set()
         for operation_id in candidate_ids:
             try:
                 specification = self.specifications.get(operation_id)
             except InterpretationSpecificationError as error:
                 raise SemanticValidationError("follow_up_unknown_operation") from error
-            allowed_slots.update(specification.required_slots)
-        if any(item.name not in allowed_slots for item in proposal.slot_updates):
-            raise SemanticValidationError("follow_up_unknown_slot")
+            allowed_slots.update(self._all_slot_names(specification))
         known = {
             item.name: item for item in pending.interpretation.slots
         }
         updates = []
+        slot_trace = []
         for item in proposal.slot_updates:
-            slot = self._validated_follow_up_slot(
-                utterance,
-                item,
-                date_resolver=date_resolver,
-            )
-            self._validate_merge_mode(known.get(item.name), slot, item.mode)
+            if item.name not in allowed_slots:
+                slot_trace.append(SemanticFieldValidation(
+                    field="slot", name=item.name, accepted=False,
+                    reason="follow_up_unknown_slot",
+                ))
+                continue
+            try:
+                slot = self._validated_follow_up_slot(
+                    utterance,
+                    item,
+                    date_resolver=date_resolver,
+                )
+                self._validate_merge_mode(known.get(item.name), slot, item.mode)
+            except SemanticValidationError as error:
+                slot_trace.append(SemanticFieldValidation(
+                    field="slot", name=item.name, accepted=False, reason=str(error),
+                ))
+                continue
             updates.append(ValidatedSemanticSlotUpdate(slot=slot, mode=item.mode))
+            slot_trace.append(SemanticFieldValidation(
+                field="slot", name=item.name, accepted=True,
+            ))
         unresolved = {
             item.expression
             for item in pending.interpretation.referents
             if item.value is None
         }
         referent_updates = []
+        referent_trace = []
         for item in proposal.referent_updates:
             if item.expression not in unresolved:
-                raise SemanticValidationError("follow_up_unknown_referent")
+                referent_trace.append(SemanticFieldValidation(
+                    field="referent", name=item.expression, accepted=False,
+                    reason="follow_up_unknown_referent",
+                ))
+                continue
             utterance_tokens = set(meaningful_tokens(normalize_utterance(utterance)))
             value_tokens = set(meaningful_tokens(item.value))
             if not value_tokens or not value_tokens.issubset(utterance_tokens):
-                raise SemanticValidationError("follow_up_referent_not_grounded")
+                referent_trace.append(SemanticFieldValidation(
+                    field="referent", name=item.expression, accepted=False,
+                    reason="follow_up_referent_not_grounded",
+                ))
+                continue
             referent_updates.append(ValidatedSemanticReferentUpdate(
                 referent=InterpretationReferent(
                     expression=item.expression,
@@ -919,9 +1156,18 @@ class SemanticProposalValidator:
                     origin=InterpretationValueOrigin.FOLLOW_UP_SEMANTIC,
                 ),
             ))
+            referent_trace.append(SemanticFieldValidation(
+                field="referent", name=item.expression, accepted=True,
+            ))
+        self.last_follow_up_trace = SemanticValidationTrace(
+            accepted_operation_ids=tuple(sorted(candidate_ids)),
+            operation_selection=selection_trace,
+            slots=tuple(slot_trace),
+            referents=tuple(referent_trace),
+        )
         return ValidatedSemanticFollowUp(
             relation=proposal.relation,
-            selected_operation_id=proposal.selected_operation_id,
+            selected_operation_id=selected_operation_id,
             slot_updates=tuple(updates),
             referent_updates=tuple(referent_updates),
         )
@@ -1127,49 +1373,56 @@ class HybridCapabilityCandidateDiscovery:
         self.validator = validator
         self.last_result: SemanticResolverResult | None = None
         self.last_rejection: str | None = None
+        self.last_information_space: InformationSpace | None = None
 
     def interpret(self, utterance: str) -> InterpretationFrame:
         deterministic = self.deterministic.interpret(utterance)
         self.last_result = None
         self.last_rejection = None
-        if classify_information_space(utterance) is not InformationSpace.ORDINARY_CONVERSATION:
-            return deterministic
+        self.last_information_space = classify_information_space(utterance)
+        # Web authority and explicit document material retain their existing
+        # strict owner.  Connector scope itself is merely useful evidence for
+        # semantic understanding and must not bypass it.
+        if self.last_information_space is InformationSpace.EXTERNAL_PUBLIC:
+            return self.validator.materialize_defaults(deterministic)
+        if any(
+            evidence.signal == "explicit_google_drive_document_create"
+            for candidate in deterministic.candidates
+            for evidence in candidate.evidence
+        ):
+            return self.validator.materialize_defaults(deterministic)
         if normalize_utterance(utterance) in _PROTECTED_SHORT_FOLLOW_UP:
-            return deterministic
+            return self.validator.materialize_defaults(deterministic)
         try:
             vocabulary = self.validator.vocabulary()
         except SemanticValidationError as error:
             self.last_rejection = str(error)
-            return deterministic
+            return self.validator.materialize_defaults(deterministic)
         result = self.resolver.resolve(utterance, vocabulary)
         self.last_result = result
         if result.proposal is None:
-            return deterministic
+            return self.validator.materialize_defaults(deterministic)
         try:
             semantic = self.validator.validate(utterance, result.proposal)
             if (
                 semantic.resolution_state
                 is InterpretationResolutionState.UNSUPPORTED_ACTION
                 and not result.proposal.nearby_operation_ids
-                and not any(
-                    candidate.operation_id in self.validator.allowed_operation_ids
-                    for candidate in deterministic.candidates
-                )
             ):
                 # The current Catalog does not yet describe every mature V1
                 # Memory/Reflection/read route.  Surface unsupported only when
                 # Dialogue Core already has grounded candidate evidence for
                 # the adopted scheduling space; otherwise preserve the legacy
                 # compatibility route instead of stealing its raw utterance.
-                self.last_rejection = "unsupported_action_outside_adopted_space"
-                return deterministic
+                self.last_rejection = "unsupported_action_preserves_legacy_owner"
+                return self.validator.materialize_defaults(deterministic)
             if self._strict_structural_conflict(deterministic, semantic):
                 self.last_rejection = "semantic_conflicts_with_structural_owner"
-                return deterministic
+                return self.validator.materialize_defaults(deterministic)
             return semantic
         except SemanticValidationError as error:
             self.last_rejection = str(error)
-            return deterministic
+            return self.validator.materialize_defaults(deterministic)
 
     @staticmethod
     def _strict_structural_conflict(

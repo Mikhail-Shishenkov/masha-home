@@ -36,14 +36,15 @@ class _OrdinaryFollowUpResolver:
 def _core(tmp_path):
     catalog = default_home_capability_catalog()
     clock = FixedClock(NOW)
-    discovery = CapabilityCandidateDiscovery(catalog=catalog)
+    temporal = TemporalEngine(clock=clock)
+    discovery = CapabilityCandidateDiscovery(catalog=catalog, temporal_engine=temporal)
     adoption = V2LiveAdoptionPolicy()
     validator = SemanticProposalValidator(
         catalog=catalog,
         specifications=discovery.specifications,
         allowed_operation_ids=adoption.supported_operation_ids,
     )
-    return DialogueCore(
+    core = DialogueCore(
         discovery=discovery,
         builder=DeterministicClarificationBuilder(
             catalog=catalog,
@@ -52,13 +53,15 @@ def _core(tmp_path):
         engine=FollowUpResolutionEngine(
             semantic_resolver=_OrdinaryFollowUpResolver(),
             semantic_validator=validator,
-            temporal_engine=TemporalEngine(clock=clock),
+            temporal_engine=temporal,
         ),
         store=PendingResolutionStore(
             tmp_path / "pending-resolutions.json",
             clock=clock.now_utc,
         ),
     )
+    core.bind_temporal_engine(temporal)
+    return core
 
 
 def _slots(core: DialogueCore, conversation_id: str) -> dict[str, str]:
@@ -70,51 +73,30 @@ def _slots(core: DialogueCore, conversation_id: str) -> dict[str, str]:
     }
 
 
-def test_active_duration_question_owns_short_number_and_cross_slot_correction(tmp_path):
+def test_calendar_uses_declared_duration_default_at_handoff(tmp_path):
     core = _core(tmp_path)
-    first = core.coordinate(
+    result = core.coordinate(
         "Добавь в календарь запись на завтра на 12, что я буду учиться йоге",
         conversation_id="c1",
     )
-    ambiguous = core.coordinate("12", conversation_id="c1")
-    corrected = core.coordinate("12 часов дня", conversation_id="c1")
-
-    assert first.response == "На сколько времени поставить?"
-    assert ambiguous.status is CoordinationStatus.STILL_UNRESOLVED
-    assert ambiguous.response == "12 минут или 12 часов?"
-    assert corrected.status is CoordinationStatus.STILL_UNRESOLVED
-    assert corrected.response == "На сколько времени поставить?"
-    assert _slots(core, "c1") == {
-        "date": "2026-08-29",
-        "time": "12:00",
-        "subject": "учиться йоге",
-    }
-    question = core.snapshot("c1").flow_stack[0].active_question
-    assert question.requested_slot == "duration_minutes"
-    assert question.value_hint is None
-
-
-def test_duration_answer_resumes_same_flow_after_ordinary_interruption(tmp_path):
-    core = _core(tmp_path)
-    first = core.coordinate(
-        "Добавь в календарь запись на завтра на 12, что я буду учиться йоге",
-        conversation_id="c1",
-    )
-    flow_id = core.snapshot("c1").active_flow_id
-
-    ordinary = core.coordinate("Сегодня отличный день", conversation_id="c1")
-    resumed = core.coordinate("на час", conversation_id="c1")
-
-    assert ordinary.status is CoordinationStatus.PASS_THROUGH
-    assert core.store.get(flow_id).status.value == "resolved"
-    assert resumed.status is CoordinationStatus.RESOLVED_HANDOFF
-    assert resumed.handoff.resolution_id == first.clarification.resolution_id
-    assert {slot.name: slot.value for slot in resumed.handoff.slots} == {
+    assert result.status is CoordinationStatus.RESOLVED_HANDOFF
+    assert {slot.name: slot.value for slot in result.handoff.slots} == {
         "date": "2026-08-29",
         "time": "12:00",
         "subject": "учиться йоге",
         "duration_minutes": "60",
     }
+
+
+def test_explicit_calendar_duration_overrides_declared_default(tmp_path):
+    core = _core(tmp_path)
+    result = core.coordinate(
+        "Добавь в календарь запись на завтра на 12 на два часа, что я буду учиться йоге",
+        conversation_id="c1",
+    )
+
+    assert result.status is CoordinationStatus.RESOLVED_HANDOFF
+    assert {slot.name: slot.value for slot in result.handoff.slots}["duration_minutes"] == "120"
 
 
 def test_explicit_date_advances_instead_of_repeating_same_question(tmp_path):

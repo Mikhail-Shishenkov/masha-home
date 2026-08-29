@@ -43,6 +43,26 @@ class SemanticThenConversationProvider(LocalProvider):
         return super().generate(request)
 
 
+class SequencedSemanticProvider(LocalProvider):
+    """A local-model stand-in that keeps fresh and follow-up semantics distinct."""
+
+    def __init__(self, semantic_responses: list[dict], conversation_text="Обычный разговор."):
+        super().__init__(conversation_text)
+        self.capabilities = ModelCapabilities(structured_output=True)
+        self._semantic_responses = list(semantic_responses)
+        self._conversation_text = conversation_text
+
+    def generate(self, request):
+        if request.required_capabilities.structured_output:
+            assert self._semantic_responses
+            self.response_text = json.dumps(
+                self._semantic_responses.pop(0), ensure_ascii=False,
+            )
+        else:
+            self.response_text = self._conversation_text
+        return super().generate(request)
+
+
 def _root(tmp_path):
     root = tmp_path / "masha-home"
     shutil.copytree(PROJECT_ROOT / "identity", root / "identity")
@@ -106,37 +126,101 @@ def test_live_wrapped_request_accumulates_into_calendar_proposal_without_slot_lo
         conversation_id=first.conversation_id,
     )
     second_diagnostic = application.dialogue_diagnostics(first.conversation_id)
-    third = application.send_message(
-        "на час",
-        project_id=PROJECT_ID,
-        conversation_id=first.conversation_id,
-    )
 
     assert first.assistant_message.content == (
         "Занятие — поставить в календарь или просто напомнить в 12:00?"
     )
     assert first_diagnostic.dialogue_state.last_decision.semantic_command_status == "accepted"
     assert first_diagnostic.dialogue_state.last_decision.proposed_semantic_command is not None
-    assert second.pending_confirmation is None
-    assert second.assistant_message.content == "На сколько времени поставить?"
-    assert {
-        slot.name: slot.value
-        for slot in second_diagnostic.dialogue_state.flow_stack[0].validated_slots
-    } == {
-        "subject": "занятие",
-        "date": "2026-08-29",
-        "time": "12:00",
-    }
-    assert third.pending_confirmation is not None
-    assert third.pending_confirmation.confirmation_type == "google_calendar_create"
-    assert "занятие" in third.assistant_message.content.casefold()
-    assert "12:00–13:00" in third.assistant_message.content
+    assert second.pending_confirmation is not None
+    assert second.pending_confirmation.confirmation_type == "google_calendar_create"
+    assert "12:00–13:00" in second.assistant_message.content
+    assert second_diagnostic.dialogue_state.active_flow_id is None
+    assert second_diagnostic.application_handoff_type == "google_calendar.event.create"
     assert len(provider.requests) == model_calls_after_first
     receipts = conversation.google_calendar_create_service.writer.receipt_store._items
     assert {item.status for item in receipts.values()} == {"proposed"}
     assert all(item.confirmed_at is None for item in receipts.values())
 
 
+def _calendar_semantics(*, subject: str | None) -> dict:
+    slots = [
+        {"name": "date", "evidence_text": "завтра"},
+        {"name": "time", "evidence_text": "10 утра"},
+    ]
+    if subject is not None:
+        slots.insert(0, {"name": "subject", "evidence_text": subject})
+    return {
+        "kind": "supported_action",
+        "candidate_operation_ids": ["google_calendar.event.create"],
+        "nearby_operation_ids": [],
+        "extracted_slots": slots,
+        "unresolved_referents": [],
+        "ambiguity_hint": "none" if subject is not None else "slot",
+        "operation_selection_evidence": {
+            "operation_id": "google_calendar.event.create",
+            "evidence_text": "в календарь",
+        },
+    }
+
+
+def test_explicit_connector_request_runs_semantics_and_reaches_calendar_preview(tmp_path):
+    provider = SequencedSemanticProvider([_calendar_semantics(subject="занятие")])
+    _, _, application = _application(tmp_path, provider=provider)
+
+    turn = application.send_message(
+        "Привет, запиши занятие на завтра в календарь в 10 утра",
+        project_id=PROJECT_ID,
+    )
+    diagnostic = application.dialogue_diagnostics(turn.conversation_id)
+
+    assert turn.pending_confirmation is not None
+    assert turn.pending_confirmation.confirmation_type == "google_calendar_create"
+    assert "10:00–11:00" in turn.assistant_message.content
+    assert len(provider.requests) == 1
+    decision = diagnostic.dialogue_state.last_decision
+    assert decision.information_space == "explicit_connector"
+    assert decision.semantic_command_status == "accepted"
+    assert decision.semantic_validation is not None
+    assert decision.semantic_validation.operation_selection.accepted is True
+    assert diagnostic.application_handoff_type == "google_calendar.event.create"
+
+
+def test_subject_follow_up_stays_in_the_same_calendar_flow(tmp_path):
+    provider = SequencedSemanticProvider([
+        _calendar_semantics(subject=None),
+        {
+            "relation": "follow_up",
+            "selected_operation_id": None,
+            "operation_selection_evidence": None,
+            "slot_updates": [{
+                "name": "subject",
+                "evidence_text": "обучение Миши AI",
+                "mode": "add",
+            }],
+            "referent_updates": [],
+        },
+    ])
+    _, _, application = _application(tmp_path, provider=provider)
+
+    first = application.send_message(
+        "Привет, запиши на завтра в календарь в 10 утра",
+        project_id=PROJECT_ID,
+    )
+    second = application.send_message(
+        "Тема занятия - обучение Миши AI",
+        project_id=PROJECT_ID,
+        conversation_id=first.conversation_id,
+    )
+    diagnostic = application.dialogue_diagnostics(first.conversation_id)
+
+    assert first.assistant_message.content == "Что именно поставить в календарь?"
+    assert second.pending_confirmation is not None
+    assert "обучение Миши AI" in second.assistant_message.content
+    assert "10:00–11:00" in second.assistant_message.content
+    assert diagnostic.dialogue_state.active_flow_id is None
+    assert diagnostic.application_handoff_type == "google_calendar.event.create"
+    assert len(provider.requests) == 2
 def test_unsupported_external_registration_gets_human_truthful_fallback(tmp_path):
     provider = SemanticThenConversationProvider(
         json.dumps({
@@ -248,15 +332,9 @@ def test_missing_subject_reaches_calendar_preview_without_losing_known_slots(tmp
     )
 
     assert first.assistant_message.content == "Что именно поставить в календарь?"
-    assert second.assistant_message.content == "На сколько времени поставить?"
-    third = application.send_message(
-        "на час",
-        project_id=PROJECT_ID,
-        conversation_id=first.conversation_id,
-    )
-    assert "Занятие по AI" in third.assistant_message.content
-    assert "10:00–11:00" in third.assistant_message.content
-    assert third.pending_confirmation.confirmation_type == "google_calendar_create"
+    assert "Занятие по AI" in second.assistant_message.content
+    assert "10:00–11:00" in second.assistant_message.content
+    assert second.pending_confirmation.confirmation_type == "google_calendar_create"
 
 
 def test_restart_recovers_pending_meaning_and_proposes_without_provider_mutation(tmp_path):
