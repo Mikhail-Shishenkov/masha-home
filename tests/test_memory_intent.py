@@ -10,6 +10,7 @@ from backend.conversation.memory_intent import (
 from backend.memory.confirmed_memory_service import ConfirmedMemoryService
 from backend.memory.memory_retriever import MemoryRetrievalRequest, MemoryRetriever
 from backend.memory.memory_store import MemoryStore
+from backend.runtime.action_contracts import ProposalPreparationStatus
 
 
 PROJECT_ID = "project_masha_home"
@@ -41,6 +42,47 @@ def test_explicit_fact_creates_a_pending_proposal_without_memory_mutation(tmp_pa
     assert pending[0].record_type == "fact"
     assert pending[0].status == ProposalStatus.PENDING
     assert json.dumps(store.data, sort_keys=True) == original
+
+
+def test_resolved_memory_write_reuses_durable_confirmation_owner(tmp_path, memory_path):
+    store = MemoryStore(memory_path)
+    handler, proposals = _handler(tmp_path, store)
+    original = json.dumps(store.data, sort_keys=True)
+
+    preparation = handler.prepare_memory_remember_from_resolved_intent(
+        content="я читаю по вечерам",
+        record_kind="факт",
+        conversation_id="conversation-resolved",
+        project_id=PROJECT_ID,
+    )
+
+    pending = proposals.current_for_conversation("conversation-resolved")
+    assert preparation.status is ProposalPreparationStatus.PENDING_CONFIRMATION
+    assert preparation.application_operation == "home.memory.remember"
+    assert pending is not None and pending.record_type == "fact"
+    assert pending.status is ProposalStatus.PENDING
+    assert json.dumps(store.data, sort_keys=True) == original
+
+
+def test_memory_confirmation_owner_does_not_claim_connector_proposals(
+    tmp_path, memory_path,
+):
+    handler, proposals = _handler(tmp_path, MemoryStore(memory_path))
+    handler.handle(
+        "Запомни, что я читаю по вечерам",
+        conversation_id="home",
+        project_id=PROJECT_ID,
+    )
+    home = proposals.current_for_conversation("home")
+    assert home is not None
+    proposals.create(home.model_copy(update={
+        "id": str(uuid4()),
+        "conversation_id": "connector",
+        "operation": "google_calendar_create",
+    }))
+
+    assert handler.owns_pending_confirmation("home") is True
+    assert handler.owns_pending_confirmation("connector") is False
 
 
 def test_confirmation_persists_fact_and_retriever_finds_it_after_restart(tmp_path, memory_path):

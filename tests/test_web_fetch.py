@@ -24,6 +24,8 @@ from backend.external_observation import (
     FakeWebSearchProvider,
     FreshnessStatus,
     InternetAccessPolicyStore,
+    ExplicitExternalIntentGate,
+    ExplicitWebFetchIntentGate,
     SafeFetchError,
     SafeFetchResponse,
     SafePublicHttpsFetcher,
@@ -39,6 +41,7 @@ from backend.external_observation import (
 from backend.external_observation.page_extractor import PageExtractionError, extract_page
 from backend.external_observation.safe_fetcher import _PinnedHTTPSConnection
 from backend.llm.model_router import ModelRouter
+from backend.llm.model_models import ModelCapabilities
 from backend.runtime.safety import AutonomySafetyService, AutonomySafetyStore
 from backend.skills.registry import SkillRegistry
 from tests.test_application_boundary import LocalProfileProvider, _isolated_root
@@ -47,6 +50,51 @@ from tests.test_application_boundary import LocalProfileProvider, _isolated_root
 NOW = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ID = "project_masha_home"
+
+
+class _SemanticWebProvider(LocalProfileProvider):
+    """Semantic fixture for the action boundary; network routing stays in Home."""
+
+    def __init__(self, *, response_text: str):
+        super().__init__(response_text=response_text)
+        self.capabilities = ModelCapabilities(structured_output=True)
+        self._conversation_response = response_text
+        self._fetch_gate = ExplicitWebFetchIntentGate()
+        self._search_gate = ExplicitExternalIntentGate()
+
+    def generate(self, request):
+        if not request.required_capabilities.structured_output:
+            self.response_text = self._conversation_response
+            return super().generate(request)
+        message = next(
+            item.content for item in reversed(request.messages)
+            if item.role.value == "user"
+        )
+        if self._fetch_gate.detect(message).explicit:
+            operation_id, slot_name = "web.fetch", "target"
+        elif self._search_gate.detect(message).explicit:
+            operation_id, slot_name = "web.search", "query"
+        else:
+            operation_id = slot_name = None
+        self.response_text = json.dumps({
+            "kind": "ordinary" if operation_id is None else "supported_action",
+            "candidate_operation_ids": [] if operation_id is None else [operation_id],
+            "nearby_operation_ids": [],
+            "extracted_slots": [] if slot_name is None else [{
+                "name": slot_name,
+                "evidence_text": message,
+            }],
+            "unresolved_referents": [],
+            "ambiguity_hint": "none",
+            "action_request_evidence": {
+                "evidence_text": None if operation_id is None else message,
+            },
+            "operation_selection_evidence": {
+                "operation_id": None,
+                "evidence_text": None,
+            },
+        }, ensure_ascii=False)
+        return super().generate(request)
 
 
 class _Response:
@@ -493,9 +541,11 @@ def _service(root, *, provider=None, fetcher=None, selector=None):
 
 
 def _application(root, service, *, response_text="Я прочитала страницу и отвечаю только по её тексту."):
-    application = build_masha_application(project_root=root, router=ModelRouter([LocalProfileProvider(response_text=response_text)]))
-    application._conversation._conversation.external_observation_service = service
-    return application
+    return build_masha_application(
+        project_root=root,
+        router=ModelRouter([_SemanticWebProvider(response_text=response_text)]),
+        external_observation_service=service,
+    )
 
 
 def test_direct_fetch_and_truthful_receipt_keep_main_model_local_and_memory_clean(tmp_path):

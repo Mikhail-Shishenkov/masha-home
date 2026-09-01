@@ -179,6 +179,18 @@ class ConversationApplicationService:
                 due_at=None,
                 created_at=proposal.created_at,
             )
+        mutation_recovery = self._mutation_recovery_copy(proposal)
+        if mutation_recovery is not None:
+            confirmation_type, title, subject = mutation_recovery
+            return PendingConfirmationView(
+                proposal_id=proposal.id,
+                conversation_id=proposal.conversation_id,
+                confirmation_type=confirmation_type,
+                title=title,
+                subject=subject,
+                due_at=None,
+                created_at=proposal.created_at,
+            )
         confirmation_type, title, subject = self._confirmation_copy(proposal)
         return PendingConfirmationView(
             proposal_id=proposal.id,
@@ -207,6 +219,56 @@ class ConversationApplicationService:
             and receipt.provider_document_id is not None
         ):
             return receipt
+        return None
+
+    def _mutation_recovery_copy(self, proposal):
+        operation_id = proposal.record_payload.get("operation_id")
+        if not isinstance(operation_id, str):
+            return None
+        if proposal.operation == "google_calendar_delete":
+            service = getattr(
+                self._conversation,
+                "google_calendar_delete_service",
+                None,
+            )
+            receipt = (
+                None
+                if service is None
+                else service.deleter.receipt_store.get(operation_id)
+            )
+            if (
+                receipt is not None
+                and receipt.operation.operation_id == operation_id
+                and receipt.dispatch_started_at is not None
+                and receipt.status not in {"verified", "conflict", "rejected"}
+            ):
+                return (
+                    "google_calendar_delete_recovery",
+                    "Проверить удаление события?",
+                    "Удаление могло начаться. Продолжить проверку того же события без нового действия?",
+                )
+        if proposal.operation in {"yandex_mail_delete", "yandex_mail_move"}:
+            service = getattr(
+                self._conversation,
+                "yandex_mail_mutation_service",
+                None,
+            )
+            receipt = (
+                None
+                if service is None
+                else service.writer.receipt_store.get(operation_id)
+            )
+            if (
+                receipt is not None
+                and receipt.operation.operation_id == operation_id
+                and receipt.dispatch_started_at is not None
+                and receipt.status not in {"verified", "conflict", "rejected", "target_missing"}
+            ):
+                return (
+                    "yandex_mail_mutation_recovery",
+                    "Проверить перемещение письма?",
+                    "Перемещение могло начаться. Продолжить проверку того же письма без нового действия?",
+                )
         return None
 
     def remember_presented_entity_set(self, presented: PresentedEntitySet) -> None:
@@ -257,8 +319,23 @@ class ConversationApplicationService:
             before = payload.get("before") if isinstance(payload.get("before"), dict) else {}
             desired = payload.get("desired") if isinstance(payload.get("desired"), dict) else {}
             return "google_calendar_update", "Изменить событие в Основном календаре?", f"{before.get('title', 'Событие')} · {before.get('start', '')} → {desired.get('start', '')}"[:500]
+        if proposal.operation == "google_calendar_delete":
+            before = payload.get("before") if isinstance(payload.get("before"), dict) else {}
+            return (
+                "google_calendar_delete",
+                "Удалить событие из Основного календаря?",
+                f"{before.get('title', 'Событие')} · {before.get('start', '')}"[:500],
+            )
         if proposal.operation == "google_drive_document_create":
             return "google_drive_document_create", "Создать документ в Google Drive?", str(payload.get("title") or "Новая заметка")[:500]
+        if proposal.operation in {"yandex_mail_delete", "yandex_mail_move"}:
+            target = payload.get("target") if isinstance(payload.get("target"), dict) else {}
+            deleting = proposal.operation == "yandex_mail_delete"
+            return (
+                "yandex_mail_delete" if deleting else "yandex_mail_move",
+                "Переместить письмо в корзину?" if deleting else "Переместить письмо в архив?",
+                f"{target.get('subject', 'Письмо')} · {target.get('sender', '')}"[:500],
+            )
         if proposal.operation == "forget":
             return "memory_forget", "Убрать воспоминание?", ConversationApplicationService._proposal_subject(proposal)
         if proposal.operation == "restore":
@@ -324,7 +401,7 @@ class ConversationApplicationService:
         handler = self._conversation.memory_intent_handler
         proposal = None if handler is None else handler.proposal_store.get(proposal_id)
         action = None if proposal is None else self._proposal_action(proposal)
-        response, proposal_status = self._conversation.resolve_memory_proposal(
+        response, proposal_status = self._conversation.resolve_proposal_confirmation(
             conversation_id=conversation_id,
             proposal_id=proposal_id,
             confirm=decision == "confirm",

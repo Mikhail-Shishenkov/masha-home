@@ -35,8 +35,10 @@ class FollowUpResolver:
         self.proposals = list(proposals)
         self.calls = []
 
-    def resolve_follow_up(self, utterance, vocabulary, context, *, profile_id=None):
-        self.calls.append((utterance, vocabulary, context))
+    def resolve_follow_up(
+        self, utterance, vocabulary, context, *, profile_id=None, turn_context=None,
+    ):
+        self.calls.append((utterance, vocabulary, context, turn_context))
         if not self.proposals:
             return SemanticFollowUpResult(
                 failure=SemanticResolverFailure.MALFORMED_OUTPUT,
@@ -133,7 +135,10 @@ def test_explicit_date_fills_only_missing_date_without_semantic_guessing(
 ):
     resolver = FollowUpResolver()
     coordinator, _ = _coordinator(tmp_path, resolver)
-    coordinator.coordinate("Поставь занятие в 12 на час", conversation_id="c1")
+    coordinator.coordinate(
+        "Поставь занятие в календарь в 12 на час",
+        conversation_id="c1",
+    )
 
     result = coordinator.coordinate(answer, conversation_id="c1")
 

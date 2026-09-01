@@ -10,6 +10,7 @@ from backend.conversation.interpretation_v2 import (
 from backend.conversation.clarification import DeterministicClarificationBuilder
 from backend.conversation.resolution_coordinator import V2LiveAdoptionPolicy
 from backend.conversation.semantic_resolver import (
+    ActionRequestEvidence,
     HybridCapabilityCandidateDiscovery,
     LocalSemanticResolver,
     OperationSelectionEvidence,
@@ -25,6 +26,13 @@ from backend.conversation.semantic_resolver import (
     SemanticSlotProposal,
     SemanticValidationError,
     parse_semantic_interpretation,
+    semantic_interpretation_json_schema,
+)
+from backend.conversation.file_read_semantics import normalize_file_read_mode
+from backend.conversation.turn_context import (
+    TurnContextEnvelope,
+    TurnPresentedEntityHint,
+    TurnTemporalContext,
 )
 from backend.llm.fake_provider import FakeProvider
 from backend.llm.model_models import ModelCapabilities
@@ -68,7 +76,7 @@ def _boundaries(tmp_path, *, provider=None):
 
 def _schedule_proposal(
     *, candidates=None, subject="занятие", time="11",
-    selection_evidence=None,
+    selection_evidence=None, action_evidence="Запиши",
 ):
     return {
         "kind": "supported_action",
@@ -84,11 +92,29 @@ def _schedule_proposal(
         ],
         "unresolved_referents": [],
         "ambiguity_hint": "capability" if len(candidates or (1, 2)) > 1 else "none",
+        "action_request_evidence": {"evidence_text": action_evidence},
         "operation_selection_evidence": selection_evidence or {
             "operation_id": None,
             "evidence_text": None,
         },
     }
+
+
+def _presented_mail_context() -> TurnContextEnvelope:
+    temporal = TemporalEngine(clock=FixedClock(
+        datetime(2026, 8, 28, 8, 0, tzinfo=timezone.utc),
+    )).context(None, user_message="Прочитай его")
+    return TurnContextEnvelope(
+        temporal=TurnTemporalContext.from_temporal_context(temporal),
+        presented_entities=(TurnPresentedEntityHint(
+            reference="P1",
+            position=1,
+            owner_operation_id="yandex_mail.read",
+            kind="письмо",
+            human_label="Письмо от Анны о занятии",
+            time_text="сегодня в 10:00",
+        ),),
+    )
 
 
 def test_local_resolver_uses_configured_role_and_strict_structured_request(tmp_path):
@@ -104,17 +130,37 @@ def test_local_resolver_uses_configured_role_and_strict_structured_request(tmp_p
     assert provider.last_request.required_capabilities.structured_output is True
     assert provider.last_request.required_capabilities.tools is False
     assert provider.last_request.private_context == {}
-    assert provider.last_request.execution_model_id == "qwen3.5:9b"
+    assert provider.last_request.execution_model_id == "qwen3.5:4b"
+    assert provider.last_request.timeout_seconds == 15.0
     assert provider.last_request.identity_context.persona_id == "semantic-resolver"
     assert "qwen3.5" not in provider.last_request.messages[0].content
     assert "supported_action" in provider.last_request.messages[0].content
     assert "Registry-derived operation-selection rules" in provider.last_request.messages[0].content
     assert "selection_evidence_examples" in provider.last_request.messages[0].content
+    assert "operation_kind" in provider.last_request.messages[0].content
+    assert "сами по себе никогда не доказывают create" in provider.last_request.messages[0].content
+    assert "никогда не возвращай null для supported_action" in provider.last_request.messages[0].content
+    assert "Bounded Home turn context" not in provider.last_request.messages[0].content
     assert provider.last_request.structured_output_schema is not None
     assert provider.last_request.generation_temperature == 0
     schema = provider.last_request.structured_output_schema
+    assert schema == semantic_interpretation_json_schema()
     assert schema["type"] == "object"
     assert "anyOf" not in schema
+    kind_shapes = schema["allOf"][0]["oneOf"]
+    assert {
+        shape["properties"]["kind"]["const"] for shape in kind_shapes
+    } == {"ordinary", "supported_action", "unsupported_action"}
+    supported_shape = next(
+        shape for shape in kind_shapes
+        if shape["properties"]["kind"]["const"] == "supported_action"
+    )
+    unsupported_shape = next(
+        shape for shape in kind_shapes
+        if shape["properties"]["kind"]["const"] == "unsupported_action"
+    )
+    assert supported_shape["properties"]["candidate_operation_ids"]["minItems"] == 1
+    assert unsupported_shape["properties"]["candidate_operation_ids"]["maxItems"] == 0
     assert set(schema["required"]) >= {
         "kind",
         "candidate_operation_ids",
@@ -122,6 +168,7 @@ def test_local_resolver_uses_configured_role_and_strict_structured_request(tmp_p
         "extracted_slots",
         "unresolved_referents",
         "ambiguity_hint",
+        "action_request_evidence",
         "operation_selection_evidence",
     }
     selection_schema = schema["$defs"]["OperationSelectionEvidence"]
@@ -131,7 +178,307 @@ def test_local_resolver_uses_configured_role_and_strict_structured_request(tmp_p
     assert schema["properties"]["operation_selection_evidence"]["$ref"] == (
         "#/$defs/OperationSelectionEvidence"
     )
-    assert roles.profile_for(ModelRole.SEMANTIC_RESOLVER).profile_id == "primary"
+    action_schema = schema["$defs"]["ActionRequestEvidence"]
+    assert set(action_schema["required"]) == {"evidence_text"}
+    assert schema["properties"]["action_request_evidence"]["$ref"] == (
+        "#/$defs/ActionRequestEvidence"
+    )
+    assert roles.profile_for(ModelRole.SEMANTIC_RESOLVER).profile_id == "fast"
+
+
+@pytest.mark.parametrize(("evidence", "expected"), (
+    ("пожалуйста, прочитай", "read"),
+    ("покажи что-нибудь самое свежее", "recent"),
+    ("можешь поискать", "search"),
+    ("дай посмотреть, что есть", "list"),
+))
+def test_file_read_mode_normalizes_action_evidence_not_whole_phrases(
+    evidence, expected,
+):
+    assert normalize_file_read_mode(evidence) == expected
+
+
+def test_file_read_mode_is_materialized_from_grounded_turn_when_model_omits_slot(tmp_path):
+    _, _, validator, _, _ = _boundaries(tmp_path)
+    proposal = parse_semantic_interpretation({
+        "kind": "supported_action",
+        "candidate_operation_ids": ["yandex_disk.read"],
+        "nearby_operation_ids": [],
+        "extracted_slots": [],
+        "unresolved_referents": [],
+        "ambiguity_hint": "slot",
+        "action_request_evidence": {"evidence_text": "что у меня есть"},
+        "operation_selection_evidence": {
+            "operation_id": None, "evidence_text": None,
+        },
+    })
+
+    frame = validator.validate("Что у меня есть на Яндекс Диске?", proposal)
+
+    assert frame.resolution_state is InterpretationResolutionState.RESOLVED
+    assert {item.name: item.value for item in frame.slots} == {"mode": "list"}
+
+
+@pytest.mark.parametrize(("operation_id", "slot_name"), (
+    ("home.memory.remember", "memory_content"),
+    ("home.memory.forget", "target"),
+    ("home.continuity.open", "topic"),
+    ("home.commitments.create", "subject"),
+))
+def test_pure_deictic_pointer_never_becomes_a_durable_slot(
+    tmp_path, operation_id, slot_name,
+):
+    _, _, validator, _, _ = _boundaries(tmp_path)
+    proposal = parse_semantic_interpretation({
+        "kind": "supported_action",
+        "candidate_operation_ids": [operation_id],
+        "nearby_operation_ids": [],
+        "extracted_slots": [{"name": slot_name, "evidence_text": "эту тему"}],
+        "unresolved_referents": ["эту тему"],
+        "ambiguity_hint": "referent",
+        "action_request_evidence": {"evidence_text": "Сделай"},
+        "operation_selection_evidence": {
+            "operation_id": None, "evidence_text": None,
+        },
+    })
+
+    frame = validator.validate("Сделай эту тему", proposal)
+
+    assert slot_name in frame.missing_slots
+    assert all(item.name != slot_name for item in frame.slots)
+    assert frame.resolution_state is InterpretationResolutionState.CLARIFICATION_REQUIRED
+    assert any(
+        item.name == slot_name
+        and not item.accepted
+        and item.reason == "unresolved_deictic_slot_value"
+        for item in validator.last_trace.slots
+    )
+
+
+def test_one_presented_entity_can_ground_a_deictic_target_in_same_family(tmp_path):
+    _, _, validator, _, _ = _boundaries(tmp_path)
+    proposal = parse_semantic_interpretation({
+        "kind": "supported_action",
+        "candidate_operation_ids": ["yandex_mail.message.delete"],
+        "nearby_operation_ids": [],
+        "extracted_slots": [{"name": "target", "evidence_text": "это письмо"}],
+        "unresolved_referents": [],
+        "ambiguity_hint": "none",
+        "action_request_evidence": {"evidence_text": "Удали"},
+        "operation_selection_evidence": {
+            "operation_id": None, "evidence_text": None,
+        },
+    })
+
+    frame = validator.validate(
+        "Удали это письмо",
+        proposal,
+        turn_context=_presented_mail_context(),
+    )
+
+    assert frame.resolution_state is InterpretationResolutionState.RESOLVED
+    assert [(item.name, item.value) for item in frame.slots] == [
+        ("target", "это письмо")
+    ]
+    assert validator.last_trace.slots[0].accepted is True
+
+
+def test_home_materializes_omitted_deictic_target_only_from_one_presented_family(
+    tmp_path,
+):
+    _, _, validator, _, _ = _boundaries(tmp_path)
+    proposal = parse_semantic_interpretation({
+        "kind": "supported_action",
+        "candidate_operation_ids": ["yandex_mail.message.move"],
+        "nearby_operation_ids": [],
+        "extracted_slots": [],
+        "unresolved_referents": [],
+        "ambiguity_hint": "none",
+        "action_request_evidence": {"evidence_text": "Убери"},
+        "operation_selection_evidence": {
+            "operation_id": None, "evidence_text": None,
+        },
+    })
+
+    frame = validator.validate(
+        "Убери это письмо в архив",
+        proposal,
+        turn_context=_presented_mail_context(),
+    )
+
+    assert frame.resolution_state is InterpretationResolutionState.RESOLVED
+    assert [(item.name, item.value) for item in frame.slots] == [("target", "это")]
+    assert validator.last_trace.slots[-1].reason == "single_presented_entity_grounded"
+
+
+def test_near_literal_grounding_allows_one_non_authority_typo_but_not_changed_predicate(
+    tmp_path,
+):
+    _, _, validator, _, _ = _boundaries(tmp_path)
+
+    assert validator._action_evidence_is_grounded(
+        "Прочитай в моей посте новое письмо",
+        "Прочитай в моей почте новое письмо",
+    )
+    assert validator._slot_evidence_is_grounded(
+        "Удали встречу команды завтра",
+        "встреча команды",
+    )
+    assert not validator._action_evidence_is_grounded(
+        "Я создал документ",
+        "создай документ",
+    )
+
+
+def test_presented_deictic_target_stays_unresolved_when_context_is_ambiguous(tmp_path):
+    _, _, validator, _, _ = _boundaries(tmp_path)
+    proposal = parse_semantic_interpretation({
+        "kind": "supported_action",
+        "candidate_operation_ids": ["yandex_mail.message.delete"],
+        "nearby_operation_ids": [],
+        "extracted_slots": [{"name": "target", "evidence_text": "это письмо"}],
+        "unresolved_referents": [],
+        "ambiguity_hint": "referent",
+        "action_request_evidence": {"evidence_text": "Удали"},
+        "operation_selection_evidence": {
+            "operation_id": None, "evidence_text": None,
+        },
+    })
+    context = _presented_mail_context()
+    context = context.model_copy(update={
+        "presented_entities": (
+            *context.presented_entities,
+            context.presented_entities[0].model_copy(update={
+                "reference": "P2",
+                "position": 2,
+                "human_label": "Письмо от Бориса о встрече",
+            }),
+        ),
+    })
+
+    frame = validator.validate(
+        "Удали это письмо",
+        proposal,
+        turn_context=context,
+    )
+
+    assert frame.resolution_state is InterpretationResolutionState.CLARIFICATION_REQUIRED
+    assert "target" in frame.missing_slots
+    assert validator.last_trace.slots[0].reason == "unresolved_deictic_slot_value"
+
+
+def test_memory_content_normalizer_removes_only_grounded_complementizer(tmp_path):
+    _, _, validator, _, _ = _boundaries(tmp_path)
+    proposal = parse_semantic_interpretation({
+        "kind": "supported_action",
+        "candidate_operation_ids": ["home.memory.remember"],
+        "nearby_operation_ids": [],
+        "extracted_slots": [{
+            "name": "memory_content", "evidence_text": "что я люблю зелёный чай",
+        }],
+        "unresolved_referents": [],
+        "ambiguity_hint": "none",
+        "action_request_evidence": {"evidence_text": "Запомни"},
+        "operation_selection_evidence": {
+            "operation_id": None, "evidence_text": None,
+        },
+    })
+
+    frame = validator.validate("Запомни, что я люблю зелёный чай", proposal)
+
+    assert {item.name: item.value for item in frame.slots} == {
+        "memory_content": "я люблю зелёный чай",
+    }
+
+
+def test_bounded_turn_context_reaches_local_resolver_without_authority_handles(tmp_path):
+    provider, _, _, hybrid, _ = _boundaries(tmp_path)
+    provider.response_text = json.dumps({
+        "kind": "supported_action",
+        "candidate_operation_ids": ["yandex_mail.read"],
+        "nearby_operation_ids": [],
+        "extracted_slots": [],
+        "unresolved_referents": [],
+        "ambiguity_hint": "none",
+        "action_request_evidence": {"evidence_text": "Прочитай"},
+        "operation_selection_evidence": {
+            "operation_id": None,
+            "evidence_text": None,
+        },
+    }, ensure_ascii=False)
+
+    frame = hybrid.interpret(
+        "Прочитай его",
+        turn_context=_presented_mail_context(),
+    )
+
+    assert frame.resolution_state is InterpretationResolutionState.RESOLVED
+    assert [item.operation_id for item in frame.candidates] == ["yandex_mail.read"]
+    system = provider.last_request.messages[0].content
+    assert "Bounded Home turn context" in system
+    assert '\"reference\":\"P1\"' in system
+    assert "Письмо от Анны о занятии" in system
+    assert "yandex_mail.read" in system
+    assert "provider_id" not in system
+    assert "conversation_id" not in system
+    assert "Только текущая реплика" in system
+
+
+def test_turn_context_cannot_invent_an_action_absent_from_current_utterance(tmp_path):
+    provider, _, _, hybrid, _ = _boundaries(tmp_path)
+    provider.response_text = json.dumps({
+        "kind": "supported_action",
+        "candidate_operation_ids": ["yandex_mail.read"],
+        "nearby_operation_ids": [],
+        "extracted_slots": [],
+        "unresolved_referents": [],
+        "ambiguity_hint": "none",
+        "action_request_evidence": {"evidence_text": "Прочитай"},
+        "operation_selection_evidence": {
+            "operation_id": None,
+            "evidence_text": None,
+        },
+    }, ensure_ascii=False)
+
+    frame = hybrid.interpret(
+        "Это письмо интересное",
+        turn_context=_presented_mail_context(),
+    )
+
+    assert frame.resolution_state is InterpretationResolutionState.ORDINARY_CONVERSATION
+    assert frame.candidates == ()
+    assert hybrid.last_rejection == "invented_action_request_evidence"
+
+
+def test_incomplete_selection_and_unknown_slot_do_not_erase_valid_action(tmp_path):
+    _, _, validator, _, _ = _boundaries(tmp_path)
+    proposal = parse_semantic_interpretation({
+        "kind": "supported_action",
+        "candidate_operation_ids": ["yandex_mail.read"],
+        "nearby_operation_ids": [],
+        "extracted_slots": [{"name": "period", "evidence_text": "почту"}],
+        "unresolved_referents": [],
+        "ambiguity_hint": "none",
+        "action_request_evidence": {"evidence_text": "проверь почту"},
+        "operation_selection_evidence": {
+            "operation_id": "yandex_mail.read",
+            "evidence_text": None,
+        },
+    })
+
+    frame = validator.validate("Маша, проверь почту", proposal)
+
+    assert frame.resolution_state is InterpretationResolutionState.RESOLVED
+    assert [item.operation_id for item in frame.candidates] == ["yandex_mail.read"]
+    assert [(item.name, item.value) for item in frame.slots] == [
+        ("view", "unread")
+    ]
+    assert validator.last_trace.action_request.accepted is True
+    assert validator.last_trace.operation_selection.accepted is False
+    assert validator.last_trace.operation_selection.reason == (
+        "incomplete_operation_selection_evidence"
+    )
+    assert validator.last_trace.slots[0].reason == "unknown_slot"
 
 
 def test_follow_up_resolver_receives_only_bounded_pending_context(tmp_path):
@@ -250,6 +597,7 @@ def test_word_time_is_validated_against_current_utterance(tmp_path):
         _schedule_proposal(
             candidates=["home.timed_commitments"],
             time="одиннадцать",
+            action_evidence="надо не забыть",
             selection_evidence={
                 "operation_id": "home.timed_commitments",
                 "evidence_text": "надо не забыть",
@@ -279,7 +627,10 @@ def test_validator_rejects_an_unknown_operation_but_keeps_no_partial_authority(t
 def test_validator_keeps_grounded_fields_when_one_model_slot_is_rejected(tmp_path):
     _, _, validator, _, _ = _boundaries(tmp_path)
     proposal = parse_semantic_interpretation({
-        **_schedule_proposal(candidates=["home.timed_commitments"]),
+        **_schedule_proposal(
+            candidates=["home.timed_commitments"],
+            action_evidence="Напомни",
+        ),
         "extracted_slots": [
             {"name": "subject", "evidence_text": "занятие"},
             {"name": "date", "evidence_text": "завтра"},
@@ -322,14 +673,21 @@ def test_model_cannot_invent_subject_or_resolved_referent(tmp_path):
         ),
         unresolved_referents=("это",),
         ambiguity_hint=SemanticAmbiguityHint.REFERENT,
+        action_request_evidence=ActionRequestEvidence(
+            evidence_text="Напомни",
+        ),
         operation_selection_evidence=OperationSelectionEvidence(
             operation_id=None,
             evidence_text=None,
         ),
     )
 
-    subject_frame = validator.validate("У меня завтра в 11 занятие", invented_subject)
-    referent_frame = validator.validate("У меня завтра в 11 занятие", invented_referent)
+    subject_frame = validator.validate(
+        "Запиши: у меня завтра в 11 занятие", invented_subject,
+    )
+    referent_frame = validator.validate(
+        "Напомни: у меня завтра в 11 занятие", invented_referent,
+    )
 
     assert "subject" in subject_frame.missing_slots
     assert all(item.name != "subject" for item in subject_frame.slots)
@@ -343,10 +701,11 @@ def test_subject_provenance_rejects_supported_noun_with_invented_detail(tmp_path
         _schedule_proposal(
             candidates=["home.timed_commitments"],
             subject="занятие с выдуманным преподавателем",
+            action_evidence="Напомни",
         )
     )
 
-    frame = validator.validate("У меня завтра в 11 занятие", proposal)
+    frame = validator.validate("Напомни: у меня завтра в 11 занятие", proposal)
 
     assert "subject" in frame.missing_slots
     assert any(
@@ -380,6 +739,61 @@ def test_malformed_and_timeout_fail_to_deterministic_ordinary_path(
     assert hybrid.last_result.failure is failure
 
 
+def test_one_bounded_schema_repair_preserves_grounding_and_context(tmp_path):
+    invalid = json.dumps({
+        "kind": "unsupported_action",
+        "candidate_operation_ids": ["yandex_mail.message.delete"],
+        "nearby_operation_ids": [],
+        "extracted_slots": [],
+        "unresolved_referents": [],
+        "ambiguity_hint": "none",
+        "action_request_evidence": {"evidence_text": None},
+        "operation_selection_evidence": {
+            "operation_id": None, "evidence_text": None,
+        },
+    })
+    valid = json.dumps({
+        "kind": "supported_action",
+        "candidate_operation_ids": ["yandex_mail.message.delete"],
+        "nearby_operation_ids": [],
+        "extracted_slots": [],
+        "unresolved_referents": [],
+        "ambiguity_hint": "none",
+        "action_request_evidence": {"evidence_text": "Удали"},
+        "operation_selection_evidence": {
+            "operation_id": None, "evidence_text": None,
+        },
+    }, ensure_ascii=False)
+
+    class SequencedProvider(FakeProvider):
+        def __init__(self):
+            super().__init__(
+                provider_id="ollama-local",
+                capabilities=ModelCapabilities(structured_output=True),
+            )
+            self.responses = iter((invalid, valid))
+
+        def generate(self, request):
+            self.response_text = next(self.responses)
+            return super().generate(request)
+
+    provider = SequencedProvider()
+    _, _, _, hybrid, _ = _boundaries(tmp_path, provider=provider)
+
+    frame = hybrid.interpret(
+        "Удали это письмо",
+        turn_context=_presented_mail_context(),
+    )
+
+    assert [item.operation_id for item in frame.candidates] == [
+        "yandex_mail.message.delete"
+    ]
+    assert [(item.name, item.value) for item in frame.slots] == [("target", "это")]
+    assert len(provider.requests) == 2
+    assert provider.requests[1].timeout_seconds <= provider.requests[0].timeout_seconds
+    assert "Schema repair" in provider.requests[1].messages[0].content
+
+
 def test_semantic_ordinary_conversation_remains_ordinary(tmp_path):
     provider, _, _, hybrid, _ = _boundaries(tmp_path)
     provider.response_text = json.dumps({
@@ -389,6 +803,7 @@ def test_semantic_ordinary_conversation_remains_ordinary(tmp_path):
         "extracted_slots": [],
         "unresolved_referents": [],
         "ambiguity_hint": "none",
+        "action_request_evidence": {"evidence_text": None},
         "operation_selection_evidence": {"operation_id": None, "evidence_text": None},
     })
 
@@ -401,22 +816,132 @@ def test_semantic_knowledge_is_broader_than_dialogue_execution_adoption(tmp_path
     provider, _, validator, hybrid, _ = _boundaries(tmp_path)
     provider.response_text = json.dumps({
         "kind": "supported_action",
-        "candidate_operation_ids": ["yandex_mail.read"],
+        "candidate_operation_ids": ["home.proactive_reminders"],
         "nearby_operation_ids": [],
         "extracted_slots": [],
         "unresolved_referents": [],
         "ambiguity_hint": "none",
+        "action_request_evidence": {"evidence_text": "можешь показать"},
         "operation_selection_evidence": {"operation_id": None, "evidence_text": None},
     })
 
-    frame = hybrid.interpret("Маш, можешь посмотреть, не пришло ли что-нибудь новое на почту?")
+    frame = hybrid.interpret("Маш, можешь показать мои активные напоминания?")
 
     assert frame.resolution_state is InterpretationResolutionState.RESOLVED
-    assert [item.operation_id for item in frame.candidates] == ["yandex_mail.read"]
-    assert "yandex_mail.read" in {
+    assert [item.operation_id for item in frame.candidates] == ["home.proactive_reminders"]
+    assert "home.proactive_reminders" in {
         item.operation_id for item in validator.vocabulary()
     }
     assert V2LiveAdoptionPolicy().supports_frame(frame) is False
+
+
+def test_clear_update_language_corrects_calendar_create_to_update_kind(tmp_path):
+    provider, _, _, hybrid, _ = _boundaries(tmp_path)
+    provider.response_text = json.dumps({
+        "kind": "supported_action",
+        "candidate_operation_ids": ["google_calendar.event.create"],
+        "nearby_operation_ids": [],
+        "extracted_slots": [
+            {"name": "subject", "evidence_text": "созвон с мамой"},
+            {"name": "date", "evidence_text": "завтра"},
+            {"name": "time", "evidence_text": "14"},
+        ],
+        "unresolved_referents": [],
+        "ambiguity_hint": "none",
+        "action_request_evidence": {"evidence_text": "Перенеси"},
+        "operation_selection_evidence": {
+            "operation_id": "google_calendar.event.create",
+            "evidence_text": "календаре",
+        },
+    }, ensure_ascii=False)
+
+    frame = hybrid.interpret(
+        "Перенеси в гугл календаре созвон с мамой завтра на 14:00"
+    )
+
+    assert frame.resolution_state is InterpretationResolutionState.RESOLVED
+    assert [item.operation_id for item in frame.candidates] == [
+        "google_calendar.event.update"
+    ]
+    assert hybrid.last_rejection is None
+
+
+@pytest.mark.parametrize(("utterance", "subject"), (
+    ("Перенеси созвон с мамой завтра с 14 на 13", "созвон с мамой"),
+    ("Перенеси завтра созвон с мамой с 14 на 13", "созвон с мамой"),
+    ("Маш, перенеси завтра созвониться с мамой с 14 на 13 часов", "созвониться с мамой"),
+    ("Завтра созвон с мамой перенеси с 14 на 13", "созвон с мамой"),
+    ("Созвон с мамой завтра сдвинь на 13", "созвон с мамой"),
+))
+def test_explicit_update_meaning_cannot_degrade_to_timed_commitment(
+    tmp_path, utterance, subject,
+):
+    provider, _, _, hybrid, _ = _boundaries(tmp_path)
+    provider.response_text = json.dumps({
+        "kind": "supported_action",
+        "candidate_operation_ids": ["home.timed_commitments"],
+        "nearby_operation_ids": [],
+        "extracted_slots": [
+            {"name": "subject", "evidence_text": subject},
+            {"name": "date", "evidence_text": "завтра"},
+            {"name": "time", "evidence_text": "13"},
+            *(
+                [{"name": "old_time", "evidence_text": "14"}]
+                if "14" in utterance else []
+            ),
+        ],
+        "unresolved_referents": [],
+        "ambiguity_hint": "none",
+        "action_request_evidence": {
+            "evidence_text": (
+                "перенеси" if "перенеси" in utterance.casefold() else "сдвинь"
+            ),
+        },
+        "operation_selection_evidence": {
+            "operation_id": "home.timed_commitments",
+            "evidence_text": "перенеси" if "перенеси" in utterance.casefold() else "сдвинь",
+        },
+    }, ensure_ascii=False)
+
+    frame = hybrid.interpret(utterance)
+
+    assert frame.resolution_state is InterpretationResolutionState.RESOLVED
+    assert [item.operation_id for item in frame.candidates] == [
+        "google_calendar.event.update"
+    ]
+    assert "home.timed_commitments" not in {
+        item.operation_id for item in frame.candidates
+    }
+    assert "google_calendar.event.create" not in {
+        item.operation_id for item in frame.candidates
+    }
+
+
+@pytest.mark.parametrize("utterance", (
+    "Электронная почта сильно изменила общение",
+    "Интернет изменил людей",
+))
+def test_factual_update_shaped_words_are_not_action_authority(tmp_path, utterance):
+    provider, _, _, hybrid, _ = _boundaries(tmp_path)
+    provider.response_text = json.dumps({
+        "kind": "ordinary",
+        "candidate_operation_ids": [],
+        "nearby_operation_ids": [],
+        "extracted_slots": [],
+        "unresolved_referents": [],
+        "ambiguity_hint": "none",
+        "action_request_evidence": {"evidence_text": None},
+        "operation_selection_evidence": {
+            "operation_id": None,
+            "evidence_text": None,
+        },
+    }, ensure_ascii=False)
+
+    frame = hybrid.interpret(utterance)
+
+    assert frame.resolution_state is InterpretationResolutionState.ORDINARY_CONVERSATION
+    assert frame.candidates == ()
+    assert hybrid.last_rejection is None
 
 
 def test_vocabulary_describes_slots_and_home_defaults_without_authorization(tmp_path):
@@ -448,6 +973,7 @@ def test_semantic_explicit_unsupported_action_stays_distinct_from_conversation(t
         extracted_slots=(),
         unresolved_referents=(),
         ambiguity_hint="none",
+        action_request_evidence=ActionRequestEvidence(evidence_text="Запиши"),
         operation_selection_evidence=OperationSelectionEvidence(
             operation_id=None,
             evidence_text=None,
@@ -464,7 +990,7 @@ def test_semantic_explicit_unsupported_action_stays_distinct_from_conversation(t
     assert frame.slots == ()
 
 
-def test_untrusted_semantics_cannot_erase_strict_structural_calendar_owner(tmp_path):
+def test_untrusted_semantics_cannot_erase_explicit_calendar_destination(tmp_path):
     provider, _, _, hybrid, _ = _boundaries(tmp_path)
     provider.response_text = json.dumps({
         "kind": "ordinary",
@@ -473,10 +999,13 @@ def test_untrusted_semantics_cannot_erase_strict_structural_calendar_owner(tmp_p
         "extracted_slots": [],
         "unresolved_referents": [],
         "ambiguity_hint": "none",
+        "action_request_evidence": {"evidence_text": None},
         "operation_selection_evidence": {"operation_id": None, "evidence_text": None},
     })
 
-    frame = hybrid.interpret("Поставь встречу завтра в 19 на час")
+    frame = hybrid.interpret(
+        "Поставь встречу в календарь завтра в 19 на час"
+    )
 
     assert [item.operation_id for item in frame.candidates] == [
         "google_calendar.event.create"
@@ -494,6 +1023,7 @@ def test_unsupported_without_adopted_evidence_does_not_steal_legacy_route(tmp_pa
         "extracted_slots": [],
         "unresolved_referents": [],
         "ambiguity_hint": "none",
+        "action_request_evidence": {"evidence_text": "Обнови"},
         "operation_selection_evidence": {"operation_id": None, "evidence_text": None},
     })
 
@@ -512,6 +1042,7 @@ def test_untrusted_unsupported_proposal_cannot_steal_connector_read_owner(tmp_pa
         "extracted_slots": [],
         "unresolved_referents": [],
         "ambiguity_hint": "none",
+        "action_request_evidence": {"evidence_text": "Посмотри"},
         "operation_selection_evidence": {"operation_id": None, "evidence_text": None},
     })
 
@@ -522,7 +1053,7 @@ def test_untrusted_unsupported_proposal_cannot_steal_connector_read_owner(tmp_pa
     assert hybrid.last_rejection == "unsupported_action_preserves_legacy_owner"
 
 
-def test_docs_content_and_explicit_information_spaces_never_reach_semantic_model(tmp_path):
+def test_docs_content_stays_structural_but_external_information_reaches_semantics(tmp_path):
     class ExplodingResolver:
         def resolve(self, *_args, **_kwargs):
             raise AssertionError("protected deterministic ownership")
@@ -544,11 +1075,35 @@ def test_docs_content_and_explicit_information_spaces_never_reach_semantic_model
     docs = hybrid.interpret(
         "Создай документ на Гугл Диске: Сегодня мы продолжили делать наш Дом"
     )
-    web = hybrid.interpret("Поищи в интернете последнюю версию Ollama")
-
     assert [item.operation_id for item in docs.candidates] == [
         "google_drive.document.create"
     ]
+
+    class OrdinaryResolver:
+        calls = 0
+        def resolve(self, *_args, **_kwargs):
+            self.calls += 1
+            return SemanticResolverResult(
+                proposal=parse_semantic_interpretation({
+                    "kind": "ordinary",
+                    "candidate_operation_ids": [],
+                    "nearby_operation_ids": [],
+                    "extracted_slots": [],
+                    "unresolved_referents": [],
+                    "ambiguity_hint": "none",
+                    "action_request_evidence": {"evidence_text": None},
+                    "operation_selection_evidence": {
+                        "operation_id": None, "evidence_text": None,
+                    },
+                }),
+                latency_ms=1,
+            )
+
+    resolver = OrdinaryResolver()
+    hybrid.resolver = resolver
+    web = hybrid.interpret("Поищи в интернете последнюю версию Ollama")
+
+    assert resolver.calls == 1
     assert web.resolution_state is InterpretationResolutionState.ORDINARY_CONVERSATION
 
 

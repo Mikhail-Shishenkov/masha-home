@@ -410,7 +410,7 @@ class ConversationContextCompiler:
                 },
                 "current_local_time": (temporal_context.current_local_time if temporal_context else self._clock()).isoformat(),
                 "temporal_context": (temporal_context.model_dump(mode="json") if temporal_context else None),
-                "memory_context": [self._memory_record(item) for item in working_memory],
+                "memory_context": [self.memory_record(item) for item in working_memory],
                 "external_information": external_information or [],
                 "external_information_contract": external_information_contract,
             },
@@ -438,7 +438,8 @@ class ConversationContextCompiler:
         )
 
     @staticmethod
-    def _memory_record(item: dict) -> dict:
+    def memory_record(item: dict) -> dict:
+        """Project one retrieved record into the shared model-safe memory shape."""
         data = item["data"]
         record_type = item["type"]
         if record_type == "human_information":

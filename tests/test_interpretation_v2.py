@@ -36,7 +36,9 @@ def _slots(frame: InterpretationFrame) -> dict[str, str | None]:
 
 
 def test_explicit_calendar_language_is_a_resolved_structural_candidate():
-    frame = _discovery().interpret("Поставь завтра в 19 занятие по AI на час")
+    frame = _discovery().interpret(
+        "Поставь в календарь завтра в 19 занятие по AI на час"
+    )
 
     assert [candidate.operation_id for candidate in frame.candidates] == [
         "google_calendar.event.create"
@@ -52,7 +54,7 @@ def test_explicit_calendar_language_is_a_resolved_structural_candidate():
 
 
 def test_ambiguous_schedule_preserves_both_plausible_capabilities():
-    frame = _discovery().interpret("Запиши занятие завтра в 10")
+    frame = _discovery().interpret("Поставь занятие завтра в 10")
 
     assert [candidate.operation_id for candidate in frame.candidates] == [
         "google_calendar.event.create",

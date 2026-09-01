@@ -14,7 +14,7 @@ from backend.connectors.google_calendar.update import (
     CalendarUpdateReceipt, CalendarUpdateReceiptStore, GoogleCalendarUpdateConversationService,
     GoogleCalendarUpdater, calendar_update_intent,
 )
-from backend.conversation.memory_intent import MemoryProposalStore
+from backend.conversation.memory_intent import MemoryProposalStore, ProposalStatus
 from backend.external_observation.policy import InternetAccessMode, InternetAccessPolicy, InternetAccessPolicyStore
 from backend.runtime.safety import AutonomySafetyService, AutonomySafetyStore
 from backend.secrets import InMemorySecretStore
@@ -123,6 +123,112 @@ def test_canonical_move_resolves_real_event_home_time_and_confirms_once(tmp_path
     receipt_json = updater.receipt_store.path.read_text(encoding="utf-8")
     assert "WRITE_REFRESH_MUST_NOT_ESCAPE" not in receipt_json
     assert "READ_REFRESH_MUST_NOT_ESCAPE" not in receipt_json
+
+
+def test_resolved_semantic_handoff_keeps_real_lookup_preview_and_no_create(tmp_path: Path):
+    service, _, transport, _ = _service(tmp_path)
+
+    preview = service.propose_from_resolved_intent(
+        subject="занятие по AI", date="2026-08-26", start_time="20:00",
+        old_time="19:00", conversation_id="semantic", now_local=NOW,
+    )
+
+    assert "Перенести" in preview
+    assert "20:00–21:00" in preview
+    assert _event_patches(transport) == []
+    assert not any(
+        method == "POST" and "/calendars/primary/events" in url
+        for url, method, *_ in transport.calls
+    )
+
+
+def test_resolved_reference_matches_real_title_with_bounded_morphology(tmp_path: Path):
+    event = _event(
+        title="созвон с мамой",
+        start="2026-08-26T10:00:00Z",
+        end="2026-08-26T11:00:00Z",
+    )
+    service, _, transport, _ = _service(tmp_path, _Transport([event]))
+
+    preview = service.propose_from_resolved_intent(
+        subject="созвониться с мамой", date="2026-08-26",
+        start_time="13:00", old_time="14:00",
+        conversation_id="morphology", now_local=NOW,
+    )
+
+    assert "14:00–15:00 → 13:00–14:00" in preview
+    assert _event_patches(transport) == []
+
+
+def test_exact_live_update_stays_proposed_until_explicit_confirmation(tmp_path: Path):
+    event = _event(
+        title="созвон с мамой",
+        start="2026-08-26T10:00:00Z",
+        end="2026-08-26T11:00:00Z",
+    )
+    service, updater, transport, _ = _service(tmp_path, _Transport([event]))
+
+    preview = service.propose_from_resolved_intent(
+        subject="созвониться с мамой", date="2026-08-26",
+        start_time="13:00", old_time="14:00",
+        conversation_id="exact-live", now_local=NOW,
+    )
+    pending = service.proposal_store.current_for_conversation("exact-live")
+    receipt = updater.receipt_store.get(pending.record_payload["operation_id"])
+
+    assert preview == (
+        "Перенести «созвон с мамой» в Основном календаре: "
+        "26.08, 14:00–15:00 → 13:00–14:00?"
+    )
+    assert pending.status is ProposalStatus.PENDING
+    assert receipt.status == "proposed"
+    assert _event_patches(transport) == []
+    assert all(
+        phrase not in preview.casefold()
+        for phrase in ("сделано", "перенесла", "теперь в 13")
+    )
+
+    assert "Готово" in service.resolve("Да", conversation_id="exact-live")
+    assert len(_event_patches(transport)) == 1
+    receipt = updater.receipt_store.get(pending.record_payload["operation_id"])
+    assert receipt.status == "verified"
+    assert receipt.verified_at is not None
+
+
+def test_resolved_reference_keeps_old_time_hard_and_ambiguity_safe(tmp_path: Path):
+    event = _event(
+        title="созвон с мамой",
+        start="2026-08-26T10:00:00Z",
+        end="2026-08-26T11:00:00Z",
+    )
+    service, _, transport, _ = _service(tmp_path / "wrong", _Transport([event]))
+    assert "не нашла" in service.propose_from_resolved_intent(
+        subject="созвониться с мамой", date="2026-08-26",
+        start_time="13:00", old_time="12:00",
+        conversation_id="wrong-time", now_local=NOW,
+    ).casefold()
+    assert _event_patches(transport) == []
+
+    second = _event(
+        "evt-2", title="созвониться с мамой",
+        start="2026-08-26T10:00:00Z", end="2026-08-26T11:00:00Z",
+    )
+    service, _, transport, _ = _service(
+        tmp_path / "ambiguous", _Transport([event, second]),
+    )
+    assert "несколько" in service.propose_from_resolved_intent(
+        subject="созвониться с мамой", date="2026-08-26",
+        start_time="13:00", old_time="14:00",
+        conversation_id="ambiguous", now_local=NOW,
+    ).casefold()
+    assert _event_patches(transport) == []
+
+    service, _, _, _ = _service(tmp_path / "exact", _Transport([event]))
+    assert "Перенести" in service.propose_from_resolved_intent(
+        subject="созвон с мамой", date="2026-08-26",
+        start_time="13:00", old_time="14:00",
+        conversation_id="exact", now_local=NOW,
+    )
 
 
 def test_target_resolution_uses_read_grant_and_confirmation_uses_write_grant(tmp_path: Path):

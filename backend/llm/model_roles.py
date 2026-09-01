@@ -20,7 +20,7 @@ class ModelRoleAssignments(BaseModel):
 
     schema_version: str = Field(default="1.0", pattern=r"^1\.0$")
     assignments: dict[ModelRole, str] = Field(
-        default_factory=lambda: {ModelRole.SEMANTIC_RESOLVER: "primary"},
+        default_factory=lambda: {ModelRole.SEMANTIC_RESOLVER: "fast"},
         max_length=16,
     )
 

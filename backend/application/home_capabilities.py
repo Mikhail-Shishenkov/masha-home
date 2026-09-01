@@ -68,6 +68,13 @@ def default_home_capability_catalog() -> CapabilityCatalog:
             risk=CapabilityRisk.CONSEQUENTIAL, verification_required=True,
         ),
         CapabilityDescriptor(
+            operation_id="google_calendar.event.delete",
+            display_name="Удаление события Google Calendar",
+            family="google_calendar", kind=CapabilityOperationKind.UPDATE,
+            effect=CapabilityEffect.EXTERNAL_MUTATION,
+            risk=CapabilityRisk.CONSEQUENTIAL, verification_required=True,
+        ),
+        CapabilityDescriptor(
             operation_id="google_drive.read", display_name="Чтение Google Drive",
             family="google_drive", **read,
         ),
@@ -83,12 +90,37 @@ def default_home_capability_catalog() -> CapabilityCatalog:
             family="yandex_mail", **read,
         ),
         CapabilityDescriptor(
+            operation_id="yandex_mail.message.delete",
+            display_name="Удаление письма Яндекс Почты",
+            family="yandex_mail", kind=CapabilityOperationKind.UPDATE,
+            effect=CapabilityEffect.EXTERNAL_MUTATION,
+            risk=CapabilityRisk.CONSEQUENTIAL, verification_required=True,
+        ),
+        CapabilityDescriptor(
+            operation_id="yandex_mail.message.move",
+            display_name="Перемещение письма Яндекс Почты в архив",
+            family="yandex_mail", kind=CapabilityOperationKind.UPDATE,
+            effect=CapabilityEffect.EXTERNAL_MUTATION,
+            risk=CapabilityRisk.CONSEQUENTIAL, verification_required=True,
+        ),
+        CapabilityDescriptor(
             operation_id="yandex_disk.read", display_name="Чтение Яндекс Диска",
             family="yandex_disk", **read,
         ),
         CapabilityDescriptor(
             operation_id="home.commitments", display_name="Домашние дела",
-            family="home", kind=CapabilityOperationKind.MANAGE,
+            family="home", **read,
+        ),
+        CapabilityDescriptor(
+            operation_id="home.commitments.create", display_name="Добавить домашнее дело",
+            family="home", kind=CapabilityOperationKind.CREATE,
+            effect=CapabilityEffect.LOCAL_MUTATION,
+            risk=CapabilityRisk.REVERSIBLE, verification_required=True,
+            agent_eligible=True,
+        ),
+        CapabilityDescriptor(
+            operation_id="home.commitments.complete", display_name="Завершить домашнее дело",
+            family="home", kind=CapabilityOperationKind.UPDATE,
             effect=CapabilityEffect.LOCAL_MUTATION,
             risk=CapabilityRisk.REVERSIBLE, verification_required=True,
             agent_eligible=True,
@@ -106,6 +138,49 @@ def default_home_capability_catalog() -> CapabilityCatalog:
             kind=CapabilityOperationKind.OBSERVE,
             effect=CapabilityEffect.READ_ONLY, risk=CapabilityRisk.OBSERVE,
             proactive_eligible=True,
+        ),
+        CapabilityDescriptor(
+            operation_id="home.memory.recall",
+            display_name="Вспомнить подтверждённое",
+            family="home_memory", **read,
+        ),
+        CapabilityDescriptor(
+            operation_id="home.memory.inspect",
+            display_name="Просмотр сохранённой информации",
+            family="home_memory", **read,
+        ),
+        CapabilityDescriptor(
+            operation_id="home.memory.remember",
+            display_name="Сохранить подтверждённую информацию",
+            family="home_memory", kind=CapabilityOperationKind.CREATE,
+            effect=CapabilityEffect.LOCAL_MUTATION,
+            risk=CapabilityRisk.REVERSIBLE, verification_required=True,
+        ),
+        CapabilityDescriptor(
+            operation_id="home.memory.forget",
+            display_name="Скрыть подтверждённую информацию",
+            family="home_memory", kind=CapabilityOperationKind.UPDATE,
+            effect=CapabilityEffect.LOCAL_MUTATION,
+            risk=CapabilityRisk.REVERSIBLE, verification_required=True,
+        ),
+        CapabilityDescriptor(
+            operation_id="home.continuity.read",
+            display_name="Наша история и открытые нити",
+            family="home_continuity", **read,
+        ),
+        CapabilityDescriptor(
+            operation_id="home.continuity.open",
+            display_name="Оставить тему открытой",
+            family="home_continuity", kind=CapabilityOperationKind.CREATE,
+            effect=CapabilityEffect.LOCAL_MUTATION,
+            risk=CapabilityRisk.REVERSIBLE, verification_required=True,
+        ),
+        CapabilityDescriptor(
+            operation_id="home.continuity.resolve",
+            display_name="Закрыть открытую тему",
+            family="home_continuity", kind=CapabilityOperationKind.UPDATE,
+            effect=CapabilityEffect.LOCAL_MUTATION,
+            risk=CapabilityRisk.REVERSIBLE, verification_required=True,
         ),
     ))
 
@@ -179,10 +254,24 @@ class HomeCapabilityApplicationService:
             safety_blocked,
             internet_off,
         )
+        calendar_existing_event_mutation = self._all_required_states(
+            connector_states["google-calendar"],
+            calendar_create,
+        )
         drive_connection = next(row for row in connection_rows if row.connector_id == "google-drive")
         drive_create = self._connector_capability_state(
             "ready" if getattr(drive_connection, "access", "read_only") == "read_and_document_create" else "needs_reconnect",
             safety_blocked, internet_off,
+        )
+        mail_connection = next(
+            row for row in connection_rows if row.connector_id == "yandex-mail"
+        )
+        mail_manage = self._connector_capability_state(
+            "ready"
+            if getattr(mail_connection, "access", "read_only") == "read_and_manage"
+            else "needs_reconnect",
+            safety_blocked,
+            internet_off,
         )
         proactive = self._proactive_policy.load()
         reminder_state = (
@@ -195,14 +284,26 @@ class HomeCapabilityApplicationService:
             "web.fetch": web_state,
             "google_calendar.read": connector_states["google-calendar"],
             "google_calendar.event.create": calendar_create,
-            "google_calendar.event.update": calendar_create,
+            "google_calendar.event.update": calendar_existing_event_mutation,
+            "google_calendar.event.delete": calendar_existing_event_mutation,
             "google_drive.read": connector_states["google-drive"],
             "google_drive.document.create": drive_create,
             "yandex_mail.read": connector_states["yandex-mail"],
+            "yandex_mail.message.delete": mail_manage,
+            "yandex_mail.message.move": mail_manage,
             "yandex_disk.read": connector_states["yandex-disk"],
             "home.commitments": CapabilityAvailability.AVAILABLE,
+            "home.commitments.create": CapabilityAvailability.AVAILABLE,
+            "home.commitments.complete": CapabilityAvailability.AVAILABLE,
             "home.timed_commitments": CapabilityAvailability.AVAILABLE,
             "home.proactive_reminders": reminder_state,
+            "home.memory.recall": CapabilityAvailability.AVAILABLE,
+            "home.memory.inspect": CapabilityAvailability.AVAILABLE,
+            "home.memory.remember": CapabilityAvailability.AVAILABLE,
+            "home.memory.forget": CapabilityAvailability.AVAILABLE,
+            "home.continuity.read": CapabilityAvailability.AVAILABLE,
+            "home.continuity.open": CapabilityAvailability.AVAILABLE,
+            "home.continuity.resolve": CapabilityAvailability.AVAILABLE,
         })
 
     @staticmethod
@@ -216,3 +317,18 @@ class HomeCapabilityApplicationService:
             if safety_blocked or internet_off
             else CapabilityAvailability.AVAILABLE
         )
+
+    @staticmethod
+    def _all_required_states(
+        *states: CapabilityAvailability,
+    ) -> CapabilityAvailability:
+        """Project truth for an operation that requires every listed capability."""
+
+        for unavailable in (
+            CapabilityAvailability.UNAVAILABLE,
+            CapabilityAvailability.NEEDS_RECONNECT,
+            CapabilityAvailability.BLOCKED,
+        ):
+            if unavailable in states:
+                return unavailable
+        return CapabilityAvailability.AVAILABLE

@@ -1,23 +1,8 @@
-import json
-from pathlib import Path
-from types import SimpleNamespace
-
 from backend.conversation.capability_router import (
     CapabilityIntent,
-    LocalSemanticIntentClassifier,
     NaturalLanguageCapabilityRouter,
-    ParsedCapabilityIntent,
     normalize_utterance,
 )
-from backend.identity.identity_kernel import IdentityKernel
-from backend.identity.identity_store import IdentityStore
-from backend.llm.fake_provider import FakeProvider
-from backend.llm.model_models import MessageRole, PrivacyScope
-from backend.llm.model_router import ModelRouter
-from backend.llm.model_provider import ModelProviderUnavailableError, ModelTimeoutError
-
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_normalization_handles_addressing_spacing_and_word_numbers():
@@ -47,7 +32,7 @@ def test_fixed_allowlist_router_uses_composable_patterns_not_sentence_dictionary
         parsed = router.route(phrase)
         assert parsed is not None
         assert parsed.intent is expected
-        assert parsed.confidence >= router.CONFIDENCE_THRESHOLD
+        assert parsed.confidence >= 0.9
 
 
 def test_shared_history_aliases_route_locally_without_hijacking_general_history():
@@ -65,35 +50,6 @@ def test_shared_history_aliases_route_locally_without_hijacking_general_history(
         assert parsed.intent is CapabilityIntent.QUERY_CONTINUITY
 
     assert router.route("Расскажи историю Рима") is None
-
-
-def test_only_shared_history_context_enables_optional_semantic_routing():
-    class SharedHistoryClassifier:
-        def __init__(self):
-            self.calls = []
-
-        def classify(self, message):
-            self.calls.append(message)
-            return ParsedCapabilityIntent(
-                intent=CapabilityIntent.QUERY_CONTINUITY,
-                confidence=0.91,
-                source="local_semantic",
-            )
-
-    classifier = SharedHistoryClassifier()
-    router = NaturalLanguageCapabilityRouter(classifier)
-    phrase = "Может, покажешь, что у нас сохранено в истории?"
-
-    parsed = router.route(phrase)
-
-    assert parsed is not None and parsed.intent is CapabilityIntent.QUERY_CONTINUITY
-    assert classifier.calls == [phrase]
-
-    class Exploding:
-        def classify(self, message):
-            raise AssertionError("general history must not enter capability classification")
-
-    assert NaturalLanguageCapabilityRouter(Exploding()).route("Расскажи историю Рима") is None
 
 
 def test_forget_wins_over_broad_today_query_and_keeps_reference_text():
@@ -114,44 +70,6 @@ def test_generic_what_about_reference_requires_real_record_context():
     assert router.route("Как тебе кофе?") is None
 
 
-def test_low_confidence_semantic_classification_falls_through_to_conversation():
-    class LowConfidence:
-        def classify(self, message):
-            return ParsedCapabilityIntent(
-                intent=CapabilityIntent.CREATE_COMMITMENT,
-                confidence=0.55,
-                entity="позвонить врачу",
-                source="local_semantic",
-            )
-
-    assert NaturalLanguageCapabilityRouter(LowConfidence()).route("может, надо бы дело про врача") is None
-
-
-def test_high_confidence_semantic_result_is_still_limited_to_allowlist():
-    class HighConfidence:
-        def classify(self, message):
-            assert message == "может, добавим задачу про врача"
-            return ParsedCapabilityIntent(
-                intent=CapabilityIntent.CREATE_COMMITMENT,
-                confidence=0.88,
-                entity="позвонить врачу",
-                source="local_semantic",
-            )
-
-    result = NaturalLanguageCapabilityRouter(HighConfidence()).route("может, добавим задачу про врача")
-    assert result is not None
-    assert result.intent is CapabilityIntent.CREATE_COMMITMENT
-    assert result.entity == "позвонить врачу"
-
-
-def test_semantic_classifier_is_not_called_without_a_capability_signal():
-    class Exploding:
-        def classify(self, message):
-            raise AssertionError("ordinary conversation must not be classified")
-
-    assert NaturalLanguageCapabilityRouter(Exploding()).route("Как тебе сегодняшний вечер?") is None
-
-
 def test_explicit_continuity_markers_win_over_task_words():
     router = NaturalLanguageCapabilityRouter()
     for phrase in (
@@ -164,56 +82,6 @@ def test_explicit_continuity_markers_win_over_task_words():
         assert parsed.intent is CapabilityIntent.OPEN_CONTINUITY
 
 
-def test_semantic_provider_failure_falls_through_to_conversation():
-    class Unavailable:
-        def __init__(self, error):
-            self.error = error
-
-        def classify(self, message):
-            raise self.error
-
-    for error in (
-        ModelProviderUnavailableError("offline"),
-        ModelTimeoutError("slow"),
-    ):
-        assert NaturalLanguageCapabilityRouter(Unavailable(error)).route(
-            "Может, заведём задачу про врача?"
-        ) is None
-
-
-def test_local_semantic_classifier_sees_only_current_utterance_and_fixed_allowlist():
-    provider = FakeProvider(response_text=json.dumps({
-        "intent": "create_commitment",
-        "confidence": 0.91,
-        "entity": "позвонить врачу",
-        "temporal_scope": None,
-    }, ensure_ascii=False))
-    profiles = SimpleNamespace(get_active_profile=lambda: SimpleNamespace(
-        provider_id=provider.provider_id,
-        model_id=provider.model_id,
-        timeout_seconds=30.0,
-    ))
-    classifier = LocalSemanticIntentClassifier(
-        router=ModelRouter([provider]),
-        identity_kernel=IdentityKernel(IdentityStore(ROOT / "identity" / "masha.identity.json")),
-        model_profiles=profiles,
-    )
-
-    result = classifier.classify("Может, заведём задачу про врача?")
-
-    assert result is not None
-    assert result.intent is CapabilityIntent.CREATE_COMMITMENT
-    assert result.entity == "позвонить врачу"
-    assert provider.last_request is not None
-    assert provider.last_request.privacy_scope is PrivacyScope.LOCAL_ONLY
-    assert provider.last_request.private_context == {}
-    assert len(provider.last_request.messages) == 2
-    assert provider.last_request.messages[0].role is MessageRole.SYSTEM
-    assert "shared history" in provider.last_request.messages[0].content
-    assert provider.last_request.messages[1].role is MessageRole.USER
-    assert provider.last_request.messages[1].content == "Может, заведём задачу про врача?"
-
-
 def test_scoped_memory_query_carries_natural_topic():
     parsed = NaturalLanguageCapabilityRouter().route(
         "Кстати, а что ты помнишь про то, что я люблю пить?"
@@ -224,11 +92,7 @@ def test_scoped_memory_query_carries_natural_topic():
     assert parsed.entity == "то что я люблю пить"
 
 def test_conversation_first_disables_semantic_hijack_but_keeps_explicit_commands():
-    class Exploding:
-        def classify(self, message):
-            raise AssertionError("semantic classifier must not run in conversation-first mode")
-
-    router = NaturalLanguageCapabilityRouter(Exploding())
+    router = NaturalLanguageCapabilityRouter()
     personal = (
         "Маш, всё, дела на сегодня закончились. "
         "Иди сюда, хочу просто немного побыть с тобой."
@@ -236,41 +100,12 @@ def test_conversation_first_disables_semantic_hijack_but_keeps_explicit_commands
 
     assert router.route(
         personal,
-        allow_semantic=False,
         explicit_only=True,
     ) is None
 
     explicit = router.route(
         "Добавь мне задачу купить молоко",
-        allow_semantic=False,
         explicit_only=True,
     )
     assert explicit is not None
     assert explicit.intent is CapabilityIntent.CREATE_COMMITMENT
-
-def test_local_semantic_classifier_can_return_plain_conversation():
-    provider = FakeProvider(response_text=json.dumps({
-        "intent": None,
-        "confidence": 0.99,
-        "entity": None,
-        "temporal_scope": None,
-    }, ensure_ascii=False))
-    profiles = SimpleNamespace(get_active_profile=lambda: SimpleNamespace(
-        provider_id=provider.provider_id,
-        model_id=provider.model_id,
-        timeout_seconds=30.0,
-    ))
-    classifier = LocalSemanticIntentClassifier(
-        router=ModelRouter([provider]),
-        identity_kernel=IdentityKernel(
-            IdentityStore(ROOT / "identity" / "masha.identity.json")
-        ),
-        model_profiles=profiles,
-    )
-
-    assert classifier.classify(
-        "Маш, всё, дела на сегодня закончились. Иди сюда."
-    ) is None
-    assert provider.last_request is not None
-    assert "ordinary conversation" in provider.last_request.messages[0].content
-    assert "intent=null" in provider.last_request.messages[0].content

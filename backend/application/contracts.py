@@ -348,8 +348,13 @@ class PendingConfirmationView(UiContract):
         "continuity_update",
         "google_calendar_create",
         "google_calendar_update",
+        "google_calendar_delete",
+        "google_calendar_delete_recovery",
         "google_drive_document_create",
         "google_drive_document_recovery",
+        "yandex_mail_delete",
+        "yandex_mail_move",
+        "yandex_mail_mutation_recovery",
     ]
     title: str = Field(min_length=1, max_length=160)
     subject: str = Field(min_length=1, max_length=500)
@@ -498,7 +503,7 @@ class ExternalConnectionView(UiContract):
     connector_id: Literal["google-calendar", "google-drive", "yandex-mail", "yandex-disk"]
     display_name: str = Field(min_length=1, max_length=80)
     state: Literal["ready", "needs_reconnect", "disconnected"]
-    access: Literal["read_only", "read_with_create_setup", "read_and_create", "read_with_document_create_setup", "read_and_document_create"] = "read_only"
+    access: Literal["read_only", "read_with_create_setup", "read_and_create", "read_with_document_create_setup", "read_and_document_create", "read_with_manage_setup", "read_and_manage"] = "read_only"
 
 
 class WorkbenchView(UiContract):

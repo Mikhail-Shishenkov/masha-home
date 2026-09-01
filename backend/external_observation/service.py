@@ -24,7 +24,11 @@ from backend.runtime.safety import AutonomySafetyStore
 from backend.skills.models import SkillCapability, SkillIntegrity
 from backend.skills.registry import SkillRegistry
 
-from .intent import ExplicitExternalIntentGate, ExplicitWebFetchIntentGate
+from .intent import (
+    ExplicitExternalIntentGate,
+    ExplicitWebFetchIntentGate,
+    infer_freshness,
+)
 from .context import (
     ExternalContextHintProvider,
     ExternalContextResolution,
@@ -188,6 +192,71 @@ class ExternalObservationService:
                 ObservationStatus.CLARIFICATION_REQUIRED,
                 "query_clarification_required",
             )
+        return self._execute_search(request, plan.query)
+
+    def observe_resolved_search(
+        self,
+        message: str,
+        *,
+        query_hint: str,
+        origin_message_id: str,
+        recent_messages: tuple[str, ...] = (),
+        project_id: str | None = None,
+        active_continuity_thread_id: str | None = None,
+    ) -> ExternalObservation | None:
+        """Execute one Home-validated semantic need under explicit/AUTO policy."""
+
+        explicit = self.gate.detect(message, recent_messages=recent_messages)
+        freshness = infer_freshness(message)
+        if not explicit.explicit and freshness is FreshnessRequirement.TIMELESS:
+            return None
+        authority = (
+            InvocationAuthority.USER_EXPLICIT
+            if explicit.explicit
+            else InvocationAuthority.ASSISTANT_AUTO
+        )
+        hint = explicit.query_hint or query_hint.strip() or None
+        resolution = self._resolve_local_context(
+            hint,
+            current_message=message,
+            project_id=project_id,
+            recent_messages=recent_messages,
+            active_continuity_thread_id=active_continuity_thread_id,
+        )
+        query = "нужна конкретная тема"
+        request = ObservationRequest(
+            observation_id=f"obs_{uuid4()}",
+            kind=ObservationKind.WEB_SEARCH,
+            query=query,
+            authority=authority,
+            freshness=freshness,
+            reason=(
+                explicit.reason
+                if explicit.explicit
+                else "semantic_current_information_need"
+            ),
+            requested_at=self._now(),
+            origin_message_id=origin_message_id,
+        )
+        if resolution.clarification_required:
+            return self._terminal(
+                request,
+                ObservationStatus.CLARIFICATION_REQUIRED,
+                "context_clarification_required",
+            )
+        plan = self.planner.plan(
+            current_message=message,
+            query_hint=hint,
+            recent_messages=recent_messages,
+            context_hints=resolution.hints,
+        )
+        if plan.clarification_required or plan.query is None:
+            return self._terminal(
+                request,
+                ObservationStatus.CLARIFICATION_REQUIRED,
+                "query_clarification_required",
+            )
+        request = request.model_copy(update={"query": plan.query})
         return self._execute_search(request, plan.query)
 
     def observe_fetch_request(
@@ -478,8 +547,10 @@ class ExternalObservationService:
             return "Сейчас включён стоп, поэтому во внешнюю сеть я не обращалась."
         if reason in {"skill_unavailable", "skill_integrity_failed", "skill_contract_mismatch"}:
             return "Веб-поиск сейчас не готов к безопасному запуску, поэтому в сеть я не обращалась."
-        if reason == "auto_not_implemented":
-            return "Автоматический поиск пока выключен. Я могу искать только по твоей явной просьбе."
+        if reason == "automatic_search_disabled":
+            return "Автоматическая проверка сети выключена. Попроси меня поискать явно — тогда я проверю."
+        if reason == "authority_not_implemented":
+            return "Такой фоновый доступ к сети пока не поддерживается. В сеть я не обращалась."
         if reason == "weak_evidence":
             return "Нашла результаты, но они не подтвердили именно эту тему. Не хочу выдавать их за ответ."
         return "Сейчас не смогла проверить сеть. Могу попробовать позже."
@@ -580,10 +651,20 @@ class ExternalObservationService:
         policy = self.policy_store.load()
         if policy.mode is InternetAccessMode.OFF:
             return "internet_access_off"
-        if policy.mode is not InternetAccessMode.EXPLICIT:
-            return "auto_not_implemented"
-        if request.authority is not InvocationAuthority.USER_EXPLICIT:
-            return "auto_not_implemented"
+        if (
+            request.authority is InvocationAuthority.USER_EXPLICIT
+            and policy.mode in {InternetAccessMode.EXPLICIT, InternetAccessMode.AUTO}
+        ):
+            pass
+        elif (
+            request.authority is InvocationAuthority.ASSISTANT_AUTO
+            and policy.mode is InternetAccessMode.AUTO
+        ):
+            pass
+        elif request.authority is InvocationAuthority.ASSISTANT_AUTO:
+            return "automatic_search_disabled"
+        else:
+            return "authority_not_implemented"
         if self.safety_store.is_engaged():
             return "emergency_stop_engaged"
         try:

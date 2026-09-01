@@ -3,7 +3,7 @@
   "cases": [
     {
       "case_id": "calendar_explicit_tomorrow",
-      "utterance": "Поставь завтра в 19 занятие по AI на час",
+      "utterance": "Поставь завтра в календарь в 19 занятие по AI на час",
       "expected_candidate_operations": ["google_calendar.event.create"],
       "allowed_candidate_alternatives": [],
       "expected_known_slots": {"date": "завтра", "time": "19:00", "duration_minutes": "60", "subject": "занятие по AI"},

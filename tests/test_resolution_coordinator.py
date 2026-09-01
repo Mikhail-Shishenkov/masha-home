@@ -5,7 +5,10 @@ from backend.conversation.clarification import (
     DeterministicClarificationBuilder,
     FollowUpResolutionEngine,
 )
-from backend.conversation.interpretation_v2 import CapabilityCandidateDiscovery
+from backend.conversation.interpretation_v2 import (
+    CandidateEvidence, CapabilityCandidate, CapabilityCandidateDiscovery,
+    InterpretationFrame, InterpretationResolutionState,
+)
 from backend.conversation.pending_resolution import (
     PendingResolutionStatus,
     PendingResolutionStore,
@@ -92,7 +95,10 @@ def test_reminder_choice_returns_same_original_meaning_without_authority(tmp_pat
 def test_missing_subject_follow_up_preserves_date_and_time(tmp_path):
     coordinator, _, _ = _coordinator(tmp_path)
 
-    first = coordinator.coordinate("Поставь завтра в 10 на час", conversation_id="c1")
+    first = coordinator.coordinate(
+        "Поставь в календарь завтра в 10 на час",
+        conversation_id="c1",
+    )
     second = coordinator.coordinate("Занятие по AI", conversation_id="c1")
 
     assert first.response == "Что именно поставить в календарь?"
@@ -198,13 +204,45 @@ def test_unsupported_docs_and_ordinary_conversation_remain_pass_through(tmp_path
         assert store.active_for_conversation(message) is None
 
 
+def test_known_unadopted_operation_is_application_owned_not_model_pass_through(tmp_path):
+    class KnownDiscovery:
+        def interpret(self, utterance, *, turn_context=None):
+            return InterpretationFrame(
+                original_utterance=utterance,
+                    normalized_goal="home.proactive_reminders",
+                    candidates=(CapabilityCandidate(
+                        operation_id="home.proactive_reminders",
+                    evidence=(CandidateEvidence(signal="local_semantic_proposal_validated"),),
+                ),),
+                resolution_state=InterpretationResolutionState.RESOLVED,
+            )
+
+    _, store, clock = _coordinator(tmp_path)
+    coordinator = NaturalLanguageResolutionCoordinator(
+        discovery=KnownDiscovery(),
+        builder=DeterministicClarificationBuilder(
+            catalog=default_home_capability_catalog(), clock=clock,
+        ),
+        engine=FollowUpResolutionEngine(),
+        store=store,
+    )
+
+    outcome = coordinator.coordinate("Прочитай файл", conversation_id="known")
+
+    assert outcome.status is CoordinationStatus.UNSUPPORTED_ACTION
+    assert outcome.diagnostic.pending_outcome == "known_operation_not_adopted"
+    assert "Ничего не запускаю" in outcome.response
+
+
 def test_adapter_registry_accepts_future_operation_without_coordinator_change():
     class SyntheticAdapter:
         operation_id = "future.notes.create"
 
-        def propose(self, handoff, context):
+        def resolve(self, handoff, context):
             return DomainProposalResult(
-                response=f"{handoff.slot('subject').value}:{context.project_id}"
+                response=f"{handoff.slot('subject').value}:{context.project_id}",
+                projection_state="waiting_confirmation",
+                pending_application_operation="future_note_create",
             )
 
     from backend.conversation.interpretation_v2 import (
@@ -223,7 +261,7 @@ def test_adapter_registry_accepts_future_operation_without_coordinator_change():
     )
     registry = ResolvedCapabilityAdapterRegistry((SyntheticAdapter(),))
 
-    result = registry.propose(
+    result = registry.resolve(
         handoff,
         DomainProposalContext(project_id="project", now_local=NOW),
     )

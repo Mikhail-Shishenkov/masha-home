@@ -7,22 +7,10 @@ place that can create proposals or execute confirmed mutations.
 
 from __future__ import annotations
 
-import json
 import re
 from enum import Enum
-from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
-
-from backend.llm.model_models import (
-    FinishReason,
-    MessageRole,
-    ModelCapabilities,
-    ModelMessage,
-    ModelRequest,
-    PrivacyScope,
-)
-from backend.llm.model_provider import ModelProviderUnavailableError, ModelTimeoutError
 
 
 class CapabilityIntent(str, Enum):
@@ -46,10 +34,6 @@ class ParsedCapabilityIntent(BaseModel):
     source: str = "deterministic"
 
 
-class SemanticClassifier(Protocol):
-    def classify(self, message: str) -> ParsedCapabilityIntent | None: ...
-
-
 _POLITE_PREFIX = re.compile(r"^\s*(?:(?:маш(?:а|енька)?|маш)\s*[,!:-]?\s*)", re.IGNORECASE)
 _SPACE = re.compile(r"\s+")
 _PUNCTUATION = re.compile(r"[^\w\s«»'-]+", re.UNICODE)
@@ -68,13 +52,6 @@ _SHARED_HISTORY_QUERY = re.compile(
     r"покажи\s+нашу\s+историю"
     r")$"
 )
-_SHARED_HISTORY_SIGNAL = re.compile(
-    r"\b(?:наш\w*|общ\w*)\s+истор\w*\b|"
-    r"\bу\s+нас\b.{0,40}\bистор\w*\b|"
-    r"\bистор\w*\b.{0,40}\bу\s+нас\b"
-)
-
-
 def normalize_utterance(value: str) -> str:
     text = _POLITE_PREFIX.sub("", value.casefold().replace("ё", "е"))
     text = _PUNCTUATION.sub(" ", text)
@@ -96,18 +73,12 @@ def memory_query_entity(value: str) -> str | None:
 
 
 class NaturalLanguageCapabilityRouter:
-    """Deterministic aliases first, optional local semantic classification last."""
-
-    CONFIDENCE_THRESHOLD = 0.78
-
-    def __init__(self, classifier: SemanticClassifier | None = None):
-        self.classifier = classifier
+    """Strict compatibility aliases; semantic meaning belongs to DialogueCore."""
 
     def route(
         self,
         message: str,
         *,
-        allow_semantic: bool = True,
         explicit_only: bool = False,
     ) -> ParsedCapabilityIntent | None:
         text = normalize_utterance(message)
@@ -116,20 +87,9 @@ class NaturalLanguageCapabilityRouter:
         deterministic = self._deterministic(text, explicit_only=explicit_only)
         if deterministic is not None:
             return deterministic
-        if explicit_only or not allow_semantic:
-            return None
-        if self.classifier is None or not self._has_capability_signal(text):
-            return None
-        try:
-            classified = self.classifier.classify(message)
-        except (ModelProviderUnavailableError, ModelTimeoutError):
-            # Semantic routing is an optional local hint.  If its selected
-            # model is unavailable, the utterance remains an ordinary turn.
-            return None
-        if classified is None or classified.confidence < self.CONFIDENCE_THRESHOLD:
-            return None
-        return classified
+        return None
 
+# Local semantic routing intentionally lives in semantic_resolver.py.
     @staticmethod
     def _deterministic(
         text: str,
@@ -257,86 +217,3 @@ class NaturalLanguageCapabilityRouter:
         if complete:
             return ParsedCapabilityIntent(intent=CapabilityIntent.COMPLETE_COMMITMENT, confidence=0.91, entity=complete.group("body"))
         return None
-
-    @staticmethod
-    def _has_capability_signal(text: str) -> bool:
-        return bool(
-            _SHARED_HISTORY_SIGNAL.search(text)
-            or re.search(
-                r"\b(?:помн|забуд|дел|задач|план|напомн|закон|выполн|купил|сделал|нить|тем|вернут)\w*\b",
-                text,
-            )
-        )
-
-
-class LocalSemanticIntentClassifier:
-    """Optional local-LLM classifier; it sees only the current utterance."""
-
-    def __init__(self, *, router, identity_kernel, model_profiles):
-        self.router = router
-        self.identity_kernel = identity_kernel
-        self.model_profiles = model_profiles
-
-    def classify(self, message: str) -> ParsedCapabilityIntent | None:
-        profile = self.model_profiles.get_active_profile()
-        allowed = ", ".join(intent.value for intent in CapabilityIntent)
-        request = ModelRequest(
-            messages=(ModelMessage(
-                role=MessageRole.SYSTEM,
-                content=(
-                    "Classify one Russian utterance into this fixed allowlist: " + allowed + ", or null. "
-                    "A capability exists only when the primary speech act is a clear request to read or "
-                    "change application-owned memory, commitments, reminders, or continuity. "
-                    "Definitions: create_commitment means create a new task, plan, obligation or reminder; "
-                    "complete_commitment means mark an existing stored task done; query_commitments means ask "
-                    "about existing tasks or plans; query_memory means ask for confirmed remembered facts; "
-                    "forget_memory means remove a confirmed fact; open_continuity means explicitly preserve "
-                    "a discussion topic for later; query_continuity means ask which preserved topics remain "
-                    "or what is stored in our shared history. "
-                    "Ordinary conversation, narration, ambience, feelings, relationship talk, or a mixed "
-                    "personal sentence that merely contains words such as дела, задача, план, закончили, "
-                    "помнишь, история or тема must return null unless the utterance is actually asking for "
-                    "one allowlisted application action. "
-                    "Example: «Маш, всё, дела на сегодня закончились. Иди сюда, хочу просто немного побыть "
-                    "с тобой.» is ordinary conversation and must return null. "
-                    "Example: «С отчётом закончили» may be complete_commitment because the whole utterance "
-                    "is a completion statement about one resolvable task. "
-                    "Return JSON only: {\"intent\": string|null, \"confidence\": 0..1, "
-                    "\"entity\": string|null, \"temporal_scope\": string|null}. "
-                    "For create/complete/forget/open intents, entity is the concise object or action from "
-                    "the utterance with request words removed. Preserve dates and relative time in entity. "
-                    "For ordinary conversation return intent=null, entity=null, temporal_scope=null. "
-                    "Do not answer the user and do not invent stored records."
-                ),
-            ), ModelMessage(role=MessageRole.USER, content=message)),
-            identity_context=self.identity_kernel.build_context(),
-            required_capabilities=ModelCapabilities(),
-            privacy_scope=PrivacyScope.LOCAL_ONLY,
-            preferred_provider_id=profile.provider_id,
-            timeout_seconds=min(profile.timeout_seconds, 15.0),
-            execution_model_id=profile.model_id,
-            execution_think=False,
-        )
-        response = self.router.generate(request)
-        if response.finish_reason not in {FinishReason.COMPLETED, FinishReason.LENGTH}:
-            return None
-        try:
-            payload = json.loads(
-                response.text.strip()
-                .removeprefix("```json")
-                .removesuffix("```")
-                .strip()
-            )
-            if payload.get("intent") in {
-                None,
-                "",
-                "none",
-                "null",
-                "conversation",
-                "ordinary_conversation",
-            }:
-                return None
-            payload["source"] = "local_semantic"
-            return ParsedCapabilityIntent.model_validate(payload)
-        except (ValueError, TypeError, KeyError):
-            return None

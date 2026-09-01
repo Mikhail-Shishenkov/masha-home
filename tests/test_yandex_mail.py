@@ -8,6 +8,7 @@ from backend.connectors.yandex_mail.models import MailMessageContent,MailMessage
 from backend.connectors.yandex_mail.oauth import challenge,verifier
 from backend.connectors.yandex_mail.reader import MAX_RESULTS,ImapYandexSession,YandexMailReader,YandexMailInvalidGrant,YandexMailUnavailable,_content,_criteria
 from backend.connectors.yandex_mail.service import YandexMailConversationService
+from backend.connectors.presented_read_sets import PresentedReadSetRegistry
 from backend.external_observation.policy import InternetAccessMode,InternetAccessPolicy,InternetAccessPolicyStore
 from backend.runtime.safety import AutonomySafetyService,AutonomySafetyStore
 from backend.secrets import InMemorySecretStore,ConnectorCredentialState
@@ -39,6 +40,24 @@ def test_bounded_results_and_application_owned_second_reference(tmp_path):
  r,_,_=reader(tmp_path);service=YandexMailConversationService(reader=r);found=service.observe("покажи последние письма",conversation_id="c");assert len(found.messages)<=10
  selected=service.observe("прочитай второе",conversation_id="c");assert selected.status=="read_completed" and selected.resolved_request.subject=="Первое письмо"
  assert service.observe("Было что-нибудь от GitHub?",conversation_id="c").status=="search_completed"
+
+def test_contextual_presented_mail_reference_uses_one_real_unread_message(tmp_path):
+ class One(Session):
+  def search(self,criteria,limit):
+   self.calls.append(("search",criteria,limit));return (MailMessageSummary("yandex","u1","Одно новое письмо","Миша",None,10,False),)
+ registry=PresentedReadSetRegistry();r,_,_=reader(tmp_path,session_factory=lambda *_:One())
+ service=YandexMailConversationService(reader=r,presented_read_sets=registry)
+ assert service.observe("Есть новые письма?",conversation_id="c").status=="search_completed"
+ for phrase in ("Прочитай это письмо и расскажи о чем оно", "Прочитай его", "Прочитай новое письмо", "Прочитай в моей посте новое письмо и расскажи о чем оно"):
+  assert service.observe(phrase,conversation_id="c").status=="read_completed"
+
+def test_contextual_mail_reference_clarifies_for_multiple_and_respects_newest_owner(tmp_path):
+ registry=PresentedReadSetRegistry();r,_,_=reader(tmp_path)
+ service=YandexMailConversationService(reader=r,presented_read_sets=registry)
+ assert service.observe("Есть новые письма?",conversation_id="c").status=="search_completed"
+ assert service.observe("Прочитай это письмо",conversation_id="c").status=="clarification_required"
+ registry.present("c","google_drive",(object(),),entity_kind="файл",presentation_kind="recent")
+ assert service.observe("Прочитай это письмо",conversation_id="c") is None
 def test_mail_content_and_resolved_request_do_not_expose_uid():
  item=MailMessageSummary("yandex","secret-uid","Тема","Отправитель",None,None,False);content=MailMessageContent(item,"текст")
  assert "secret-uid" not in json.dumps(content.model_value(),ensure_ascii=False);assert "секрет" not in ResolvedMailRequest("Тема","Отправитель").model_message()
@@ -71,10 +90,11 @@ def test_imap_unseen_listing_uses_readonly_and_body_peek_without_store(monkeypat
   def __init__(self,*_):self.calls=[]
   def authenticate(self,*_):self.calls.append(("authenticate",));return "OK",[]
   def select(self,*args,**kwargs):self.calls.append(("select",args,kwargs));return "OK",[]
+  def response(self,name):self.calls.append(("response",name));return "OK",[b"9001"]
   def uid(self,*args):
    self.calls.append(("uid",args))
    if args[0]=="SEARCH":return "OK",[b"1"]
-   return "OK",[(b"1 (RFC822.SIZE 5)",b"From: Misha <m@example.com>\nSubject: Hi\n\n")]
+   return "OK",[(b"1 (RFC822.SIZE 5)",b"From: Misha <m@example.com>\nSubject: Hi\nMessage-ID: <mail-1@example.com>\n\n")]
   def logout(self):self.calls.append(("logout",))
  client=Client();monkeypatch.setattr("backend.connectors.yandex_mail.reader.imaplib.IMAP4_SSL",lambda *_:client)
  session=ImapYandexSession("misha@yandex.ru","token");session.search(("UNSEEN",),MAX_RESULTS);session.close()

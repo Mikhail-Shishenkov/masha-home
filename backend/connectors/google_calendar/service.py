@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from .intent import calendar_intent
+from .intent import calendar_intent, calendar_period_intent
 from .reader import CalendarReadOutcome, GoogleCalendarReader
 
 
@@ -14,6 +14,14 @@ class GoogleCalendarConversationService:
 
     def observe(self, message: str, *, now_local: datetime) -> CalendarReadOutcome | None:
         intent = calendar_intent(message, now_local)
+        if intent is None:
+            return None
+        return self.reader.read(start=intent.start, end=intent.end)
+
+    def observe_period(
+        self, period: str, *, now_local: datetime,
+    ) -> CalendarReadOutcome | None:
+        intent = calendar_period_intent(period, now_local)
         if intent is None:
             return None
         return self.reader.read(start=intent.start, end=intent.end)

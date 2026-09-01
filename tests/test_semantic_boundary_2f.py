@@ -33,7 +33,7 @@ def _validator() -> SemanticProposalValidator:
     )
 
 
-def _supported(*, candidates, slots, selection=None):
+def _supported(*, candidates, slots, action, selection=None):
     return parse_semantic_interpretation({
         "kind": "supported_action",
         "candidate_operation_ids": candidates,
@@ -44,6 +44,7 @@ def _supported(*, candidates, slots, selection=None):
         ],
         "unresolved_referents": [],
         "ambiguity_hint": "none",
+        "action_request_evidence": {"evidence_text": action},
         "operation_selection_evidence": selection or {
             "operation_id": None,
             "evidence_text": None,
@@ -56,6 +57,7 @@ def test_generic_schedule_keeps_application_owned_calendar_reminder_ambiguity():
     proposal = _supported(
         candidates=["home.timed_commitments"],
         slots=(("subject", "занятие"), ("date", "завтра"), ("time", "в 11")),
+        action="Запиши",
     )
 
     frame = _validator().validate(utterance, proposal)
@@ -81,6 +83,7 @@ def test_grounded_reminder_selection_narrows_group_without_calendar_guess():
             ("date", "завтра"),
             ("time", "в 9"),
         ),
+        action="напомни",
         selection={
             "operation_id": "home.timed_commitments",
             "evidence_text": "напомни",
@@ -100,6 +103,7 @@ def test_grounded_calendar_selection_uses_declared_duration_default():
     proposal = _supported(
         candidates=["google_calendar.event.create"],
         slots=(("subject", "встречу"), ("date", "завтра"), ("time", "14:30")),
+        action="добавь",
         selection={
             "operation_id": "google_calendar.event.create",
             "evidence_text": "в календарь",
@@ -120,6 +124,7 @@ def test_operation_selection_evidence_must_exist_in_current_utterance():
     proposal = _supported(
         candidates=["google_calendar.event.create"],
         slots=(("subject", "встречу"), ("date", "завтра"), ("time", "14:30")),
+        action="Добавь",
         selection={
             "operation_id": "google_calendar.event.create",
             "evidence_text": "в календарь",
@@ -141,6 +146,7 @@ def test_grounded_generic_scheduling_word_cannot_select_calendar():
     proposal = _supported(
         candidates=["google_calendar.event.create"],
         slots=(("subject", "занятие"), ("date", "завтра"), ("time", "11")),
+        action="запланируем",
         selection={
             "operation_id": "google_calendar.event.create",
             "evidence_text": "запланируем",
@@ -168,6 +174,7 @@ def test_duration_and_date_evidence_are_canonicalized_only_by_home():
             ("time", "14:30"),
             ("duration_minutes", "на час"),
         ),
+        action="Добавь",
         selection={
             "operation_id": "google_calendar.event.create",
             "evidence_text": "в календарь",
@@ -194,6 +201,7 @@ def test_model_generated_year_absent_from_utterance_fails_grounding():
             ("time", "14:30"),
             ("duration_minutes", "на час"),
         ),
+        action="Добавь",
     )
 
     validator = _validator()

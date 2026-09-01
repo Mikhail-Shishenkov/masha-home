@@ -38,6 +38,7 @@ from .semantic_resolver import (
     SemanticInterpretationProposal,
     SemanticValidationTrace,
 )
+from .turn_context import TurnContextEnvelope
 
 
 _OPERATION_ID = r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$"
@@ -127,6 +128,33 @@ class V2RoutingDiagnostic(StrictCoordinatorModel):
     resolved_candidate: str | None = Field(
         default=None, pattern=_OPERATION_ID, max_length=100,
     )
+    turn_context: "TurnContextDiagnosticSummary | None" = None
+
+
+class TurnContextDiagnosticSummary(StrictCoordinatorModel):
+    """Content-free proof of which Home context layers were available."""
+
+    local_date: str = Field(min_length=10, max_length=10)
+    timezone: str = Field(min_length=1, max_length=100)
+    recent_turn_count: int = Field(ge=0, le=8)
+    memory_hint_count: int = Field(ge=0, le=6)
+    presented_entity_count: int = Field(ge=0, le=10)
+    capability_count: int = Field(ge=0, le=32)
+    active_continuity_present: bool
+
+    @classmethod
+    def from_envelope(
+        cls, envelope: TurnContextEnvelope,
+    ) -> "TurnContextDiagnosticSummary":
+        return cls(
+            local_date=envelope.temporal.local_date.isoformat(),
+            timezone=envelope.temporal.timezone,
+            recent_turn_count=len(envelope.recent_turns),
+            memory_hint_count=len(envelope.memory_hints),
+            presented_entity_count=len(envelope.presented_entities),
+            capability_count=len(envelope.capabilities),
+            active_continuity_present=envelope.active_continuity is not None,
+        )
 
 
 class DialogueFlowSnapshot(StrictCoordinatorModel):
@@ -161,7 +189,8 @@ class DialogueDiagnosticSnapshot(StrictCoordinatorModel):
         default=None, pattern=_OPERATION_ID, max_length=100,
     )
     response_projection_state: Literal[
-        "none", "clarification", "waiting_confirmation", "failed", "unsupported"
+        "none", "clarification", "waiting_confirmation", "completed_read",
+        "failed", "unsupported"
     ] = "none"
 
 
@@ -197,7 +226,27 @@ class V2LiveAdoptionPolicy:
     ):
         self.supported_operation_ids = supported_operation_ids or frozenset((
             "google_calendar.event.create",
+            "google_calendar.event.update",
+            "google_calendar.event.delete",
+            "google_calendar.read",
             "home.timed_commitments",
+            "home.commitments",
+            "home.commitments.create",
+            "home.commitments.complete",
+            "yandex_mail.read",
+            "yandex_mail.message.delete",
+            "yandex_mail.message.move",
+            "google_drive.read",
+            "yandex_disk.read",
+            "home.memory.recall",
+            "home.memory.inspect",
+            "home.memory.remember",
+            "home.memory.forget",
+            "home.continuity.read",
+            "home.continuity.open",
+            "home.continuity.resolve",
+            "web.search",
+            "web.fetch",
         ))
 
     def supports_frame(self, frame: InterpretationFrame) -> bool:
@@ -231,19 +280,30 @@ class DialogueCore:
         self.last_decision: V2RoutingDiagnostic | None = None
         self._diagnostic_conversation_id: str | None = None
         self._decisions_by_conversation: dict[str, V2RoutingDiagnostic] = {}
+        self._turn_context_summary: TurnContextDiagnosticSummary | None = None
 
     def coordinate(
         self,
         utterance: str,
         *,
         conversation_id: str,
+        turn_context: TurnContextEnvelope | None = None,
     ) -> ConversationCoordinationOutcome:
         self._diagnostic_conversation_id = conversation_id
+        self._turn_context_summary = (
+            None
+            if turn_context is None
+            else TurnContextDiagnosticSummary.from_envelope(turn_context)
+        )
         try:
             active = self.store.active_for_conversation(conversation_id)
             frame = None
             if active is not None:
-                follow_up = self.engine.resolve(active, utterance)
+                follow_up = self.engine.resolve(
+                    active,
+                    utterance,
+                    turn_context=turn_context,
+                )
                 continued = self._continue_pending(
                     active,
                     follow_up,
@@ -255,12 +315,18 @@ class DialogueCore:
                         and follow_up.interpretation == active.interpretation
                         and follow_up.semantic_proposal is None
                     ):
-                        frame = self.discovery.interpret(utterance)
+                        frame = self.discovery.interpret(
+                            utterance,
+                            turn_context=turn_context,
+                        )
                         if not frame.candidates:
                             return continued
                     else:
                         return continued
-            frame = frame or self.discovery.interpret(utterance)
+            frame = frame or self.discovery.interpret(
+                utterance,
+                turn_context=turn_context,
+            )
             if active is None:
                 if frame.resolution_state is InterpretationResolutionState.UNSUPPORTED_ACTION:
                     return self._handled(
@@ -298,6 +364,15 @@ class DialogueCore:
                         frame,
                         clarification=request,
                     )
+                if self._has_strict_legacy_owner(frame):
+                    return self._pass(frame, pending_outcome="strict_legacy_owner")
+                if frame.candidates:
+                    return self._handled(
+                        CoordinationStatus.UNSUPPORTED_ACTION,
+                        frame,
+                        response=self._known_action_unavailable_response(frame),
+                        pending_outcome="known_operation_not_adopted",
+                    )
                 return self._pass(frame)
 
             # A proven new adopted request replaces an older semantic question.
@@ -310,8 +385,15 @@ class DialogueCore:
                     pending_outcome="unsupported_action_active_flow_preserved",
                 )
             if frame.candidates:
+                if self._has_strict_legacy_owner(frame):
+                    return self._pass(frame, pending_outcome="strict_legacy_owner")
                 if not self.adoption.supports_frame(frame):
-                    return self._pass(frame, pending_outcome="unsupported_new_intent")
+                    return self._handled(
+                        CoordinationStatus.UNSUPPORTED_ACTION,
+                        frame,
+                        response=self._known_action_unavailable_response(frame),
+                        pending_outcome="known_new_operation_not_adopted",
+                    )
                 if frame.resolution_state is InterpretationResolutionState.CLARIFICATION_REQUIRED:
                     request, pending = self.builder.build(
                         frame,
@@ -377,9 +459,12 @@ class DialogueCore:
                 follow_up.selected_operation_id or ""
             ):
                 return self._handled(
-                    CoordinationStatus.PASS_THROUGH,
+                    CoordinationStatus.UNSUPPORTED_ACTION,
                     follow_up.interpretation,
-                    pending_outcome="unsupported_resolution",
+                    response=self._known_action_unavailable_response(
+                        follow_up.interpretation,
+                    ),
+                    pending_outcome="known_resolution_not_adopted",
                     trace=trace,
                 )
             stored = self.store.resolve(
@@ -545,9 +630,10 @@ class DialogueCore:
         result = getattr(self.discovery, "last_result", None)
         proposal = None if result is None else getattr(result, "proposal", None)
         nearby = () if proposal is None else proposal.nearby_operation_ids
-        labels = self.builder.human_operation_labels(
-            nearby or tuple(sorted(self.adoption.supported_operation_ids))
-        )
+        # Never dump the whole growing capability catalog into one human
+        # failure.  Alternatives are meaningful only when the semantic layer
+        # explicitly identified a bounded nearby operation.
+        labels = self.builder.human_operation_labels(nearby[:3])
         if not labels:
             return "Такое действие я пока не умею выполнять. Ничего не делаю."
         alternatives = " или ".join(label.casefold() for label in labels)
@@ -556,10 +642,31 @@ class DialogueCore:
             f"Могу предложить безопасные варианты: {alternatives}."
         )
 
+    def _known_action_unavailable_response(self, frame: InterpretationFrame) -> str:
+        labels = self.builder.human_operation_labels(
+            tuple(candidate.operation_id for candidate in frame.candidates),
+        )
+        label = labels[0].casefold() if len(labels) == 1 else "это действие"
+        return (
+            f"Я поняла, что ты просишь {label}, но этот путь пока не готов "
+            "к безопасному выполнению. Ничего не запускаю."
+        )
+
+    @staticmethod
+    def _has_strict_legacy_owner(frame: InterpretationFrame) -> bool:
+        """Preserve capability paths that own the turn before DialogueCore."""
+
+        return any(
+            evidence.signal == "explicit_google_drive_document_create"
+            for candidate in frame.candidates
+            for evidence in candidate.evidence
+        )
+
     def _failed(self) -> ConversationCoordinationOutcome:
         diagnostic = V2RoutingDiagnostic(
             status=CoordinationStatus.FAILED,
             pending_outcome="infrastructure_failure",
+            turn_context=self._turn_context_summary,
         )
         self.last_decision = diagnostic
         self._remember_decision(diagnostic)
@@ -608,6 +715,7 @@ class DialogueCore:
                 None if information_space is None else getattr(information_space, "value", str(information_space))
             ),
             "semantic_validation": validation,
+            "turn_context": self._turn_context_summary,
         }
         if result is None:
             return base
@@ -644,21 +752,103 @@ NaturalLanguageResolutionCoordinator = DialogueCore
 class DomainProposalContext(StrictCoordinatorModel):
     project_id: str = Field(min_length=1, max_length=200)
     now_local: AwareDatetime
+    origin_message_id: str | None = Field(default=None, min_length=1, max_length=100)
+    recent_messages: tuple[str, ...] = Field(default=(), max_length=8)
+    conversation_message_ids: tuple[str, ...] = ()
+    active_continuity_thread_id: str | None = Field(
+        default=None, min_length=1, max_length=200,
+    )
 
 
 class DomainProposalResult(StrictCoordinatorModel):
     response: str = Field(min_length=1, max_length=2000)
-    projection_state: Literal["waiting_confirmation"] = "waiting_confirmation"
+    projection_state: Literal["waiting_confirmation", "failed"]
+    pending_application_operation: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+    )
+
+    @model_validator(mode="after")
+    def pending_operation_matches_projection(self):
+        if (
+            self.projection_state == "waiting_confirmation"
+            and self.pending_application_operation is None
+        ):
+            raise ValueError("waiting confirmation requires durable pending evidence")
+        if (
+            self.projection_state != "waiting_confirmation"
+            and self.pending_application_operation is not None
+        ):
+            raise ValueError("non-pending projection cannot name a pending operation")
+        return self
+
+
+class DomainReadResult(StrictCoordinatorModel):
+    """Safe normalized evidence or a controlled application read response."""
+
+    operation_id: str = Field(pattern=_OPERATION_ID, max_length=100)
+    projection_state: Literal["completed_read", "failed", "none"]
+    delivery: Literal[
+        "model_evidence", "application_response", "conversation_fallback"
+    ]
+    external_information: tuple[dict, ...] = Field(default=(), max_length=5)
+    information_contract: Literal[
+        "calendar", "mail", "document", "external"
+    ] | None = None
+    model_request_override: str | None = Field(default=None, max_length=1000)
+    response: str | None = Field(default=None, min_length=1, max_length=2000)
+    completed_capability: Literal[
+        "calendar", "mail", "files", "memory", "continuity", "web"
+    ] | None = None
+    application_attachment_id: str | None = Field(
+        default=None, min_length=8, max_length=100,
+    )
+    external_observation_ids: tuple[str, ...] = Field(default=(), max_length=2)
+
+    @model_validator(mode="after")
+    def delivery_matches_payload(self):
+        if self.delivery == "model_evidence":
+            if (
+                self.projection_state != "completed_read"
+                or not self.external_information
+                or self.information_contract is None
+                or self.response is not None
+                or self.completed_capability is None
+            ):
+                raise ValueError("model evidence requires completed normalized read truth")
+        elif self.delivery == "application_response" and (
+            self.response is None
+            or self.external_information
+            or self.information_contract is not None
+            or self.model_request_override is not None
+        ):
+            raise ValueError("application response cannot carry model evidence")
+        elif self.delivery == "conversation_fallback" and (
+            self.projection_state != "none"
+            or self.response is not None
+            or self.external_information
+            or self.information_contract is not None
+            or self.model_request_override is not None
+            or self.completed_capability is not None
+            or self.application_attachment_id is not None
+            or self.external_observation_ids
+        ):
+            raise ValueError("conversation fallback cannot carry action truth")
+        return self
+
+
+ResolvedCapabilityResult = DomainProposalResult | DomainReadResult
 
 
 class ResolvedCapabilityAdapter(Protocol):
     operation_id: str
 
-    def propose(
+    def resolve(
         self,
         handoff: ResolvedCapabilityHandoff,
         context: DomainProposalContext,
-    ) -> DomainProposalResult: ...
+    ) -> ResolvedCapabilityResult: ...
 
 
 class ResolvedCapabilityAdapterError(RuntimeError):
@@ -678,12 +868,31 @@ class ResolvedCapabilityAdapterRegistry:
             raise ResolvedCapabilityAdapterError(adapter.operation_id)
         self._adapters[adapter.operation_id] = adapter
 
-    def propose(
+    @property
+    def operation_ids(self) -> frozenset[str]:
+        return frozenset(self._adapters)
+
+    def resolve(
         self,
         handoff: ResolvedCapabilityHandoff,
         context: DomainProposalContext,
-    ) -> DomainProposalResult:
+    ) -> ResolvedCapabilityResult:
         adapter = self._adapters.get(handoff.operation_id)
         if adapter is None:
             raise ResolvedCapabilityAdapterError(handoff.operation_id)
-        return adapter.propose(handoff, context)
+        return adapter.resolve(handoff, context)
+
+    def attach_assistant_message(
+        self,
+        result: DomainReadResult,
+        message_id: str,
+    ) -> None:
+        """Delegate optional receipt linkage to the owning application adapter."""
+
+        if result.application_attachment_id is None:
+            return
+        adapter = self._adapters.get(result.operation_id)
+        attach = None if adapter is None else getattr(adapter, "attach_assistant_message", None)
+        if attach is None:
+            raise ResolvedCapabilityAdapterError(result.operation_id)
+        attach(result, message_id)

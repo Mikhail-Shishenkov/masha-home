@@ -99,7 +99,7 @@ def test_timed_reminder_choice_selects_existing_candidate(answer):
 
 
 def test_missing_subject_builder_and_follow_up_fill_only_the_requested_slot():
-    request, pending = _build("Поставь завтра в 19 на час")
+    request, pending = _build("Поставь в календарь завтра в 19 на час")
 
     assert request.clarification_kind is ClarificationKind.SLOT
     assert request.requested_slot == "subject"

@@ -197,7 +197,7 @@ def test_legacy_projection_preserves_connector_state_vocabulary(connection_state
     assert snapshot.yandex_mail_read == read_state
     assert snapshot.yandex_disk_read == read_state
     assert snapshot.google_calendar_create == "needs_reconnect"
-    assert snapshot.google_calendar_update == "needs_reconnect"
+    assert snapshot.google_calendar_update == read_state
     assert snapshot.google_drive_document_create == "needs_reconnect"
 
 
@@ -221,6 +221,23 @@ def test_legacy_projection_preserves_write_connection_and_proactive_states():
     assert second.google_calendar_create == second.google_calendar_update == "available"
     assert second.google_drive_document_create == "available"
     assert second.proactive_reminders == "blocked"
+
+
+def test_calendar_existing_event_mutations_require_read_and_write_truth():
+    service, _ = _capabilities(
+        connection_state="needs_reconnect",
+        calendar_access="read_and_create",
+    )
+
+    operations = {
+        item.operation.operation_id: item.availability.value
+        for item in service.catalog_snapshot().operations
+    }
+
+    assert operations["google_calendar.read"] == "needs_reconnect"
+    assert operations["google_calendar.event.create"] == "available"
+    assert operations["google_calendar.event.update"] == "needs_reconnect"
+    assert operations["google_calendar.event.delete"] == "needs_reconnect"
 
 
 def test_home_service_generic_snapshot_can_include_future_operation_without_legacy_schema_change():

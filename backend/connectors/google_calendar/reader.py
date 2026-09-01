@@ -54,6 +54,8 @@ class UrllibGoogleCalendarTransport:
             raise GoogleCalendarUnavailable("google_calendar_unavailable") from error
         if len(raw) > 2 * 1024 * 1024:
             raise GoogleCalendarUnavailable("google_calendar_unavailable")
+        if not raw:
+            return {}
         try:
             payload = json.loads(raw)
         except (UnicodeDecodeError, ValueError) as error:
@@ -76,10 +78,9 @@ class CalendarEventEvidence:
     status: str
 
     def model_value(self) -> dict:
+        """Model-safe event evidence; provider identities remain Home-owned."""
         return {
-            "calendar_id": self.calendar_id,
             "calendar": self.calendar_name,
-            "event_id": self.event_id,
             "title": self.title,
             "start": self.start.isoformat(),
             "end": self.end.isoformat(),

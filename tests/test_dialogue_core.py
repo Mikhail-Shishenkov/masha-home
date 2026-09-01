@@ -24,7 +24,9 @@ NOW = datetime(2026, 8, 28, 8, 0, tzinfo=timezone.utc)
 
 
 class _OrdinaryFollowUpResolver:
-    def resolve_follow_up(self, utterance, vocabulary, context, *, profile_id=None):
+    def resolve_follow_up(
+        self, utterance, vocabulary, context, *, profile_id=None, turn_context=None,
+    ):
         return SemanticFollowUpResult(
             proposal=SemanticFollowUpProposal(
                 relation=SemanticFollowUpRelation.NOT_A_FOLLOW_UP,
@@ -101,7 +103,10 @@ def test_explicit_calendar_duration_overrides_declared_default(tmp_path):
 
 def test_explicit_date_advances_instead_of_repeating_same_question(tmp_path):
     core = _core(tmp_path)
-    first = core.coordinate("Поставь занятие в 12 на час", conversation_id="c1")
+    first = core.coordinate(
+        "Поставь занятие в календарь в 12 на час",
+        conversation_id="c1",
+    )
     resolved = core.coordinate("29 августа", conversation_id="c1")
 
     assert first.response == "На какой день?"

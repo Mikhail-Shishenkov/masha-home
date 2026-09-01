@@ -37,6 +37,10 @@ from backend.memory.memory_models import (
     Visibility,
 )
 from backend.temporal.temporal_engine import TemporalEngine
+from backend.runtime.action_contracts import (
+    ProposalPreparation,
+    ProposalPreparationStatus,
+)
 from backend.memory.memory_management import MemoryMutationOperation
 from backend.memory.text_normalization import meaningful_tokens, stem_russian_token
 from .conversation_models import ConversationMessage
@@ -65,6 +69,7 @@ MemoryRecordType = Literal[
     "continuity_state",
     "google_calendar_event",
     "google_drive_document",
+    "yandex_mail_message",
 ]
 _SHARED_MEMORY = re.compile(
     r"^\s*(?:маша\s*,?\s*)?(?:запомни|сохрани)\s+как\s+"
@@ -471,7 +476,6 @@ class MemoryIntentHandler:
             remove_query = self._human_remove_query(message)
             parsed_clarification = self.capability_router.route(
                 message,
-                allow_semantic=not conversation_first,
                 explicit_only=conversation_first,
             )
             if remove_query is not None or parsed_clarification is None:
@@ -487,7 +491,6 @@ class MemoryIntentHandler:
         if clarification is not None:
             parsed_clarification = self.capability_router.route(
                 message,
-                allow_semantic=not conversation_first,
                 explicit_only=conversation_first,
             )
             if parsed_clarification is None:
@@ -648,7 +651,6 @@ class MemoryIntentHandler:
                 return self._render_commitments(records)
         if parsed := self.capability_router.route(
                 message,
-                allow_semantic=not conversation_first,
                 explicit_only=conversation_first,
             ):
             if pending and parsed.intent in {
@@ -667,6 +669,23 @@ class MemoryIntentHandler:
                 active_continuity_thread_id=active_continuity_thread_id,
             )
         return MemoryIntentResult(handled=False)
+
+    def owns_pending_confirmation(self, conversation_id: str) -> bool:
+        """Whether the current shared proposal belongs to a Home memory flow."""
+
+        proposal = self.proposal_store.current_for_conversation(conversation_id)
+        return self.owns_proposal(proposal)
+
+    @staticmethod
+    def owns_proposal(proposal: MemoryProposal | None) -> bool:
+        """Keep connector proposals outside the Home memory mutation boundary."""
+
+        return proposal is not None and proposal.operation in {
+            "create",
+            "continuity_create",
+            "continuity_update",
+            *(operation.value for operation in MemoryMutationOperation),
+        }
 
     @staticmethod
     def _pending_conflict() -> MemoryIntentResult:
@@ -842,6 +861,253 @@ class MemoryIntentHandler:
         return MemoryIntentResult(
             handled=True,
             response="\n".join([heading, *(f"{index}. {point}" for index, point in enumerate(points, 1))]),
+        )
+
+    def recall_from_resolved_intent(
+        self,
+        *,
+        query: str | None,
+        project_id: str,
+        conversation_id: str,
+    ) -> MemoryIntentResult:
+        """Read confirmed current information after DialogueCore resolved meaning."""
+
+        return self._human_recall(
+            query,
+            project_id=project_id,
+            conversation_id=conversation_id,
+        )
+
+    def inspect_memory_from_resolved_intent(
+        self,
+        *,
+        query: str | None,
+        project_id: str,
+        conversation_id: str,
+    ) -> MemoryIntentResult:
+        """Keep the explicit administrative memory view distinct from recall."""
+
+        return self._show_memory(
+            query,
+            project_id,
+            conversation_id=conversation_id,
+        )
+
+    def read_continuity_from_resolved_intent(
+        self,
+        *,
+        query: str | None,
+        conversation_id: str,
+    ) -> MemoryIntentResult:
+        """Read moments/open threads without creating or resolving a thread."""
+
+        return self._list_continuity(
+            query,
+            conversation_id=conversation_id,
+        )
+
+    def read_commitments_from_resolved_intent(
+        self,
+        *,
+        query: str | None,
+        project_id: str,
+    ) -> MemoryIntentResult:
+        """Read existing tasks after DialogueCore resolved the speech act."""
+
+        return self._list_commitments(project_id, query=query)
+
+    def prepare_commitment_from_resolved_intent(
+        self,
+        *,
+        subject: str,
+        conversation_id: str,
+        project_id: str,
+    ) -> ProposalPreparation:
+        before = self.proposal_store.current_for_conversation(conversation_id)
+        result = (
+            self._pending_conflict()
+            if before is not None
+            else self._propose_commitment(subject, conversation_id, project_id)
+        )
+        return self._resolved_preparation(
+            result,
+            conversation_id=conversation_id,
+            before=before,
+            application_operation="home.commitments.create",
+            expected_record_type="commitment",
+            expected_proposal_operations={"create"},
+        )
+
+    def prepare_commitment_completion_from_resolved_intent(
+        self,
+        *,
+        target: str,
+        conversation_id: str,
+    ) -> ProposalPreparation:
+        before = self.proposal_store.current_for_conversation(conversation_id)
+        result = (
+            self._pending_conflict()
+            if before is not None
+            else self._propose_completion(target, conversation_id)
+        )
+        return self._resolved_preparation(
+            result,
+            conversation_id=conversation_id,
+            before=before,
+            application_operation="home.commitments.complete",
+            expected_record_type="commitment",
+            expected_proposal_operations={MemoryMutationOperation.EDIT.value},
+        )
+
+    def prepare_memory_remember_from_resolved_intent(
+        self,
+        *,
+        content: str,
+        record_kind: str | None,
+        conversation_id: str,
+        project_id: str,
+    ) -> ProposalPreparation:
+        before = self.proposal_store.current_for_conversation(conversation_id)
+        if before is not None:
+            result = self._pending_conflict()
+        else:
+            body = content.strip().rstrip(".")
+            if not body:
+                result = MemoryIntentResult(
+                    handled=True,
+                    response="Что именно сохранить в памяти?",
+                )
+            else:
+                record_type = self._record_type(record_kind)
+                record = self._make_record(record_type, body, project_id)
+                proposal = self.proposal_store.create(MemoryProposal(
+                    id=str(uuid4()),
+                    conversation_id=conversation_id,
+                    record_type=record_type,
+                    record_payload=record.model_dump(mode="json"),
+                    created_at=self._now(),
+                    status=ProposalStatus.PENDING,
+                ))
+                result = MemoryIntentResult(
+                    handled=True,
+                    response=self._proposal_text(proposal, record),
+                )
+        return self._resolved_preparation(
+            result,
+            conversation_id=conversation_id,
+            before=before,
+            application_operation="home.memory.remember",
+            expected_record_type=None,
+            expected_proposal_operations={"create"},
+        )
+
+    def prepare_memory_forget_from_resolved_intent(
+        self,
+        *,
+        target: str,
+        conversation_id: str,
+        project_id: str,
+    ) -> ProposalPreparation:
+        before = self.proposal_store.current_for_conversation(conversation_id)
+        result = (
+            self._pending_conflict()
+            if before is not None
+            else self._propose_human_remove(
+                target,
+                conversation_id=conversation_id,
+                project_id=project_id,
+            )
+        )
+        return self._resolved_preparation(
+            result,
+            conversation_id=conversation_id,
+            before=before,
+            application_operation="home.memory.forget",
+            expected_record_type=None,
+            expected_proposal_operations={
+                MemoryMutationOperation.FORGET.value,
+                "continuity_update",
+            },
+        )
+
+    def prepare_continuity_open_from_resolved_intent(
+        self,
+        *,
+        topic: str,
+        conversation_id: str,
+    ) -> ProposalPreparation:
+        before = self.proposal_store.current_for_conversation(conversation_id)
+        result = (
+            self._pending_conflict()
+            if before is not None
+            else self._propose_open_thread(topic, conversation_id)
+        )
+        return self._resolved_preparation(
+            result,
+            conversation_id=conversation_id,
+            before=before,
+            application_operation="home.continuity.open",
+            expected_record_type="continuity_state",
+            expected_proposal_operations={"continuity_create", "continuity_update"},
+        )
+
+    def prepare_continuity_resolve_from_resolved_intent(
+        self,
+        *,
+        target: str,
+        conversation_id: str,
+    ) -> ProposalPreparation:
+        before = self.proposal_store.current_for_conversation(conversation_id)
+        result = (
+            self._pending_conflict()
+            if before is not None
+            else self._propose_resolve_thread(target, conversation_id)
+        )
+        return self._resolved_preparation(
+            result,
+            conversation_id=conversation_id,
+            before=before,
+            application_operation="home.continuity.resolve",
+            expected_record_type="continuity_state",
+            expected_proposal_operations={"continuity_update"},
+        )
+
+    def _resolved_preparation(
+        self,
+        result: MemoryIntentResult,
+        *,
+        conversation_id: str,
+        before: MemoryProposal | None,
+        application_operation: str,
+        expected_record_type: MemoryRecordType | None,
+        expected_proposal_operations: set[str],
+    ) -> ProposalPreparation:
+        """Prove that a resolved mutation produced one fresh durable proposal."""
+
+        after = self.proposal_store.current_for_conversation(conversation_id)
+        created = (
+            result.handled
+            and result.response is not None
+            and before is None
+            and after is not None
+            and after.status is ProposalStatus.PENDING
+            and after.operation in expected_proposal_operations
+            and (
+                expected_record_type is None
+                or after.record_type == expected_record_type
+            )
+        )
+        return ProposalPreparation(
+            response=(
+                result.response
+                or "Не смогла безопасно подготовить изменение. Ничего не меняю."
+            ),
+            status=(
+                ProposalPreparationStatus.PENDING_CONFIRMATION
+                if created
+                else ProposalPreparationStatus.NO_ACTION
+            ),
+            application_operation=(application_operation if created else None),
         )
 
     @staticmethod
@@ -1473,6 +1739,43 @@ class MemoryIntentHandler:
             conversation_id=conversation_id,
             project_id=project_id,
             explicit_reminder=True,
+        )
+
+    def prepare_timed_commitment_from_resolved_intent(
+        self,
+        **kwargs,
+    ) -> ProposalPreparation:
+        """Report whether the existing commitment owner made a real proposal."""
+
+        conversation_id = kwargs.get("conversation_id")
+        before = (
+            None
+            if not isinstance(conversation_id, str)
+            else self.proposal_store.current_for_conversation(conversation_id)
+        )
+        result = self.propose_timed_commitment_from_resolved_intent(**kwargs)
+        after = (
+            None
+            if not isinstance(conversation_id, str)
+            else self.proposal_store.current_for_conversation(conversation_id)
+        )
+        created = (
+            result.handled
+            and result.response is not None
+            and before is None
+            and after is not None
+            and after.status is ProposalStatus.PENDING
+            and after.record_type == "commitment"
+            and after.operation == "create"
+        )
+        return ProposalPreparation(
+            response=result.response or "Не смогла безопасно подготовить напоминание. Ничего не сохраняю.",
+            status=(
+                ProposalPreparationStatus.PENDING_CONFIRMATION
+                if created
+                else ProposalPreparationStatus.NO_ACTION
+            ),
+            application_operation="commitment_create" if created else None,
         )
 
     def _propose_commitment_with_due(

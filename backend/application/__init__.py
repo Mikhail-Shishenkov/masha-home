@@ -1,7 +1,10 @@
 """Public local application boundary for future Masha Home user interfaces."""
 
-from .application import MashaApplication
-from .composition import build_masha_application
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .application import MashaApplication
+
 from .home_snapshot import HomeSnapshotView
 from .contracts import (
     AgentRunListView,
@@ -71,6 +74,28 @@ from .human_information import (
     HumanTimePreset,
     RecallMode,
 )
+
+
+def __getattr__(name: str):
+    """Load composition-heavy public exports only when they are requested.
+
+    Conversation/domain modules import lightweight application contracts. An
+    eager package-level composition import would pull those conversation
+    modules back in while they are still initializing and make their public
+    APIs depend on import order.
+    """
+
+    if name == "MashaApplication":
+        from .application import MashaApplication
+
+        globals()[name] = MashaApplication
+        return MashaApplication
+    if name == "build_masha_application":
+        from .composition import build_masha_application
+
+        globals()[name] = build_masha_application
+        return build_masha_application
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = (
     "AgentRunListView",

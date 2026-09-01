@@ -21,10 +21,13 @@ from backend.document_read import DocumentReadReceipt
 from .conversation_models import ConversationMessageOrigin, ConversationRole
 from .context_compiler import ConversationContextCompiler
 from .conversation_store import ConversationStore
-from .memory_intent import MemoryIntentHandler
+from .memory_intent import MemoryIntentHandler, ProposalStatus
 from .reflection_intent import ReflectionIntentHandler
 from .response_contract import render_model_response
+from .semantic_resolver import SemanticResolverFailure
 from .temporal_consistency import enforce_temporal_consistency
+from .turn_context import TurnContextEnvelopeBuilder
+from backend.runtime.action_contracts import ProposalPreparationStatus
 
 
 class ConversationUnavailableError(RuntimeError):
@@ -58,6 +61,19 @@ MAIL_INFORMATION_CONTRACT = (
 )
 
 LOCAL_DOCUMENT_INFORMATION_CONTRACT = DOCUMENT_INFORMATION_CONTRACT
+
+_SEMANTIC_INFRASTRUCTURE_FAILURES = frozenset(
+    failure.value for failure in SemanticResolverFailure
+)
+
+_PROPOSAL_CONFIRMATION_SERVICE_BY_OPERATION = {
+    "google_calendar_create": "google_calendar_create_service",
+    "google_calendar_update": "google_calendar_update_service",
+    "google_calendar_delete": "google_calendar_delete_service",
+    "google_drive_document_create": "google_drive_document_create_service",
+    "yandex_mail_delete": "yandex_mail_mutation_service",
+    "yandex_mail_move": "yandex_mail_mutation_service",
+}
 
 
 _LENS_SPACE = re.compile(r"\s+")
@@ -250,11 +266,16 @@ class ConversationService:
         google_calendar_service=None,
         google_calendar_create_service=None,
         google_calendar_update_service=None,
+        google_calendar_delete_service=None,
         google_drive_document_create_service=None,
         google_drive_service=None,
         yandex_mail_service=None,
+        yandex_mail_mutation_service=None,
         yandex_disk_service=None,
         home_capability_provider=None,
+        home_capability_catalog_provider=None,
+        presented_context_provider=None,
+        turn_context_builder: TurnContextEnvelopeBuilder | None = None,
         dialogue_core=None,
         natural_language_coordinator=None,
         resolved_capability_adapters=None,
@@ -280,11 +301,16 @@ class ConversationService:
         self.google_calendar_service = google_calendar_service
         self.google_calendar_create_service = google_calendar_create_service
         self.google_calendar_update_service = google_calendar_update_service
+        self.google_calendar_delete_service = google_calendar_delete_service
         self.google_drive_document_create_service = google_drive_document_create_service
         self.google_drive_service = google_drive_service
         self.yandex_mail_service = yandex_mail_service
+        self.yandex_mail_mutation_service = yandex_mail_mutation_service
         self.yandex_disk_service = yandex_disk_service
         self.home_capability_provider = home_capability_provider
+        self.home_capability_catalog_provider = home_capability_catalog_provider
+        self.presented_context_provider = presented_context_provider
+        self.turn_context_builder = turn_context_builder or TurnContextEnvelopeBuilder()
         if dialogue_core is not None and natural_language_coordinator is not None:
             raise ValueError("dialogue core has multiple configured owners")
         self._dialogue_core = dialogue_core or natural_language_coordinator
@@ -316,6 +342,8 @@ class ConversationService:
         self.last_dialogue_decision = None
         self.last_dialogue_handoff_type = None
         self.last_response_projection_state = "none"
+        legacy_fallback_allowed = self.dialogue_core is None
+        resolved_read_result = None
         conversation = self.history.create() if conversation_id is None else self.history.get(conversation_id)
         last_interaction_at = self.history.last_interaction_at(conversation.id)
         temporal_context = self.temporal_engine.context(
@@ -323,36 +351,31 @@ class ConversationService:
             user_message=user_message,
         )
         user_history_message = self.history.append(conversation.id, ConversationRole.USER, user_message)
+        context_lens: ContextLens | None = None
+        recent_user_messages: tuple[str, ...] = ()
         if self.proactive_interactions is not None:
             self.proactive_interactions.resolve_check_ins_for_user_message(user_history_message.created_at)
 
-        # Confirmations are application-owned.  Calendar creation has its own
-        # write boundary and must resolve before the generic memory handler
-        # sees a plain "да".
-        if document_receipt is None and self.google_calendar_create_service is not None:
-            calendar_confirmation = self.google_calendar_create_service.resolve(
-                user_message, conversation_id=conversation.id,
+        # A proposal's application-owned operation selects exactly one
+        # confirmation owner.  Connector services and Home memory therefore
+        # never compete for the same plain human "да" / "не сейчас".
+        if document_receipt is None:
+            confirmation = self._resolve_pending_proposal_message(
+                user_message,
+                conversation_id=conversation.id,
+                project_id=project_id,
+                active_continuity_thread_id=active_continuity_thread_id,
+                conversation_first=home_moment == "special_evening",
             )
-            if calendar_confirmation is not None:
+            if confirmation is not None:
                 self._retire_v2_pending_for_domain_proposal(conversation.id)
-                self.history.append(conversation.id, ConversationRole.ASSISTANT, calendar_confirmation, origin=ConversationMessageOrigin.APPLICATION)
-                return conversation.id, calendar_confirmation
-        if document_receipt is None and self.google_calendar_update_service is not None:
-            calendar_confirmation = self.google_calendar_update_service.resolve(
-                user_message, conversation_id=conversation.id,
-            )
-            if calendar_confirmation is not None:
-                self._retire_v2_pending_for_domain_proposal(conversation.id)
-                self.history.append(conversation.id, ConversationRole.ASSISTANT, calendar_confirmation, origin=ConversationMessageOrigin.APPLICATION)
-                return conversation.id, calendar_confirmation
-        if document_receipt is None and self.google_drive_document_create_service is not None:
-            document_confirmation = self.google_drive_document_create_service.resolve(
-                user_message, conversation_id=conversation.id,
-            )
-            if document_confirmation is not None:
-                self._retire_v2_pending_for_domain_proposal(conversation.id)
-                self.history.append(conversation.id, ConversationRole.ASSISTANT, document_confirmation, origin=ConversationMessageOrigin.APPLICATION)
-                return conversation.id, document_confirmation
+                self.history.append(
+                    conversation.id,
+                    ConversationRole.ASSISTANT,
+                    confirmation,
+                    origin=ConversationMessageOrigin.APPLICATION,
+                )
+                return conversation.id, confirmation
 
         # An explicit Drive/Docs creation command owns its complete source
         # material.  In particular, dates or task-like words inside the text
@@ -361,12 +384,43 @@ class ConversationService:
         # calendar parsing, which intentionally inspect natural language more
         # broadly.
         if document_receipt is None and self.google_drive_document_create_service is not None:
-            document_create_response = self.google_drive_document_create_service.propose(
+            preparation = self.google_drive_document_create_service.prepare(
                 user_message, conversation_id=conversation.id,
                 recent_messages=tuple(item.content for item in self.history.messages(conversation.id, limit=self.history_limit) if item.id != user_history_message.id),
                 now_local=temporal_context.current_local_time,
             )
-            if document_create_response is not None:
+            if preparation is not None:
+                document_create_response = preparation.response
+                self.last_response_projection_state = "failed"
+                if preparation.status is ProposalPreparationStatus.PENDING_CONFIRMATION:
+                    proposal = self.google_drive_document_create_service.proposal_store.current_for_conversation(
+                        conversation.id,
+                    )
+                    operation_id = (
+                        None
+                        if proposal is None
+                        else proposal.record_payload.get("operation_id")
+                    )
+                    receipt = (
+                        None
+                        if not isinstance(operation_id, str)
+                        else self.google_drive_document_create_service.writer.receipt_store.get(
+                            operation_id,
+                        )
+                    )
+                    if (
+                        proposal is None
+                        or proposal.status is not ProposalStatus.PENDING
+                        or proposal.operation != "google_drive_document_create"
+                        or receipt is None
+                        or receipt.status != "proposed"
+                    ):
+                        document_create_response = (
+                            "Не смогла безопасно подготовить создание документа. "
+                            "Ничего в Drive не создаю."
+                        )
+                    else:
+                        self.last_response_projection_state = "waiting_confirmation"
                 self._retire_v2_pending_for_domain_proposal(conversation.id)
                 self.history.append(conversation.id, ConversationRole.ASSISTANT, document_create_response, origin=ConversationMessageOrigin.APPLICATION)
                 return conversation.id, document_create_response
@@ -388,29 +442,107 @@ class ConversationService:
             and not pending_mutation
             and self.dialogue_core is not None
         ):
+            context_lens, recent_user_messages = self._load_turn_memory(
+                user_message=user_message,
+                project_id=project_id,
+                conversation_id=conversation.id,
+                current_message_id=user_history_message.id,
+            )
+            recent_turns = tuple(
+                message
+                for message in self.history.messages(
+                    conversation.id, limit=self.history_limit,
+                )
+                if message.id != user_history_message.id
+            )
+            try:
+                capability_catalog_snapshot = (
+                    None
+                    if self.home_capability_catalog_provider is None
+                    else self.home_capability_catalog_provider()
+                )
+            except Exception:
+                capability_catalog_snapshot = None
+            turn_context = self.turn_context_builder.build(
+                temporal_context=temporal_context,
+                recent_messages=recent_turns,
+                active_continuity=self._active_continuity_context(
+                    active_continuity_thread_id,
+                ),
+                memory_context=tuple(
+                    self.context_compiler.memory_record(item)
+                    for item in self.working_memory.get_all()
+                ),
+                capability_snapshot=capability_catalog_snapshot,
+                presented_context=(
+                    ()
+                    if self.presented_context_provider is None
+                    else self.presented_context_provider(conversation.id)
+                ),
+            )
             self.dialogue_core.bind_temporal_engine(self.temporal_engine)
             coordination = self.dialogue_core.coordinate(
                 user_message,
                 conversation_id=conversation.id,
+                turn_context=turn_context,
             )
             self.last_dialogue_decision = coordination.diagnostic
+            legacy_fallback_allowed = (
+                coordination.status.value == "pass_through"
+                and coordination.diagnostic.semantic_rejection
+                in _SEMANTIC_INFRASTRUCTURE_FAILURES
+            )
             v2_response = coordination.response
             if coordination.status.value == "resolved_handoff":
                 self.last_dialogue_handoff_type = coordination.handoff.operation_id
                 try:
                     # Lazy import avoids making the foundational conversation
                     # module depend on application package initialization.
-                    from .resolution_coordinator import DomainProposalContext
+                    from .resolution_coordinator import (
+                        DomainProposalContext,
+                        DomainReadResult,
+                    )
 
-                    proposal = self.resolved_capability_adapters.propose(
+                    application_result = self.resolved_capability_adapters.resolve(
                         coordination.handoff,
                         DomainProposalContext(
                             project_id=project_id,
                             now_local=temporal_context.current_local_time,
+                            origin_message_id=user_history_message.id,
+                            recent_messages=tuple(
+                                item.content for item in recent_turns[-8:]
+                            ),
+                            conversation_message_ids=tuple(
+                                item.id
+                                for item in self.history.messages(
+                                    conversation.id, limit=None,
+                                )
+                            ),
+                            active_continuity_thread_id=active_continuity_thread_id,
                         ),
                     )
-                    v2_response = proposal.response
-                    self.last_response_projection_state = proposal.projection_state
+                    if isinstance(application_result, DomainReadResult):
+                        resolved_read_result = application_result
+                        v2_response = application_result.response
+                        if application_result.external_observation_ids:
+                            observations = tuple(
+                                item
+                                for observation_id in application_result.external_observation_ids
+                                if (
+                                    item := self.external_observation_service.store.get(
+                                        observation_id,
+                                    )
+                                ) is not None
+                            )
+                            self.last_external_observations = observations
+                            self.last_external_observation = (
+                                observations[-1] if observations else None
+                            )
+                    else:
+                        v2_response = application_result.response
+                    self.last_response_projection_state = (
+                        application_result.projection_state
+                    )
                 except (AttributeError, RuntimeError):
                     self.last_response_projection_state = "failed"
                     v2_response = (
@@ -422,14 +554,31 @@ class ConversationService:
             elif coordination.status.value == "unsupported_action":
                 self.last_response_projection_state = "unsupported"
             self._remember_dialogue_projection(conversation.id)
-            if coordination.status.value != "pass_through":
+            if (
+                coordination.status.value
+                != "pass_through"
+                and not (
+                    resolved_read_result is not None
+                    and resolved_read_result.delivery in {
+                        "model_evidence", "conversation_fallback",
+                    }
+                )
+            ):
                 assert v2_response is not None
-                self.history.append(
+                assistant = self.history.append(
                     conversation.id,
                     ConversationRole.ASSISTANT,
                     v2_response,
                     origin=ConversationMessageOrigin.APPLICATION,
                 )
+                if (
+                    resolved_read_result is not None
+                    and resolved_read_result.application_attachment_id is not None
+                ):
+                    self.resolved_capability_adapters.attach_assistant_message(
+                        resolved_read_result,
+                        assistant.id,
+                    )
                 return conversation.id, v2_response
 
         readout = temporal_readout(user_message, temporal_context)
@@ -464,7 +613,11 @@ class ConversationService:
                 return conversation.id, reflection_intent.response
 
         calendar_outcome = None
-        if document_receipt is None and self.google_calendar_update_service is not None:
+        if (
+            document_receipt is None
+            and self.google_calendar_update_service is not None
+            and legacy_fallback_allowed
+        ):
             calendar_update_response = self.google_calendar_update_service.propose(
                 user_message, conversation_id=conversation.id,
                 now_local=temporal_context.current_local_time,
@@ -476,7 +629,7 @@ class ConversationService:
         if (
             document_receipt is None
             and self.google_calendar_create_service is not None
-            and self.dialogue_core is None
+            and legacy_fallback_allowed
         ):
             calendar_create_response = self.google_calendar_create_service.propose(
                 user_message, conversation_id=conversation.id,
@@ -486,7 +639,12 @@ class ConversationService:
                 self._retire_v2_pending_for_domain_proposal(conversation.id)
                 self.history.append(conversation.id, ConversationRole.ASSISTANT, calendar_create_response, origin=ConversationMessageOrigin.APPLICATION)
                 return conversation.id, calendar_create_response
-        if document_receipt is None and self.google_calendar_service is not None:
+        if (
+            resolved_read_result is None
+            and document_receipt is None
+            and self.google_calendar_service is not None
+            and legacy_fallback_allowed
+        ):
             calendar_outcome = self.google_calendar_service.observe(
                 user_message, now_local=temporal_context.current_local_time,
             )
@@ -497,7 +655,12 @@ class ConversationService:
 
         drive_outcome = None
         resolved_drive_document_request = None
-        if document_receipt is None and self.google_drive_service is not None:
+        if (
+            resolved_read_result is None
+            and document_receipt is None
+            and self.google_drive_service is not None
+            and legacy_fallback_allowed
+        ):
             drive_outcome = self.google_drive_service.observe(user_message, conversation_id=conversation.id)
             if drive_outcome is not None:
                 if drive_outcome.status != "read_completed":
@@ -513,7 +676,12 @@ class ConversationService:
 
         mail_outcome = None
         resolved_mail_request = None
-        if document_receipt is None and self.yandex_mail_service is not None:
+        if (
+            resolved_read_result is None
+            and document_receipt is None
+            and self.yandex_mail_service is not None
+            and legacy_fallback_allowed
+        ):
             mail_outcome = self.yandex_mail_service.observe(user_message, conversation_id=conversation.id)
             if mail_outcome is not None:
                 if mail_outcome.status not in {"read_completed", "important_completed"}:
@@ -524,7 +692,12 @@ class ConversationService:
 
         disk_outcome = None
         resolved_disk_document_request = None
-        if document_receipt is None and self.yandex_disk_service is not None:
+        if (
+            resolved_read_result is None
+            and document_receipt is None
+            and self.yandex_disk_service is not None
+            and legacy_fallback_allowed
+        ):
             disk_outcome = self.yandex_disk_service.observe(user_message, conversation_id=conversation.id)
             if disk_outcome is not None:
                 if disk_outcome.status != "read_completed":
@@ -539,7 +712,12 @@ class ConversationService:
                     return conversation.id, response
 
         external_observations = ()
-        if document_receipt is None and self.external_observation_service is not None:
+        if (
+            resolved_read_result is None
+            and document_receipt is None
+            and self.external_observation_service is not None
+            and legacy_fallback_allowed
+        ):
             conversation_messages = self.history.messages(conversation.id, limit=self.history_limit)
             conversation_message_ids = tuple(
                 item.id for item in self.history.messages(conversation.id, limit=None)
@@ -593,6 +771,7 @@ class ConversationService:
             and document_receipt is None
             and allow_capability_routing
             and self.memory_intent_handler is not None
+            and legacy_fallback_allowed
         ):
             intent = self.memory_intent_handler.handle(
                 user_message,
@@ -629,39 +808,13 @@ class ConversationService:
         if self.memory_intent_handler is not None:
             self.memory_intent_handler.discard_presented_entity_set(conversation.id)
 
-        context_lens = select_context_lens(user_message)
-        recent_user_messages = tuple(
-            message.content
-            for message in self.history.messages(conversation.id, limit=self.history_limit)
-            if message.role is ConversationRole.USER and message.id != user_history_message.id
-        )
-        memories = self.memory_retriever.retrieve(
-            MemoryRetrievalRequest(
-                query=contextualized_retrieval_query(
-                    user_message,
-                    context_lens,
-                    recent_user_messages,
-                ),
+        if context_lens is None:
+            context_lens, recent_user_messages = self._load_turn_memory(
+                user_message=user_message,
                 project_id=project_id,
-                limit=self.memory_limit,
-                lens=context_lens,
+                conversation_id=conversation.id,
+                current_message_id=user_history_message.id,
             )
-        )
-        if self.human_information is not None:
-            recall = self.human_information.recall_for_conversation(
-                query=user_message,
-                project_id=project_id,
-                recent_user_messages=recent_user_messages,
-                current_records=memories,
-                context_lens=context_lens.value,
-                limit=self.memory_limit,
-                force_current=context_lens is not ContextLens.GENERAL,
-            )
-            self.last_recall_result = recall
-            self.working_memory.load(recall.as_working_memory())
-        else:
-            self.last_recall_result = None
-            self.working_memory.load(memories)
         active_continuity = self._active_continuity_context(
             active_continuity_thread_id
         )
@@ -688,7 +841,11 @@ class ConversationService:
             row
             for observation in external_observations
             for row in self.external_observation_service.model_context(observation)
-        ] + local_document_information + ([] if calendar_outcome is None else calendar_outcome.model_context()) + (
+        ] + local_document_information + (
+            []
+            if resolved_read_result is None
+            else list(resolved_read_result.external_information)
+        ) + ([] if calendar_outcome is None else calendar_outcome.model_context()) + (
             [] if mail_outcome is None else (
                 [mail_outcome.content.model_value()] if mail_outcome.content is not None else (
                     [{"kind": "mail_summaries", "messages": [item.model_value() for item in mail_outcome.messages]}]
@@ -704,6 +861,14 @@ class ConversationService:
             )
         if resolved_mail_request is not None:
             model_messages = self._replace_current_model_request(model_messages, resolved_mail_request.model_message())
+        if (
+            resolved_read_result is not None
+            and resolved_read_result.model_request_override is not None
+        ):
+            model_messages = self._replace_current_model_request(
+                model_messages,
+                resolved_read_result.model_request_override,
+            )
         if resolved_disk_document_request is not None:
             model_messages = self._replace_current_model_request(model_messages, resolved_disk_document_request.model_message())
         try:
@@ -716,6 +881,40 @@ class ConversationService:
             # Capability projection is descriptive only and must never break a
             # healthy conversation if local config metadata is malformed.
             home_capabilities = {}
+        external_information_contract = None
+        if external_information:
+            if resolved_read_result is not None:
+                external_information_contract = (
+                    MAIL_INFORMATION_CONTRACT
+                    if resolved_read_result.information_contract == "mail"
+                    else (
+                        CALENDAR_INFORMATION_CONTRACT
+                        if resolved_read_result.information_contract == "calendar"
+                        else (
+                            EXTERNAL_INFORMATION_CONTRACT
+                            if resolved_read_result.information_contract == "external"
+                            else RESOLVED_DRIVE_DOCUMENT_INFORMATION_CONTRACT
+                        )
+                    )
+                )
+            elif mail_outcome is not None and (
+                mail_outcome.content is not None
+                or mail_outcome.status == "important_completed"
+            ):
+                external_information_contract = MAIL_INFORMATION_CONTRACT
+            elif calendar_outcome is not None:
+                external_information_contract = CALENDAR_INFORMATION_CONTRACT
+            elif document_receipt is None:
+                external_information_contract = EXTERNAL_INFORMATION_CONTRACT
+            elif (
+                resolved_drive_document_request is not None
+                or resolved_disk_document_request is not None
+            ):
+                external_information_contract = (
+                    RESOLVED_DRIVE_DOCUMENT_INFORMATION_CONTRACT
+                )
+            else:
+                external_information_contract = DOCUMENT_INFORMATION_CONTRACT
         request = self.context_compiler.compile(
             messages=model_messages,
             identity_context=self.identity_kernel.build_context(),
@@ -731,17 +930,7 @@ class ConversationService:
             home_scene_continuity=home_scene_continuity,
             active_continuity=active_continuity,
             external_information=None if not external_information else external_information,
-            external_information_contract=(
-                None if not external_information else (
-                    MAIL_INFORMATION_CONTRACT if mail_outcome is not None and (mail_outcome.content is not None or mail_outcome.status == "important_completed") else (CALENDAR_INFORMATION_CONTRACT if calendar_outcome is not None else (
-                        EXTERNAL_INFORMATION_CONTRACT if document_receipt is None else (
-                            RESOLVED_DRIVE_DOCUMENT_INFORMATION_CONTRACT
-                            if resolved_drive_document_request is not None or resolved_disk_document_request is not None
-                            else DOCUMENT_INFORMATION_CONTRACT
-                        )
-                    ))
-                )
-            ),
+            external_information_contract=external_information_contract,
             home_capabilities=home_capabilities,
         )
         try:
@@ -756,11 +945,14 @@ class ConversationService:
             user_message=user_message,
             context=temporal_context,
         )
+        completed_observations = (
+            self.last_external_observations or external_observations
+        )
         completed_page_read = any(
             item.request.kind.value == "web_fetch"
             and item.status is ObservationStatus.COMPLETED
             and item.fetched_page is not None
-            for item in external_observations
+            for item in completed_observations
         )
         if not completed_page_read:
             grounded_response = remove_unsupported_fetch_claim(grounded_response)
@@ -768,11 +960,14 @@ class ConversationService:
             item.status is ObservationStatus.COMPLETED
             and item.document_read_receipt_id is not None
             and self.external_observation_service.document_receipt(item) is not None
-            for item in external_observations
+            for item in completed_observations
         )
         if not completed_document_read:
             grounded_response = remove_unsupported_document_claim(grounded_response)
-        if external_observations:
+        if external_observations or (
+            resolved_read_result is not None
+            and resolved_read_result.completed_capability == "web"
+        ):
             grounded_response = (
                 remove_model_authored_urls(grounded_response)
                 or "Проверила источники, но не смогла уверенно сформулировать ответ."
@@ -783,15 +978,30 @@ class ConversationService:
                 item.request.kind.value == "web_search"
                 and item.status is ObservationStatus.COMPLETED
                 for item in external_observations
+            ) or (
+                resolved_read_result is not None
+                and resolved_read_result.completed_capability == "web"
             ),
             completed_mail=mail_outcome is not None and mail_outcome.status in {
                 "read_completed", "important_completed",
-            },
-            completed_calendar=calendar_outcome is not None and calendar_outcome.status == "completed",
+            } or (
+                resolved_read_result is not None
+                and resolved_read_result.completed_capability == "mail"
+            ),
+            completed_calendar=(
+                calendar_outcome is not None
+                and calendar_outcome.status == "completed"
+            ) or (
+                resolved_read_result is not None
+                and resolved_read_result.completed_capability == "calendar"
+            ),
             completed_files=(
                 drive_outcome is not None and drive_outcome.status == "read_completed"
             ) or (
                 disk_outcome is not None and disk_outcome.status == "read_completed"
+            ) or (
+                resolved_read_result is not None
+                and resolved_read_result.completed_capability == "files"
             ),
         )
         grounded_response = stabilize_identity_and_capability_truth(
@@ -832,6 +1042,14 @@ class ConversationService:
             and hasattr(self.yandex_disk_service, "attach_assistant_message")
         ):
             self.yandex_disk_service.attach_assistant_message(disk_outcome, assistant_history_message.id)
+        if (
+            resolved_read_result is not None
+            and resolved_read_result.application_attachment_id is not None
+        ):
+            self.resolved_capability_adapters.attach_assistant_message(
+                resolved_read_result,
+                assistant_history_message.id,
+            )
         if external_observations:
             attached = tuple(
                 self.external_observation_service.attach_assistant_message(
@@ -846,6 +1064,7 @@ class ConversationService:
             and calendar_outcome is None
             and mail_outcome is None
             and disk_outcome is None
+            and resolved_read_result is None
             and document_receipt is None
             and allow_capability_routing
             and self.passive_memory_service is not None
@@ -969,7 +1188,136 @@ class ConversationService:
             "topic": thread.topic,
         }
 
-    def resolve_memory_proposal(
+    def _load_turn_memory(
+        self,
+        *,
+        user_message: str,
+        project_id: str,
+        conversation_id: str,
+        current_message_id: str,
+    ) -> tuple[ContextLens, tuple[str, ...]]:
+        """Load one bounded recall result for both dialogue and response stages."""
+
+        context_lens = select_context_lens(user_message)
+        recent_user_messages = tuple(
+            message.content
+            for message in self.history.messages(
+                conversation_id, limit=self.history_limit,
+            )
+            if (
+                message.role is ConversationRole.USER
+                and message.id != current_message_id
+            )
+        )
+        memories = self.memory_retriever.retrieve(MemoryRetrievalRequest(
+            query=contextualized_retrieval_query(
+                user_message,
+                context_lens,
+                recent_user_messages,
+            ),
+            project_id=project_id,
+            limit=self.memory_limit,
+            lens=context_lens,
+        ))
+        if self.human_information is None:
+            self.last_recall_result = None
+            self.working_memory.load(memories)
+            return context_lens, recent_user_messages
+        recall = self.human_information.recall_for_conversation(
+            query=user_message,
+            project_id=project_id,
+            recent_user_messages=recent_user_messages,
+            current_records=memories,
+            context_lens=context_lens.value,
+            limit=self.memory_limit,
+            force_current=context_lens is not ContextLens.GENERAL,
+        )
+        self.last_recall_result = recall
+        self.working_memory.load(recall.as_working_memory())
+        return context_lens, recent_user_messages
+
+    def _resolve_pending_proposal_message(
+        self,
+        message: str,
+        *,
+        conversation_id: str,
+        project_id: str,
+        active_continuity_thread_id: str | None = None,
+        conversation_first: bool = False,
+    ) -> str | None:
+        handler = self.memory_intent_handler
+        if handler is None:
+            return None
+        proposal = handler.proposal_store.current_for_conversation(conversation_id)
+        if proposal is None:
+            return None
+        return self._resolve_proposal_with_owner(
+            proposal,
+            message,
+            project_id=project_id,
+            active_continuity_thread_id=active_continuity_thread_id,
+            conversation_first=conversation_first,
+        )
+
+    def _resolve_proposal_with_owner(
+        self,
+        proposal,
+        message: str,
+        *,
+        project_id: str,
+        active_continuity_thread_id: str | None = None,
+        conversation_first: bool = False,
+        require_owner: bool = False,
+    ) -> str | None:
+        """Dispatch one proposal only to the owner named by its operation."""
+
+        service_attribute = _PROPOSAL_CONFIRMATION_SERVICE_BY_OPERATION.get(
+            proposal.operation
+        )
+        if service_attribute is not None:
+            service = getattr(self, service_attribute)
+            if service is None:
+                return (
+                    "Не смогла безопасно продолжить это подтверждение. "
+                    "Ничего не меняю."
+                    if require_owner
+                    else None
+                )
+            response = service.resolve(
+                message,
+                conversation_id=proposal.conversation_id,
+                proposal_id=proposal.id,
+            )
+            if response is not None or not require_owner:
+                return response
+            return "Это предложение уже не ожидает подтверждения. Ничего не меняю."
+
+        handler = self.memory_intent_handler
+        if handler is not None and handler.owns_proposal(proposal):
+            result = handler.handle(
+                message,
+                conversation_id=proposal.conversation_id,
+                project_id=project_id,
+                active_continuity_thread_id=active_continuity_thread_id,
+                conversation_messages=self.history.messages(
+                    proposal.conversation_id,
+                    limit=self.history_limit,
+                ),
+                conversation_first=conversation_first,
+            )
+            if result.handled:
+                return result.response
+            if not require_owner:
+                return None
+
+        return (
+            "Не смогла безопасно определить владельца этого подтверждения. "
+            "Ничего не меняю."
+            if require_owner
+            else None
+        )
+
+    def resolve_proposal_confirmation(
         self,
         *,
         conversation_id: str,
@@ -984,30 +1332,17 @@ class ConversationService:
         user_text = "Подтверждаю." if confirm else "Не сейчас."
         command = f"{'да' if confirm else 'нет'} {proposal_id}"
         self.history.append(conversation_id, ConversationRole.USER, user_text)
-        if self.google_calendar_create_service is not None:
-            response = self.google_calendar_create_service.resolve(
-                command, conversation_id=conversation_id, proposal_id=proposal_id,
-            )
+        proposal = self.memory_intent_handler.proposal_store.get(proposal_id)
+        if proposal is None or proposal.conversation_id != conversation_id:
+            response = "Не вижу такого предложения в этом разговоре. Ничего не меняю."
         else:
-            response = None
-        if response is None:
-            if self.google_calendar_update_service is not None:
-                response = self.google_calendar_update_service.resolve(
-                    command, conversation_id=conversation_id, proposal_id=proposal_id,
-                )
-        if response is None and self.google_drive_document_create_service is not None:
-            response = self.google_drive_document_create_service.resolve(
-                command, conversation_id=conversation_id, proposal_id=proposal_id,
-            )
-        if response is None:
-            result = self.memory_intent_handler.handle(
+            response = self._resolve_proposal_with_owner(
+                proposal,
                 command,
-                conversation_id=conversation_id,
                 project_id=project_id,
+                require_owner=True,
             )
-            if not result.handled or result.response is None:
-                raise RuntimeError("proposal resolution was not handled")
-            response = result.response
+            assert response is not None
         assistant = self.history.append(
             conversation_id,
             ConversationRole.ASSISTANT,

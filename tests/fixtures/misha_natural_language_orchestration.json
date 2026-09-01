@@ -30,7 +30,7 @@
     },
     {
       "case_id": "calendar_missing_subject_clarification",
-      "initial": "Поставь завтра в 10 на час",
+      "initial": "Поставь в календарь завтра в 10 на час",
       "follow_up": null,
       "advance_minutes": 0,
       "expected_status": "clarification",
@@ -39,7 +39,7 @@
     },
     {
       "case_id": "calendar_missing_subject_handoff",
-      "initial": "Поставь завтра в 10 на час",
+      "initial": "Поставь в календарь завтра в 10 на час",
       "follow_up": "Занятие по AI",
       "advance_minutes": 0,
       "expected_status": "resolved_handoff",

@@ -15,7 +15,7 @@ from backend.connectors.google_calendar.config import (
     GoogleCalendarConfigStore,
     read_google_desktop_client_json,
 )
-from backend.connectors.google_calendar.intent import calendar_intent
+from backend.connectors.google_calendar.intent import calendar_intent, calendar_period_intent
 from backend.connectors.google_calendar.oauth import GoogleDesktopOAuthFlow, GoogleOAuthTokenError, OAuthTokens, _token_post, pkce_challenge, pkce_verifier
 from backend.connectors.google_calendar.reader import GoogleCalendarReader, GoogleCalendarUnavailable, GoogleTokenInvalidGrant, UrllibGoogleCalendarTransport
 from backend.connectors.google_calendar.service import GoogleCalendarConversationService
@@ -176,6 +176,50 @@ def test_cli_connect_uses_downloaded_client_json_and_persists_only_refs(tmp_path
     assert "CLIENT_SECRET_MUST_NOT_ESCAPE" not in saved
 
 
+def test_cli_read_reconnect_preserves_healthy_write_connection(tmp_path: Path, monkeypatch):
+    client_json = tmp_path / "desktop-client.json"
+    client_json.write_text(json.dumps({"installed": {
+        "client_id": "desktop-client-identifier",
+        "client_secret": "CLIENT_SECRET_MUST_NOT_ESCAPE",
+    }}), encoding="utf-8")
+    config_store = GoogleCalendarConfigStore(
+        tmp_path / "local-data/config/google-calendar.json"
+    )
+    existing = GoogleCalendarConfig(
+        client_id="desktop-client-identifier",
+        write_secret_ref=GOOGLE_CALENDAR_WRITE_SECRET_REF,
+        write_requested_scope=GOOGLE_CALENDAR_WRITE_SCOPE,
+    )
+    config_store.save(existing)
+    secrets = InMemorySecretStore()
+    secrets.put(existing.client_secret_ref, "CLIENT_SECRET_MUST_NOT_ESCAPE")
+    secrets.put(GOOGLE_CALENDAR_WRITE_SECRET_REF, "WRITE_REFRESH_MUST_NOT_ESCAPE")
+
+    class FakeOAuthFlow:
+        def __init__(self, **_kwargs):
+            pass
+
+        def authorize(self, config, *, client_secret, timeout_seconds=180.0):
+            assert config.write_secret_ref == GOOGLE_CALENDAR_WRITE_SECRET_REF
+            assert client_secret == "CLIENT_SECRET_MUST_NOT_ESCAPE"
+            return OAuthTokens(refresh_token="NEW_READ_REFRESH_MUST_NOT_ESCAPE")
+
+    monkeypatch.setattr(
+        google_calendar_cli, "WindowsCredentialManagerSecretStore", lambda: secrets
+    )
+    monkeypatch.setattr(google_calendar_cli, "GoogleDesktopOAuthFlow", FakeOAuthFlow)
+
+    assert google_calendar_cli.main([
+        "--project-root", str(tmp_path), "connect", "--client-json", str(client_json),
+    ]) == 0
+
+    saved = config_store.load()
+    assert saved.write_secret_ref == GOOGLE_CALENDAR_WRITE_SECRET_REF
+    assert saved.write_requested_scope == GOOGLE_CALENDAR_WRITE_SCOPE
+    assert secrets.get(GOOGLE_CALENDAR_WRITE_SECRET_REF) == "WRITE_REFRESH_MUST_NOT_ESCAPE"
+    assert secrets.get(saved.secret_ref) == "NEW_READ_REFRESH_MUST_NOT_ESCAPE"
+
+
 def test_oauth_token_error_is_controlled_and_never_contains_error_body(monkeypatch):
     response_body = b'{"error":"invalid_grant","error_description":"authorization-code-must-not-escape"}'
     error = HTTPError("https://oauth2.googleapis.com/token", 400, "Bad Request", hdrs=None, fp=io.BytesIO(response_body))
@@ -196,6 +240,10 @@ def test_calendar_reader_normalizes_timezones_all_day_and_pagination(tmp_path: P
     assert [event.title for event in outcome.events] == ["Созвон", "Вторая"]
     assert outcome.events[0].all_day is False and outcome.events[0].start.tzinfo is timezone.utc
     assert outcome.events[1].all_day is True and outcome.events[1].start.isoformat() == "2026-08-25"
+    model_event = outcome.events[0].model_value()
+    assert "event_id" not in model_event
+    assert "calendar_id" not in model_event
+    assert "one" not in json.dumps(outcome.model_context(), ensure_ascii=False)
     assert not any("hidden" in call[0] for call in transport.calls)
     token_body = next(call[3] for call in transport.calls if "oauth2.googleapis.com/token" in call[0])
     assert parse_qs(token_body.decode("ascii"))["client_secret"] == ["CLIENT_SECRET_MUST_NOT_ESCAPE"]
@@ -275,6 +323,9 @@ def test_conversation_calendar_intents_and_safe_model_context(tmp_path: Path):
     assert calendar_intent("какие планы на эту неделю?", now) is not None
     assert calendar_intent("когда следующая встреча?", now) is not None
     assert calendar_intent("свободен ли я сегодня вечером?", now) is not None
+    assert calendar_intent("Какие события есть в календаре?", now) is None
+    for period in ("сегодня", "завтра", "ближайшую неделю"):
+        assert calendar_period_intent(period, now) is not None
     outcome = service.observe("что у меня завтра?", now_local=now)
     serialized = json.dumps(outcome.model_context(), ensure_ascii=False)
     assert "REFRESH_TOKEN_MUST_NOT_ESCAPE" not in serialized

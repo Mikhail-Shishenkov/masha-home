@@ -19,6 +19,10 @@ from backend.llm.model_models import MessageRole, ModelCapabilities, ModelMessag
 from backend.llm.model_provider import ModelProviderUnavailableError
 from backend.llm.model_router import ModelCapabilityUnavailableError
 from backend.connectors.provider_language import normalize_explicit_provider
+from backend.runtime.action_contracts import (
+    ProposalPreparation,
+    ProposalPreparationStatus,
+)
 
 from .config import GoogleDriveConfigStore
 from .config import GOOGLE_DRIVE_DOCUMENT_WRITE_SCOPE
@@ -366,22 +370,56 @@ class GoogleDriveDocumentCreateConversationService:
         self.proposal_store, self.writer, self.draft_builder = proposal_store, writer, draft_builder
         self._attempted: set[str] = set()
 
-    def propose(self, message: str, *, conversation_id: str, recent_messages: tuple[str, ...], now_local: datetime):
+    def prepare(
+        self,
+        message: str,
+        *,
+        conversation_id: str,
+        recent_messages: tuple[str, ...],
+        now_local: datetime,
+    ) -> ProposalPreparation | None:
         if not drive_document_create_intent(message): return None
         self._attempted.add(conversation_id)
         source_material = document_source_material(message, recent_messages)
         if source_material is None:
-            return "Что именно сохранить в документе? Пришли текст или напомни, какой материал взять."
+            return ProposalPreparation(
+                response="Что именно сохранить в документе? Пришли текст или напомни, какой материал взять.",
+                status=ProposalPreparationStatus.NO_ACTION,
+            )
         draft = self.draft_builder.build(message, source_material)
-        if draft is None: return "Не смогла безопасно собрать заметку. Ничего в Drive не создаю."
+        if draft is None:
+            return ProposalPreparation(
+                response="Не смогла безопасно собрать заметку. Ничего в Drive не создаю.",
+                status=ProposalPreparationStatus.NO_ACTION,
+            )
         if _CLARIFICATION_TEXT.search(f"{draft.title}\n{draft.body}"):
-            return "Что именно сохранить в документе? Пришли текст или напомни, какой материал взять."
+            return ProposalPreparation(
+                response="Что именно сохранить в документе? Пришли текст или напомни, какой материал взять.",
+                status=ProposalPreparationStatus.NO_ACTION,
+            )
         operation = DriveDocumentCreateOperation.from_draft(draft)
         proposal = MemoryProposal(id=str(uuid4()), conversation_id=conversation_id, record_type="google_drive_document", record_payload=operation.model_dump(mode="json"), created_at=now_local, status=ProposalStatus.PENDING, operation="google_drive_document_create")
         try: self.proposal_store.create(proposal)
-        except PendingProposalConflict: return "Сначала закончим предыдущее подтверждение — пока документ не создаю."
+        except PendingProposalConflict:
+            return ProposalPreparation(
+                response="Сначала закончим предыдущее подтверждение — пока документ не создаю.",
+                status=ProposalPreparationStatus.NO_ACTION,
+            )
         self.writer.receipt_store.put(DriveDocumentCreateReceipt(operation=operation, status="proposed"))
-        return f"Создать документ в Google Drive?\nНазвание: «{operation.title}»\nТекст:\n{operation.body}"
+        return ProposalPreparation(
+            response=f"Создать документ в Google Drive?\nНазвание: «{operation.title}»\nТекст:\n{operation.body}",
+            status=ProposalPreparationStatus.PENDING_CONFIRMATION,
+            application_operation="google_drive_document_create",
+        )
+
+    def propose(self, message: str, *, conversation_id: str, recent_messages: tuple[str, ...], now_local: datetime):
+        preparation = self.prepare(
+            message,
+            conversation_id=conversation_id,
+            recent_messages=recent_messages,
+            now_local=now_local,
+        )
+        return None if preparation is None else preparation.response
 
     def resolve(self, message: str, *, conversation_id: str, proposal_id: str | None = None):
         command = _CONFIRM.match(message) or _REJECT.match(message)

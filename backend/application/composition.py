@@ -8,7 +8,7 @@ from pathlib import Path
 from backend.conversation.conversation_service import ConversationService
 from backend.conversation.conversation_store import ConversationStore
 from backend.conversation.memory_intent import MemoryIntentHandler, MemoryProposalStore
-from backend.conversation.capability_router import LocalSemanticIntentClassifier, NaturalLanguageCapabilityRouter
+from backend.conversation.capability_router import NaturalLanguageCapabilityRouter
 from backend.conversation.reflection_intent import ReflectionIntentHandler
 from backend.identity.identity_kernel import IdentityKernel
 from backend.identity.identity_store import IdentityStore
@@ -43,13 +43,21 @@ from backend.connectors.google_calendar import (
     GoogleCalendarConversationService, GoogleCalendarCreateConversationService,
     GoogleCalendarReader, GoogleCalendarWriter,
     CalendarUpdateReceiptStore, GoogleCalendarUpdater, GoogleCalendarUpdateConversationService,
+    CalendarDeleteReceiptStore, GoogleCalendarDeleter, GoogleCalendarDeleteConversationService,
 )
 from backend.connectors.google_drive import (
     DriveDocumentCreateReceiptStore, GoogleDriveConfigStore,
     GoogleDriveConversationService, GoogleDriveDocumentCreateConversationService,
     GoogleDriveDocumentWriter, GoogleDriveReader, LocalDocumentDraftBuilder,
 )
-from backend.connectors.yandex_mail import YandexMailConfigStore, YandexMailConversationService, YandexMailReader
+from backend.connectors.yandex_mail import (
+    MailMutationReceiptStore,
+    YandexMailConfigStore,
+    YandexMailConversationService,
+    YandexMailMutationConversationService,
+    YandexMailMutationWriter,
+    YandexMailReader,
+)
 from backend.connectors.yandex_disk import YandexDiskConfigStore, YandexDiskConversationService, YandexDiskReader
 from backend.connectors.presented_read_sets import PresentedReadSetRegistry
 from backend.secrets import WindowsCredentialManagerSecretStore
@@ -104,8 +112,28 @@ from .status import MashaStatusService
 from .visual_assets import VisualIdentityResolver
 from .workbench import WorkbenchApplicationService
 from .resolved_capabilities import (
+    CalendarReadHandoffAdapter,
     CalendarCreateHandoffAdapter,
+    CalendarUpdateHandoffAdapter,
+    CalendarDeleteHandoffAdapter,
+    GoogleDriveReadHandoffAdapter,
+    HomeCommitmentCompleteHandoffAdapter,
+    HomeCommitmentCreateHandoffAdapter,
+    HomeCommitmentsReadHandoffAdapter,
+    HomeContinuityOpenHandoffAdapter,
+    HomeContinuityReadHandoffAdapter,
+    HomeContinuityResolveHandoffAdapter,
+    HomeMemoryForgetHandoffAdapter,
+    HomeMemoryInspectHandoffAdapter,
+    HomeMemoryRecallHandoffAdapter,
+    HomeMemoryRememberHandoffAdapter,
     TimedCommitmentHandoffAdapter,
+    YandexMailReadHandoffAdapter,
+    YandexMailDeleteHandoffAdapter,
+    YandexMailMoveHandoffAdapter,
+    YandexDiskReadHandoffAdapter,
+    WebFetchHandoffAdapter,
+    WebSearchHandoffAdapter,
 )
 
 
@@ -126,7 +154,12 @@ def build_conversation_service(*, project_root: Path, router: ModelRouter | None
     return _build_core(Path(project_root), router=router).conversation
 
 
-def build_masha_application(*, project_root: Path, router: ModelRouter | None = None) -> MashaApplication:
+def build_masha_application(
+    *,
+    project_root: Path,
+    router: ModelRouter | None = None,
+    external_observation_service: ExternalObservationService | None = None,
+) -> MashaApplication:
     """Build the public local facade without importing or invoking CLI code."""
     core = _build_core(Path(project_root), router=router)
     models = ModelSettingsService(profiles=core.profiles, router=core.router)
@@ -177,6 +210,7 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
         catalog=capability_catalog,
     )
     core.conversation.home_capability_provider = capabilities.snapshot
+    core.conversation.home_capability_catalog_provider = capabilities.catalog_snapshot
     core.conversation.google_calendar_create_service = GoogleCalendarCreateConversationService(
         proposal_store=core.conversation.memory_intent_handler.proposal_store,
         writer=GoogleCalendarWriter(
@@ -189,16 +223,26 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
             clock=core.conversation.temporal_engine.clock.now_utc,
         ),
     )
+    calendar_updater = GoogleCalendarUpdater(
+        config_store=connector_config_stores["google-calendar"],
+        secret_store=connector_secret_store,
+        receipt_store=CalendarUpdateReceiptStore(runtime / "google-calendar-update-receipts.json"),
+        policy_store=internet_policy,
+        safety_store=safety.store,
+        recovery_journal=RecoveryJournal(core.project_root),
+        clock=core.conversation.temporal_engine.clock.now_utc,
+    )
     core.conversation.google_calendar_update_service = GoogleCalendarUpdateConversationService(
         proposal_store=core.conversation.memory_intent_handler.proposal_store,
-        updater=GoogleCalendarUpdater(
-            config_store=connector_config_stores["google-calendar"],
-            secret_store=connector_secret_store,
-            receipt_store=CalendarUpdateReceiptStore(runtime / "google-calendar-update-receipts.json"),
-            policy_store=internet_policy,
-            safety_store=safety.store,
-            recovery_journal=RecoveryJournal(core.project_root),
-            clock=core.conversation.temporal_engine.clock.now_utc,
+        updater=calendar_updater,
+    )
+    core.conversation.google_calendar_delete_service = GoogleCalendarDeleteConversationService(
+        proposal_store=core.conversation.memory_intent_handler.proposal_store,
+        deleter=GoogleCalendarDeleter(
+            target_resolver=calendar_updater,
+            receipt_store=CalendarDeleteReceiptStore(
+                runtime / "google-calendar-delete-receipts.json"
+            ),
         ),
     )
     core.conversation.google_drive_document_create_service = GoogleDriveDocumentCreateConversationService(
@@ -210,6 +254,21 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
             recovery_journal=RecoveryJournal(core.project_root), clock=core.conversation.temporal_engine.clock.now_utc,
         ),
         draft_builder=LocalDocumentDraftBuilder(router=core.router, identity_kernel=core.identity, model_profiles=core.profiles),
+    )
+    core.conversation.yandex_mail_mutation_service = YandexMailMutationConversationService(
+        proposal_store=core.conversation.memory_intent_handler.proposal_store,
+        writer=YandexMailMutationWriter(
+            config_store=connector_config_stores["yandex-mail"],
+            secret_store=connector_secret_store,
+            receipt_store=MailMutationReceiptStore(
+                runtime / "yandex-mail-mutation-receipts.json"
+            ),
+            policy_store=internet_policy,
+            safety_store=safety.store,
+            recovery_journal=RecoveryJournal(core.project_root),
+            clock=core.conversation.temporal_engine.clock.now_utc,
+        ),
+        presented_read_sets=core.conversation.yandex_mail_service.presented_read_sets,
     )
     pending_resolutions = PendingResolutionStore(
         runtime / "pending-resolutions.json",
@@ -258,35 +317,69 @@ def build_masha_application(*, project_root: Path, router: ModelRouter | None = 
     )
     core.conversation.resolved_capability_adapters = ResolvedCapabilityAdapterRegistry((
         CalendarCreateHandoffAdapter(core.conversation.google_calendar_create_service),
+        CalendarUpdateHandoffAdapter(core.conversation.google_calendar_update_service),
+        CalendarDeleteHandoffAdapter(core.conversation.google_calendar_delete_service),
         TimedCommitmentHandoffAdapter(core.conversation.memory_intent_handler),
+        HomeCommitmentsReadHandoffAdapter(core.conversation.memory_intent_handler),
+        HomeCommitmentCreateHandoffAdapter(core.conversation.memory_intent_handler),
+        HomeCommitmentCompleteHandoffAdapter(core.conversation.memory_intent_handler),
+        CalendarReadHandoffAdapter(core.conversation.google_calendar_service),
+        YandexMailReadHandoffAdapter(core.conversation.yandex_mail_service),
+        YandexMailDeleteHandoffAdapter(core.conversation.yandex_mail_mutation_service),
+        YandexMailMoveHandoffAdapter(core.conversation.yandex_mail_mutation_service),
+        GoogleDriveReadHandoffAdapter(core.conversation.google_drive_service),
+        YandexDiskReadHandoffAdapter(core.conversation.yandex_disk_service),
+        HomeMemoryRecallHandoffAdapter(core.conversation.memory_intent_handler),
+        HomeMemoryInspectHandoffAdapter(core.conversation.memory_intent_handler),
+        HomeMemoryRememberHandoffAdapter(core.conversation.memory_intent_handler),
+        HomeMemoryForgetHandoffAdapter(core.conversation.memory_intent_handler),
+        HomeContinuityReadHandoffAdapter(core.conversation.memory_intent_handler),
+        HomeContinuityOpenHandoffAdapter(core.conversation.memory_intent_handler),
+        HomeContinuityResolveHandoffAdapter(core.conversation.memory_intent_handler),
     ))
     document_store = DocumentReadStore(runtime / "document-read-receipts.json")
-    core.conversation.external_observation_service = ExternalObservationService(
-        provider=DDGSWebSearchProvider(
-            timeout_seconds=internet_policy.load().provider_timeout_seconds,
+    core.conversation.external_observation_service = (
+        external_observation_service
+        or ExternalObservationService(
+            provider=DDGSWebSearchProvider(
+                timeout_seconds=internet_policy.load().provider_timeout_seconds,
+                clock=core.conversation.temporal_engine.clock.now_utc,
+            ),
+            policy_store=internet_policy,
+            safety_store=safety.store,
+            registry=registry,
+            planner=LocalExternalQueryPlanner(
+                router=core.router,
+                identity_kernel=core.identity,
+                model_profiles=core.profiles,
+            ),
+            source_selector=LocalSourceSelector(
+                router=core.router,
+                identity_kernel=core.identity,
+                model_profiles=core.profiles,
+            ),
+            context_hint_provider=LocalExternalContextHintProvider(
+                human_information=core.human_information,
+                reflections=core.reflection,
+            ),
+            store=ExternalObservationStore(runtime / "external-observations.json"),
+            document_store=document_store,
             clock=core.conversation.temporal_engine.clock.now_utc,
-        ),
-        policy_store=internet_policy,
-        safety_store=safety.store,
-        registry=registry,
-        planner=LocalExternalQueryPlanner(
-            router=core.router,
-            identity_kernel=core.identity,
-            model_profiles=core.profiles,
-        ),
-        source_selector=LocalSourceSelector(
-            router=core.router,
-            identity_kernel=core.identity,
-            model_profiles=core.profiles,
-        ),
-        context_hint_provider=LocalExternalContextHintProvider(
-            human_information=core.human_information,
-            reflections=core.reflection,
-        ),
-        store=ExternalObservationStore(runtime / "external-observations.json"),
-        document_store=document_store,
-        clock=core.conversation.temporal_engine.clock.now_utc,
+        )
     )
+    core.conversation.resolved_capability_adapters.register(
+        WebSearchHandoffAdapter(core.conversation.external_observation_service),
+    )
+    core.conversation.resolved_capability_adapters.register(
+        WebFetchHandoffAdapter(core.conversation.external_observation_service),
+    )
+    if (
+        core.conversation.resolved_capability_adapters.operation_ids
+        != adoption.supported_operation_ids
+    ):
+        raise RuntimeError(
+            "DialogueCore adoption and application adapters must have identical owners"
+        )
     application_conversation = ConversationApplicationService(
         conversation=core.conversation,
         models=models,
@@ -444,13 +537,7 @@ def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
             memory_management=memory_management,
             shared_continuity=shared_continuity,
             temporal_engine=temporal_engine,
-            capability_router=NaturalLanguageCapabilityRouter(
-                LocalSemanticIntentClassifier(
-                    router=selected_router,
-                    identity_kernel=identity,
-                    model_profiles=profiles,
-                )
-            ),
+            capability_router=NaturalLanguageCapabilityRouter(),
             human_information=human_information,
             on_commitment_terminal=lambda commitment_id: interactions.dismiss_delivered_reminders_for_commitment(
                 commitment_id,
@@ -469,6 +556,7 @@ def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
         reflection_service=reflection,
         passive_memory_service=passive_memory,
         human_information=human_information,
+        presented_context_provider=presented_read_sets.model_safe_hints,
         google_calendar_service=GoogleCalendarConversationService(
             reader=GoogleCalendarReader(
                 config_store=GoogleCalendarConfigStore(root / "local-data" / "config" / "google-calendar.json"),

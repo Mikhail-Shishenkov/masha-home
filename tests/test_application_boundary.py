@@ -23,6 +23,7 @@ from backend.application import (
 from backend.application.catalogs import error_label, proactive_reason_label
 from backend.application.contracts import ModelAvailabilityCode, ModelSwitchStatus
 from backend.llm.fake_provider import FakeProvider
+from backend.llm.model_models import ModelCapabilities
 from backend.llm.model_router import ModelRouter
 from backend.memory.sqlite_repository import MemorySqliteRepository
 from backend.memory.memory_management import MemoryManagementService, MemoryMutationOperation
@@ -92,12 +93,39 @@ def _application(tmp_path: Path, provider: LocalProfileProvider | None = None):
     return root, selected, application
 
 
+def test_conversation_core_import_does_not_depend_on_application_import_order():
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from backend.conversation.resolution_coordinator "
+                "import V2LiveAdoptionPolicy; "
+                "assert V2LiveAdoptionPolicy().supported_operation_ids"
+            ),
+        ],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
 def test_public_composition_root_builds_without_cli(tmp_path):
     root, _, application = _application(tmp_path)
 
     assert isinstance(application, MashaApplication)
     assert application.current_model().profile_id == "primary"
     assert (root / "local-data" / "conversations" / "history.json").exists() is False
+    conversation = application._conversation._conversation
+    assert (
+        conversation.resolved_capability_adapters.operation_ids
+        == conversation.dialogue_core.adoption.supported_operation_ids
+    )
+    assert "web.fetch" in conversation.resolved_capability_adapters.operation_ids
 
 
 def test_workbench_projects_four_local_read_connections_without_network(tmp_path, monkeypatch):
@@ -124,7 +152,7 @@ def test_calendar_create_is_a_pending_application_confirmation_before_any_networ
     _, provider, application = _application(tmp_path)
     monkeypatch.setattr(socket, "create_connection", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("network")))
     turn = application.send_message(
-        "Маша, поставь занятие по AI завтра в 19:00 на час",
+        "Маша, поставь занятие по AI в календарь завтра в 19:00 на час",
         project_id=PROJECT_ID,
     )
     pending = application.pending_confirmation(turn.conversation_id)
@@ -381,13 +409,23 @@ def test_timed_task_without_explicit_reminder_keeps_policy_controlled_origin(tmp
     assert commitment.reminder_delivery_mode.value == "policy_controlled"
 
 
-def test_command_typo_can_use_semantic_fallback_but_bare_action_is_not_a_command(tmp_path):
+def test_command_typo_can_use_semantic_ingress_but_bare_action_is_not_a_command(tmp_path):
     semantic = LocalProfileProvider(response_text=json.dumps({
-        "intent": "create_commitment",
-        "confidence": 0.93,
-        "entity": "купить корм собаке",
-        "temporal_scope": None,
+        "kind": "supported_action",
+        "candidate_operation_ids": ["home.commitments.create"],
+        "nearby_operation_ids": [],
+        "extracted_slots": [
+            {"name": "subject", "evidence_text": "купить корм собаке"},
+        ],
+        "unresolved_referents": [],
+        "ambiguity_hint": "none",
+        "action_request_evidence": {"evidence_text": "добвь задачу"},
+        "operation_selection_evidence": {
+            "operation_id": None,
+            "evidence_text": None,
+        },
     }, ensure_ascii=False))
+    semantic.capabilities = ModelCapabilities(structured_output=True)
     _, _, application = _application(tmp_path / "typo", semantic)
     repository = application._conversation._conversation.memory_retriever.memory_store
     before = repository.read_document()

@@ -706,6 +706,8 @@ function renderWorkbench(view) {
     read_and_create: "Чтение · создание и изменение событий",
     read_with_document_create_setup: "Чтение · создание документов после отдельного подключения",
     read_and_document_create: "Чтение · создание документов",
+    read_with_manage_setup: "Чтение · управление письмами после отдельного подключения",
+    read_and_manage: "Чтение · удаление и архивирование писем",
   };
   for (const connection of view?.connections || []) {
     workbenchConnections.append(workbenchItem(
@@ -1440,7 +1442,8 @@ function renderPendingConfirmation(confirmation) {
   operationSteps.hidden = true;
   operationActions.hidden = false;
   closeOperation.hidden = true;
-  confirmOperation.textContent = documentRecovery ? "Проверить" : "Подтвердить";
+  const recoveryConfirmation = confirmation.confirmation_type.endsWith("_recovery");
+  confirmOperation.textContent = recoveryConfirmation ? "Проверить" : "Подтвердить";
   rejectOperation.textContent = "Не сейчас";
   confirmOperation.disabled = false;
   rejectOperation.disabled = false;
@@ -1472,6 +1475,10 @@ function renderConfirmationActivity(decision) {
 function renderConfirmationResult(result) {
   const confirmed = result?.status === "confirmed";
   const rejected = result?.status === "rejected";
+  if (!confirmed && !rejected && result?.pending_confirmation) {
+    renderPendingConfirmation(result.pending_confirmation);
+    return;
+  }
   const documentRecovery = pendingConfirmation?.confirmation_type === "google_drive_document_recovery"
     || result?.pending_confirmation?.confirmation_type === "google_drive_document_recovery";
   const documentCreate = pendingConfirmation?.confirmation_type === "google_drive_document_create"

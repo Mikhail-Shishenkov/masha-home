@@ -25,6 +25,7 @@ from backend.external_observation import (
     InformationSpace,
     InvocationAuthority,
     LocalExternalQueryPlanner,
+    ObservationStatus,
     ProviderSearchRequest,
     SearchEvidence,
     SourceTime,
@@ -169,12 +170,12 @@ def test_information_space_arbitration_is_semantic_and_fail_closed(phrase, space
     assert ExplicitExternalIntentGate().detect(phrase).explicit is explicit
 
 
-def test_default_policy_is_explicit_zero_traffic_and_load_does_not_write(tmp_path):
+def test_default_policy_is_auto_but_load_causes_zero_traffic_and_no_write(tmp_path):
     store = InternetAccessPolicyStore(tmp_path / "internet-access.json")
 
     policy = store.load()
 
-    assert policy.mode is InternetAccessMode.EXPLICIT
+    assert policy.mode is InternetAccessMode.AUTO
     assert policy.allow_background is False
     assert policy.allow_task_scoped is False
     assert policy.max_provider_calls_per_turn == 2
@@ -201,10 +202,9 @@ def test_application_startup_has_no_web_traffic_and_workbench_sees_bundled_skill
     ("mode", "authority", "reason"),
     (
         (InternetAccessMode.OFF, InvocationAuthority.USER_EXPLICIT, "internet_access_off"),
-        (InternetAccessMode.AUTO, InvocationAuthority.USER_EXPLICIT, "auto_not_implemented"),
-        (InternetAccessMode.EXPLICIT, InvocationAuthority.ASSISTANT_AUTO, "auto_not_implemented"),
-        (InternetAccessMode.EXPLICIT, InvocationAuthority.TASK_SCOPED, "auto_not_implemented"),
-        (InternetAccessMode.EXPLICIT, InvocationAuthority.BACKGROUND, "auto_not_implemented"),
+        (InternetAccessMode.EXPLICIT, InvocationAuthority.ASSISTANT_AUTO, "automatic_search_disabled"),
+        (InternetAccessMode.EXPLICIT, InvocationAuthority.TASK_SCOPED, "authority_not_implemented"),
+        (InternetAccessMode.EXPLICIT, InvocationAuthority.BACKGROUND, "authority_not_implemented"),
     ),
 )
 def test_policy_and_future_authorities_fail_closed_without_provider_call(
@@ -230,6 +230,51 @@ def test_policy_and_future_authorities_fail_closed_without_provider_call(
     assert result.error_reason == reason
     assert result.provider_calls == 0
     assert provider.requests == []
+
+
+def test_auto_policy_allows_current_turn_observation_but_not_timeless_guess(tmp_path):
+    provider = FakeWebSearchProvider((_evidence(),))
+    service, _, _ = _service(
+        tmp_path,
+        provider,
+        policy=InternetAccessPolicy(mode=InternetAccessMode.AUTO),
+    )
+
+    current = service.observe_resolved_search(
+        "Какая сейчас последняя версия Ollama?",
+        query_hint="последняя версия Ollama",
+        origin_message_id="message-current",
+    )
+    timeless = service.observe_resolved_search(
+        "Что такое Ollama?",
+        query_hint="Ollama",
+        origin_message_id="message-timeless",
+    )
+
+    assert current is not None
+    assert current.status is ObservationStatus.COMPLETED
+    assert current.request.authority is InvocationAuthority.ASSISTANT_AUTO
+    assert current.request.freshness is FreshnessRequirement.CURRENT
+    assert timeless is None
+    assert len(provider.requests) == 1
+
+
+def test_auto_policy_still_allows_explicit_user_search(tmp_path):
+    provider = FakeWebSearchProvider((_evidence(),))
+    service, _, _ = _service(
+        tmp_path,
+        provider,
+        policy=InternetAccessPolicy(mode=InternetAccessMode.AUTO),
+    )
+
+    result = service.observe_explicit_request(
+        "Поищи в интернете Ollama latest release",
+        origin_message_id="message-explicit",
+    )
+
+    assert result is not None and result.status is ObservationStatus.COMPLETED
+    assert result.request.authority is InvocationAuthority.USER_EXPLICIT
+    assert len(provider.requests) == 1
 
 
 def test_emergency_stop_blocks_external_provider_fail_closed(tmp_path):

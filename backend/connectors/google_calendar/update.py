@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, time, timedelta, timezone
+from difflib import SequenceMatcher
+from datetime import date as calendar_date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 from urllib.parse import quote, urlencode
@@ -14,6 +15,10 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from backend.backup.recovery_journal import RecoveryJournal
 from backend.conversation.memory_intent import MemoryProposal, MemoryProposalStore, PendingProposalConflict, ProposalStatus
+from backend.runtime.action_contracts import (
+    ProposalPreparation,
+    ProposalPreparationStatus,
+)
 
 from .config import GoogleCalendarConfigStore
 from .network import GoogleCalendarNetworkBlocked, assert_google_network_allowed
@@ -66,6 +71,17 @@ class CalendarUpdateOperation(BaseModel):
     provider_event_id: str = Field(min_length=1, max_length=300)
     before: CalendarEventState
     desired: CalendarEventState
+    etag: str = Field(min_length=1, max_length=500)
+    home_timezone: str = Field(min_length=1, max_length=100)
+
+
+class CalendarResolvedTarget(BaseModel):
+    """One real provider object bound by Home before any mutation proposal."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    provider_event_id: str = Field(min_length=1, max_length=300)
+    before: CalendarEventState
     etag: str = Field(min_length=1, max_length=500)
     home_timezone: str = Field(min_length=1, max_length=100)
 
@@ -146,6 +162,39 @@ class GoogleCalendarUpdater:
 
     def resolve(self, intent: CalendarUpdateIntent) -> tuple[str, CalendarUpdateOperation | None]:
         """Bind exactly one current primary-calendar event before a proposal."""
+        status, target = self.resolve_target(intent)
+        if status != "resolved" or target is None:
+            return status, None
+        before = target.before
+        desired_start = (
+            before.start
+            if intent.desired_start_time is None
+            else self._at(intent.date, intent.desired_start_time)
+        )
+        duration = (
+            before.end - before.start
+            if intent.desired_duration_minutes is None
+            else timedelta(minutes=intent.desired_duration_minutes)
+        )
+        desired = CalendarEventState(
+            title=intent.desired_title or before.title,
+            start=desired_start,
+            end=desired_start + duration,
+        )
+        return "resolved", CalendarUpdateOperation(
+            operation_id=str(uuid4()),
+            provider_event_id=target.provider_event_id,
+            before=before,
+            desired=desired,
+            etag=target.etag,
+            home_timezone=target.home_timezone,
+        )
+
+    def resolve_target(
+        self,
+        intent: CalendarUpdateIntent,
+    ) -> tuple[str, CalendarResolvedTarget | None]:
+        """Resolve one provider-owned event without implying an update."""
         if self._blocked():
             return "blocked", None
         try:
@@ -168,7 +217,15 @@ class GoogleCalendarUpdater:
             return "unavailable", None
         raw_items = [item for item in items if isinstance(item, dict)]
         candidates = [self._state_from_item(item, start.tzinfo) for item in raw_items]
-        candidates = [row for row in candidates if row is not None and self._title_matches(row[1].title, intent.lookup_title) and (intent.old_start_time is None or row[1].start.strftime("%H:%M") == intent.old_start_time)]
+        candidates = [
+            row for row in candidates
+            if row is not None
+            and self._title_score(row[1].title, intent.lookup_title) >= 0.82
+            and (
+                intent.old_start_time is None
+                or row[1].start.strftime("%H:%M") == intent.old_start_time
+            )
+        ]
         if not candidates:
             if any(
                 isinstance(item.get("summary"), str)
@@ -193,10 +250,12 @@ class GoogleCalendarUpdater:
             intent.old_start_time is not None and before.start.strftime("%H:%M") != intent.old_start_time
         ):
             return "not_found", None
-        desired_start = before.start if intent.desired_start_time is None else self._at(intent.date, intent.desired_start_time)
-        duration = (before.end - before.start) if intent.desired_duration_minutes is None else timedelta(minutes=intent.desired_duration_minutes)
-        desired = CalendarEventState(title=intent.desired_title or before.title, start=desired_start, end=desired_start + duration)
-        return "resolved", CalendarUpdateOperation(operation_id=str(uuid4()), provider_event_id=event_id, before=before, desired=desired, etag=etag, home_timezone=str(start.tzinfo))
+        return "resolved", CalendarResolvedTarget(
+            provider_event_id=event_id,
+            before=before,
+            etag=etag,
+            home_timezone=str(start.tzinfo),
+        )
 
     def update_and_verify(self, operation: CalendarUpdateOperation) -> tuple[str, CalendarUpdateReceipt]:
         existing = self.receipt_store.get(operation.operation_id)
@@ -359,7 +418,23 @@ class GoogleCalendarUpdater:
 
     @staticmethod
     def _title_matches(actual: str, query: str) -> bool:
-        return actual.casefold().strip() == query.casefold().strip()
+        return GoogleCalendarUpdater._title_score(actual, query) >= 0.82
+
+    @staticmethod
+    def _title_score(actual: str, query: str) -> float:
+        """Bounded reference similarity over real provider-owned summaries."""
+
+        def normalized(value: str) -> str:
+            return " ".join(re.findall(
+                r"[a-zа-яё0-9]+", value.casefold().replace("ё", "е"),
+            ))
+
+        actual_text, query_text = normalized(actual), normalized(query)
+        if not actual_text or not query_text:
+            return 0.0
+        if actual_text == query_text:
+            return 1.0
+        return SequenceMatcher(None, actual_text, query_text, autojunk=False).ratio()
 
     @staticmethod
     def _at(day: datetime, value: str) -> datetime:
@@ -401,22 +476,129 @@ class GoogleCalendarUpdateConversationService:
         intent = calendar_update_intent(message, now_local)
         if intent is None:
             return None
+        return self.propose_intent(intent, conversation_id=conversation_id, now_local=now_local)
+
+    def propose_from_resolved_intent(
+        self,
+        *,
+        subject: str,
+        date: str,
+        start_time: str,
+        conversation_id: str,
+        now_local: datetime,
+        old_time: str | None = None,
+        duration_minutes: str | None = None,
+    ) -> str | None:
+        """Compatibility text projection over structured preparation truth."""
+        return self.prepare_from_resolved_intent(
+            subject=subject,
+            date=date,
+            start_time=start_time,
+            conversation_id=conversation_id,
+            now_local=now_local,
+            old_time=old_time,
+            duration_minutes=duration_minutes,
+        ).response
+
+    def prepare_from_resolved_intent(
+        self,
+        *,
+        subject: str,
+        date: str,
+        start_time: str,
+        conversation_id: str,
+        now_local: datetime,
+        old_time: str | None = None,
+        duration_minutes: str | None = None,
+    ) -> ProposalPreparation:
+        """Bridge validated V2 meaning into the mature update owner.
+
+        It deliberately receives no provider event ID.  The updater still
+        performs its own bounded read lookup and binds exactly one event before
+        any confirmation can exist.
+        """
+        try:
+            day = datetime.combine(
+                calendar_date.fromisoformat(date),
+                time.min,
+                tzinfo=now_local.tzinfo,
+            )
+            duration = None if duration_minutes is None else int(duration_minutes)
+        except (TypeError, ValueError):
+            return ProposalPreparation(
+                response="Не смогла безопасно разобрать изменение. Ничего в календаре не меняю.",
+                status=ProposalPreparationStatus.NO_ACTION,
+            )
+        if not subject.strip() or not re.fullmatch(r"\d{2}:\d{2}", start_time):
+            return ProposalPreparation(
+                response="Не смогла безопасно разобрать изменение. Ничего в календаре не меняю.",
+                status=ProposalPreparationStatus.NO_ACTION,
+            )
+        if old_time is not None and re.fullmatch(r"\d{2}:\d{2}", old_time) is None:
+            return ProposalPreparation(
+                response="Не смогла безопасно разобрать прежнее время. Ничего в календаре не меняю.",
+                status=ProposalPreparationStatus.NO_ACTION,
+            )
+        intent = CalendarUpdateIntent(
+            lookup_title=subject.strip(), date=day,
+            old_start_time=old_time,
+            desired_start_time=start_time,
+            desired_duration_minutes=duration,
+        )
+        return self._prepare_intent(
+            intent,
+            conversation_id=conversation_id,
+            now_local=now_local,
+        )
+
+    def propose_intent(
+        self,
+        intent: CalendarUpdateIntent,
+        *,
+        conversation_id: str,
+        now_local: datetime,
+    ) -> str:
+        return self._prepare_intent(
+            intent,
+            conversation_id=conversation_id,
+            now_local=now_local,
+        ).response
+
+    def _prepare_intent(
+        self,
+        intent: CalendarUpdateIntent,
+        *,
+        conversation_id: str,
+        now_local: datetime,
+    ) -> ProposalPreparation:
         status, operation = self.updater.resolve(intent)
         if status != "resolved" or operation is None:
-            return {
+            response = {
                 "not_found": "Не нашла это событие в Основном календаре — ничего нового не создаю.",
                 "unsupported": "Не могу безопасно изменить повторяющееся или особое событие — ничего не меняю.",
                 "ambiguous": "Нашла несколько похожих событий. Уточни время точнее — ничего не меняю.",
                 "blocked": "Сейчас внешние действия остановлены, поэтому ничего в календаре не меняю.",
                 "needs_reconnect": "Для изменения событий нужно отдельно переподключить Google Calendar.",
             }.get(status, "Сейчас не удалось проверить календарь для изменения.")
+            return ProposalPreparation(
+                response=response,
+                status=ProposalPreparationStatus.NO_ACTION,
+            )
         proposal = MemoryProposal(id=str(uuid4()), conversation_id=conversation_id, record_type="google_calendar_event", record_payload=operation.model_dump(mode="json"), created_at=now_local, status=ProposalStatus.PENDING, operation="google_calendar_update")
         try:
             self.proposal_store.create(proposal)
         except PendingProposalConflict:
-            return "Сначала закончим предыдущее подтверждение — пока ничего нового не меняю."
+            return ProposalPreparation(
+                response="Сначала закончим предыдущее подтверждение — пока ничего нового не меняю.",
+                status=ProposalPreparationStatus.NO_ACTION,
+            )
         self.updater.receipt_store.put(CalendarUpdateReceipt(operation=operation, status="proposed"))
-        return f"Перенести «{operation.before.title}» в Основном календаре: {operation.before.start:%d.%m, %H:%M}–{operation.before.end:%H:%M} → {operation.desired.start:%H:%M}–{operation.desired.end:%H:%M}?" if operation.before.title == operation.desired.title else f"Переименовать «{operation.before.title}» в «{operation.desired.title}» в Основном календаре?"
+        response = f"Перенести «{operation.before.title}» в Основном календаре: {operation.before.start:%d.%m, %H:%M}–{operation.before.end:%H:%M} → {operation.desired.start:%H:%M}–{operation.desired.end:%H:%M}?" if operation.before.title == operation.desired.title else f"Переименовать «{operation.before.title}» в «{operation.desired.title}» в Основном календаре?"
+        return ProposalPreparation(
+            response=response,
+            status=ProposalPreparationStatus.PENDING_CONFIRMATION,
+            application_operation="google_calendar_update",
+        )
 
     def resolve(self, message: str, *, conversation_id: str, proposal_id: str | None = None):
         match = re.match(r"^\s*(?:да|подтверждаю|измени|перенеси)(?:\s+(?P<id>[0-9a-f-]{36}))?\s*[.!]?\s*$", message, re.IGNORECASE)

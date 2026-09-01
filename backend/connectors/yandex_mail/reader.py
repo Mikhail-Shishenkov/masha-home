@@ -10,7 +10,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from .config import YandexMailConfigStore
-from .models import MailMessageContent, MailMessageSummary, MailOutcome, ResolvedMailRequest
+from .models import MailMessageContent, MailMessageSummary, MailOutcome, ResolvedMailRequest, safe_message_id
 from .network import YandexMailNetworkBlocked, assert_yandex_mail_network_allowed
 
 MAX_RESULTS=10; MAX_RAW_MESSAGE_BYTES=1024*1024; MAX_BODY_CHARS=8000
@@ -31,13 +31,14 @@ class ImapYandexSession:
  def __init__(self,email_address,access_token):
   self.client=imaplib.IMAP4_SSL("imap.yandex.com",993); payload=f"user={email_address}\x01auth=Bearer {access_token}\x01\x01".encode(); self.client.authenticate("XOAUTH2",lambda _:payload); typ,_=self.client.select("INBOX",readonly=True)
   if typ!="OK": raise YandexMailUnavailable("mailbox_unavailable")
+  _,values=self.client.response("UIDVALIDITY");raw=next((item for item in values or () if isinstance(item,bytes)),b"");match=re.search(rb"\d+",raw);self.uidvalidity=None if match is None else match.group().decode("ascii")
  def search(self,criteria,limit):
   typ,data=self.client.uid("SEARCH",None,*criteria)
   if typ!="OK": raise YandexMailUnavailable("mail_search_unavailable")
   ids=data[0].split()[-limit:][::-1]; rows=[]
   for raw in ids:
-   uid=raw.decode(); typ,data=self.client.uid("FETCH",uid,"(BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)] RFC822.SIZE BODYSTRUCTURE)")
-   if typ=="OK" and data: rows.append(_summary(uid,data))
+   uid=raw.decode(); typ,data=self.client.uid("FETCH",uid,"(BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE MESSAGE-ID)] RFC822.SIZE BODYSTRUCTURE)")
+   if typ=="OK" and data: rows.append(_summary(uid,data,self.uidvalidity))
   return tuple(rows)
  def fetch(self,reference,maximum_bytes):
   typ,data=self.client.uid("FETCH",reference,"(RFC822.SIZE BODY.PEEK[])")
@@ -101,12 +102,12 @@ def _criteria(kind,q):
 def _decode(value):
  try:return str(make_header(decode_header(value or "")))[:300]
  except Exception:return ""
-def _summary(uid,data):
+def _summary(uid,data,uidvalidity=None):
  raw=next((x[1] for x in data if isinstance(x,tuple) and isinstance(x[1],bytes)),b""); msg=email.message_from_bytes(raw); name,address=parseaddr(_decode(msg.get("From",""))); sender=(name or address or "Неизвестный отправитель")[:300]
  try:received=parsedate_to_datetime(msg.get("Date"));received=received.astimezone(timezone.utc) if received else None
  except Exception:received=None
  size_match=re.search(rb"RFC822\.SIZE (\d+)",b" ".join(x[0] for x in data if isinstance(x,tuple) and isinstance(x[0],bytes))); size=int(size_match.group(1)) if size_match else None
- return MailMessageSummary("yandex",uid,_decode(msg.get("Subject")) or "Без темы",sender,received,size,False)
+ return MailMessageSummary("yandex",uid,_decode(msg.get("Subject")) or "Без темы",sender,received,size,False,uidvalidity,safe_message_id(msg.get("Message-ID")))
 def _content(raw,summary):
  msg=email.message_from_bytes(raw); plain=None;html=None;attachments=[]
  for part in msg.walk():

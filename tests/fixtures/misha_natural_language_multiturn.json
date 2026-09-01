@@ -23,7 +23,7 @@
     },
     {
       "case_id": "calendar_fill_subject",
-      "turn1": "Поставь завтра в 19 на час",
+      "turn1": "Поставь в календарь завтра в 19 на час",
       "clarification_kind": "slot",
       "turn2": "Занятие по AI",
       "expected_outcome": "resolved",

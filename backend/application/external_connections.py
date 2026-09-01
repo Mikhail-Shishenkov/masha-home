@@ -62,6 +62,18 @@ class ExternalConnectionApplicationService:
                 )
             except Exception:
                 return "read_with_document_create_setup"
+        if connector_id == "yandex-mail":
+            try:
+                config = self._config_stores[connector_id].load()
+                if config is None:
+                    return "read_only"
+                return (
+                    "read_and_manage"
+                    if config.write_credential_state(self._secret_store) is ConnectorCredentialState.READY
+                    else "read_with_manage_setup"
+                )
+            except Exception:
+                return "read_with_manage_setup"
         if connector_id != "google-calendar":
             return "read_only"
         try:

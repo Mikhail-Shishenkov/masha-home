@@ -5,7 +5,12 @@ import pytest
 
 from backend.conversation.conversation_service import ConversationService, ConversationUnavailableError
 from backend.conversation.conversation_store import ConversationStore
-from backend.conversation.memory_intent import MemoryIntentHandler, MemoryProposalStore
+from backend.conversation.memory_intent import (
+    MemoryIntentHandler,
+    MemoryProposal,
+    MemoryProposalStore,
+    ProposalStatus,
+)
 from backend.memory.confirmed_memory_service import ConfirmedMemoryService
 from backend.identity.identity_kernel import IdentityKernel
 from backend.identity.identity_store import IdentityStore
@@ -26,6 +31,10 @@ from backend.conversation.clarification import DeterministicClarificationBuilder
 from backend.conversation.interpretation_v2 import CapabilityCandidateDiscovery
 from backend.conversation.pending_resolution import PendingResolutionStore
 from backend.conversation.resolution_coordinator import NaturalLanguageResolutionCoordinator
+from backend.runtime.action_contracts import (
+    ProposalPreparation,
+    ProposalPreparationStatus,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -71,13 +80,33 @@ def test_explicit_drive_document_create_precedes_calendar_and_temporal_routing(t
     class DriveDocumentCreate:
         def __init__(self):
             self.propose_calls = []
+            self.proposal_store = MemoryProposalStore(tmp_path / "drive-proposals.json")
+            receipt = type("Receipt", (), {"status": "proposed"})()
+            self.writer = type("Writer", (), {
+                "receipt_store": type(
+                    "Receipts", (), {"get": lambda _self, _operation_id: receipt},
+                )(),
+            })()
 
         def resolve(self, *_args, **_kwargs):
             return None
 
-        def propose(self, *args, **kwargs):
+        def prepare(self, *args, **kwargs):
             self.propose_calls.append((args, kwargs))
-            return "Создать документ «Короткий итог занятия» с подготовленным текстом?"
+            self.proposal_store.create(MemoryProposal(
+                id="drive-proposal",
+                conversation_id=kwargs["conversation_id"],
+                record_type="google_drive_document",
+                record_payload={"operation_id": "drive-operation"},
+                created_at=kwargs["now_local"],
+                status=ProposalStatus.PENDING,
+                operation="google_drive_document_create",
+            ))
+            return ProposalPreparation(
+                response="Создать документ «Короткий итог занятия» с подготовленным текстом?",
+                status=ProposalPreparationStatus.PENDING_CONFIRMATION,
+                application_operation="google_drive_document_create",
+            )
 
     provider = FakeProvider(provider_id="ollama-local", response_text="model must not be called")
     service = _service(tmp_path, provider)
@@ -107,23 +136,52 @@ def test_explicit_drive_document_create_precedes_calendar_and_temporal_routing(t
 
 
 @pytest.mark.parametrize(
-    "service_attribute",
+    ("service_attribute", "operation", "record_type"),
     (
-        "google_calendar_create_service",
-        "google_calendar_update_service",
-        "google_drive_document_create_service",
+        (
+            "google_calendar_create_service",
+            "google_calendar_create",
+            "google_calendar_event",
+        ),
+        (
+            "google_calendar_update_service",
+            "google_calendar_update",
+            "google_calendar_event",
+        ),
+        (
+            "google_calendar_delete_service",
+            "google_calendar_delete",
+            "google_calendar_event",
+        ),
+        (
+            "google_drive_document_create_service",
+            "google_drive_document_create",
+            "google_drive_document",
+        ),
+        ("yandex_mail_mutation_service", "yandex_mail_delete", "yandex_mail_message"),
+        ("yandex_mail_mutation_service", "yandex_mail_move", "yandex_mail_message"),
     ),
 )
 @pytest.mark.parametrize("confirmation", ("Подтверждаю", "Да", "Не сейчас"))
 def test_existing_external_confirmation_resolves_before_v2(
-    service_attribute, confirmation, tmp_path
+    service_attribute, operation, record_type, confirmation, tmp_path, monkeypatch
 ):
     class ExistingConfirmation:
-        def resolve(self, *_args, **_kwargs):
+        calls = 0
+
+        def resolve(self, message, *, conversation_id, proposal_id=None):
+            self.calls += 1
+            assert message == confirmation
+            assert conversation_id == conversation.id
+            assert proposal_id == proposal.id
             return "Существующее подтверждение обработано."
 
         def propose(self, *_args, **_kwargs):
             raise AssertionError("proposal routing must not run")
+
+    class CompetingConfirmation:
+        def resolve(self, *_args, **_kwargs):
+            raise AssertionError("a non-owner confirmation service was called")
 
     class CoordinatorSpy:
         coordinate_calls = 0
@@ -137,18 +195,59 @@ def test_existing_external_confirmation_resolves_before_v2(
 
     provider = FakeProvider(provider_id="ollama-local", response_text="model must not run")
     service = _service(tmp_path, provider)
+    proposals = MemoryProposalStore(tmp_path / "proposals.json")
+    handler = MemoryIntentHandler(
+        proposal_store=proposals,
+        confirmed_memory=ConfirmedMemoryService(
+            MemoryStore(PROJECT_ROOT / "tests" / "fixtures" / "test_memory.json")
+        ),
+    )
+    service.memory_intent_handler = handler
     coordinator = CoordinatorSpy()
     service.natural_language_coordinator = coordinator
-    setattr(service, service_attribute, ExistingConfirmation())
+    conversation = service.history.create()
+    proposal = proposals.create(MemoryProposal(
+        id=f"proposal-{operation}",
+        conversation_id=conversation.id,
+        record_type=record_type,
+        record_payload={},
+        created_at=datetime.now(timezone.utc),
+        status=ProposalStatus.PENDING,
+        operation=operation,
+    ))
+    for attribute in {
+        "google_calendar_create_service",
+        "google_calendar_update_service",
+        "google_calendar_delete_service",
+        "google_drive_document_create_service",
+        "yandex_mail_mutation_service",
+    }:
+        setattr(service, attribute, CompetingConfirmation())
+    owner = ExistingConfirmation()
+    setattr(service, service_attribute, owner)
 
-    _, response = service.send(confirmation, project_id="project_masha_home")
+    def reject_memory_dispatch(*_args, **_kwargs):
+        raise AssertionError("connector proposal reached Home memory handler")
+
+    monkeypatch.setattr(handler, "handle", reject_memory_dispatch)
+
+    _, response = service.send(
+        confirmation,
+        project_id="project_masha_home",
+        conversation_id=conversation.id,
+    )
 
     assert response == "Существующее подтверждение обработано."
+    assert owner.calls == 1
     assert coordinator.coordinate_calls == 0
     assert provider.last_request is None
 
 
 def test_existing_memory_confirmation_resolves_before_v2(tmp_path, memory_path):
+    class CompetingConfirmation:
+        def resolve(self, *_args, **_kwargs):
+            raise AssertionError("connector service must not see a Home proposal")
+
     class CoordinatorSpy:
         coordinate_calls = 0
 
@@ -167,6 +266,14 @@ def test_existing_memory_confirmation_resolves_before_v2(tmp_path, memory_path):
         proposal_store=proposals,
         confirmed_memory=ConfirmedMemoryService(store),
     )
+    for attribute in {
+        "google_calendar_create_service",
+        "google_calendar_update_service",
+        "google_calendar_delete_service",
+        "google_drive_document_create_service",
+        "yandex_mail_mutation_service",
+    }:
+        setattr(service, attribute, CompetingConfirmation())
     coordinator = CoordinatorSpy()
     service.natural_language_coordinator = coordinator
     conversation = service.history.create()
@@ -184,6 +291,54 @@ def test_existing_memory_confirmation_resolves_before_v2(tmp_path, memory_path):
 
     assert response == "Готово, сохранила."
     assert coordinator.coordinate_calls == 0
+    assert provider.last_request is None
+
+
+def test_unknown_proposal_operation_fails_closed_without_calling_any_owner(
+    tmp_path, memory_path
+):
+    class CompetingConfirmation:
+        def resolve(self, *_args, **_kwargs):
+            raise AssertionError("unknown proposal must not reach a connector")
+
+    provider = FakeProvider(provider_id="ollama-local", response_text="model must not run")
+    service = _service(tmp_path, provider)
+    proposals = MemoryProposalStore(tmp_path / "proposals.json")
+    handler = MemoryIntentHandler(
+        proposal_store=proposals,
+        confirmed_memory=ConfirmedMemoryService(MemoryStore(memory_path)),
+    )
+    service.memory_intent_handler = handler
+    conversation = service.history.create()
+    proposal = proposals.create(MemoryProposal(
+        id="unknown-proposal",
+        conversation_id=conversation.id,
+        record_type="fact",
+        record_payload={"value": "не применять"},
+        created_at=datetime.now(timezone.utc),
+        status=ProposalStatus.PENDING,
+        operation="future_unknown_operation",
+    ))
+    for attribute in {
+        "google_calendar_create_service",
+        "google_calendar_update_service",
+        "google_calendar_delete_service",
+        "google_drive_document_create_service",
+        "yandex_mail_mutation_service",
+    }:
+        setattr(service, attribute, CompetingConfirmation())
+
+    response, status = service.resolve_proposal_confirmation(
+        conversation_id=conversation.id,
+        proposal_id=proposal.id,
+        confirm=True,
+        project_id="project_masha_home",
+    )
+
+    assert "владельца" in response
+    assert "Ничего не меняю" in response
+    assert status == "pending"
+    assert proposals.get(proposal.id).status is ProposalStatus.PENDING
     assert provider.last_request is None
 
 

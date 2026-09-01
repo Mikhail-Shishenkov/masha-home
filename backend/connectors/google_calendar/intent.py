@@ -172,18 +172,30 @@ def calendar_intent(message: str, now_local: datetime) -> CalendarIntent | None:
     if re.search(r"\bсвобод(?:ен|на|но)\b.*\bсегодня\b.*\bвечер|\bсегодня\s+вечером\b.*\bсвобод", text):
         start = datetime.combine(today, time(18), tzinfo=now_local.tzinfo)
         return CalendarIntent("free", start, start + timedelta(hours=5))
-    if "завтра" in text and _schedule_question(text):
+    if _schedule_question(text):
+        return calendar_period_intent(text, now_local)
+    return None
+
+
+def calendar_period_intent(period: str, now_local: datetime) -> CalendarIntent | None:
+    """Resolve only an explicit human period; never invent a default window."""
+
+    text = _SPACE.sub(
+        " ", _PUNCT.sub(" ", period.casefold().replace("ё", "е")),
+    ).strip()
+    today = now_local.date()
+    if "завтра" in text:
         start = datetime.combine(today + timedelta(days=1), time.min, tzinfo=now_local.tzinfo)
         return CalendarIntent("schedule", start, start + timedelta(days=1))
-    if re.search(r"\b(?:эт(?:а|ой|у)\s+недел\w*|на\s+недел\w*)\b", text) and _schedule_question(text):
+    if re.search(r"\b(?:эт(?:а|ой|у)|ближайш\w*|на)\s+недел\w*\b", text):
         start = datetime.combine(today - timedelta(days=today.weekday()), time.min, tzinfo=now_local.tzinfo)
         return CalendarIntent("schedule", start, start + timedelta(days=7))
     for word, weekday in _WEEKDAYS.items():
-        if word in text and _schedule_question(text):
+        if word in text:
             delta = (weekday - today.weekday()) % 7
             start = datetime.combine(today + timedelta(days=delta), time.min, tzinfo=now_local.tzinfo)
             return CalendarIntent("schedule", start, start + timedelta(days=1))
-    if "сегодня" in text and _schedule_question(text):
+    if "сегодня" in text:
         start = datetime.combine(today, time.min, tzinfo=now_local.tzinfo)
         return CalendarIntent("schedule", start, start + timedelta(days=1))
     return None

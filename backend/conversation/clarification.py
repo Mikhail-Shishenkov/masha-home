@@ -48,6 +48,7 @@ from .semantic_resolver import (
     SemanticValidationError,
     ValidatedSemanticFollowUp,
 )
+from .turn_context import TurnContextEnvelope
 
 
 DEFAULT_CLARIFICATION_TTL = timedelta(minutes=30)
@@ -298,6 +299,8 @@ class DeterministicClarificationBuilder:
         operation_id = frame.candidates[0].operation_id
         if slot_name in {"subject", "title"} and operation_id == "google_calendar.event.create":
             return "Что именно поставить в календарь?"
+        if slot_name == "period" and operation_id == "google_calendar.read":
+            return "За какой период посмотреть — сегодня, завтра или ближайшую неделю?"
         prompts = {
             "subject": "Что именно нужно запомнить как дело?",
             "title": "Как это назвать?",
@@ -309,6 +312,7 @@ class DeterministicClarificationBuilder:
                 else "На сколько времени поставить?"
             ),
             "content": "Что именно сохранить?",
+            "memory_content": "Что именно запомнить?",
             "query": "Что именно найти?",
             "target": "Где это сделать?",
         }
@@ -390,6 +394,8 @@ class FollowUpResolutionEngine:
         self,
         pending: PendingResolution,
         follow_up: str,
+        *,
+        turn_context: TurnContextEnvelope | None = None,
     ) -> FollowUpResolutionResult:
         if pending.status is not PendingResolutionStatus.PENDING:
             raise PendingResolutionTransitionError("only active pending meaning can be resolved")
@@ -451,7 +457,11 @@ class FollowUpResolutionEngine:
                 )
             if slot is not None:
                 return self._fill_slot(pending, slot)
-        semantic = self._semantic_follow_up(pending, original)
+        semantic = self._semantic_follow_up(
+            pending,
+            original,
+            turn_context=turn_context,
+        )
         if semantic is not None:
             return semantic
         if pending.clarification_kind in {
@@ -531,6 +541,8 @@ class FollowUpResolutionEngine:
         self,
         pending: PendingResolution,
         follow_up: str,
+        *,
+        turn_context: TurnContextEnvelope | None = None,
     ) -> FollowUpResolutionResult | None:
         if (
             self.semantic_resolver is None
@@ -544,6 +556,7 @@ class FollowUpResolutionEngine:
                 follow_up,
                 self.semantic_validator.vocabulary(),
                 context,
+                turn_context=turn_context,
             )
             self.last_semantic_result = result
             if result.proposal is None:

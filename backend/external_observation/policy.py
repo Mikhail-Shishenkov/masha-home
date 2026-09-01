@@ -20,7 +20,7 @@ class InternetAccessPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: Literal["1.0"] = "1.0"
-    mode: InternetAccessMode = InternetAccessMode.EXPLICIT
+    mode: InternetAccessMode = InternetAccessMode.AUTO
     allow_task_scoped: bool = False
     allow_background: bool = False
     max_provider_calls_per_turn: int = Field(default=2, ge=1, le=2)
@@ -30,9 +30,9 @@ class InternetAccessPolicy(BaseModel):
     monthly_brave_request_cap: int = Field(default=900, ge=0, le=900)
 
     @model_validator(mode="after")
-    def w1_future_modes_remain_disabled(self):
+    def background_modes_remain_disabled(self):
         if self.allow_task_scoped or self.allow_background:
-            raise ValueError("task-scoped and background Internet access are not implemented in W1")
+            raise ValueError("task-scoped and background Internet access are not implemented")
         return self
 
 

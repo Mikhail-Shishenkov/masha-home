@@ -12,7 +12,13 @@ from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from backend.connectors import google_drive_cli
 from backend.connectors.google_calendar.oauth import OAuthTokens
-from backend.connectors.google_drive.config import GoogleDriveConfig, GoogleDriveConfigStore, GOOGLE_DRIVE_SCOPE
+from backend.connectors.google_drive.config import (
+    GOOGLE_DOCUMENTS_WRITE_SCOPE,
+    GOOGLE_DOCUMENTS_WRITE_SECRET_REF,
+    GOOGLE_DRIVE_SCOPE,
+    GoogleDriveConfig,
+    GoogleDriveConfigStore,
+)
 from backend.connectors.google_drive.network import GoogleDriveNetworkBlocked
 from backend.connectors.google_drive.reader import (
     DriveFileCandidate,
@@ -255,3 +261,52 @@ def test_cli_connect_and_disconnect_keep_drive_credentials_only_in_secret_store(
     assert "DRIVE_CLIENT_SECRET_MUST_NOT_ESCAPE" not in saved and "DRIVE_REFRESH_TOKEN_MUST_NOT_ESCAPE" not in saved
     google_drive_cli.disconnect_google_drive(config_store=GoogleDriveConfigStore(tmp_path / "local-data/config/google-drive.json"), secret_store=secrets)
     assert not secrets.exists(config.secret_ref) and not secrets.exists(config.client_secret_ref)
+
+
+def test_cli_read_reconnect_preserves_healthy_document_write_connection(tmp_path: Path, monkeypatch):
+    client_json = tmp_path / "client.json"
+    client_json.write_text(json.dumps({"installed": {
+        "client_id": "desktop-client-identifier",
+        "client_secret": "DRIVE_CLIENT_SECRET_MUST_NOT_ESCAPE",
+    }}), encoding="utf-8")
+    config_store = GoogleDriveConfigStore(
+        tmp_path / "local-data/config/google-drive.json"
+    )
+    existing = GoogleDriveConfig(
+        client_id="desktop-client-identifier",
+        document_write_secret_ref=GOOGLE_DOCUMENTS_WRITE_SECRET_REF,
+        document_write_requested_scope=GOOGLE_DOCUMENTS_WRITE_SCOPE,
+    )
+    config_store.save(existing)
+    secrets = InMemorySecretStore()
+    secrets.put(existing.client_secret_ref, "DRIVE_CLIENT_SECRET_MUST_NOT_ESCAPE")
+    secrets.put(
+        GOOGLE_DOCUMENTS_WRITE_SECRET_REF,
+        "DOCUMENT_WRITE_REFRESH_MUST_NOT_ESCAPE",
+    )
+
+    class Flow:
+        def __init__(self, **_kwargs):
+            pass
+
+        def authorize(self, config, *, client_secret, timeout_seconds=180.0):
+            assert config.document_write_secret_ref == GOOGLE_DOCUMENTS_WRITE_SECRET_REF
+            assert client_secret == "DRIVE_CLIENT_SECRET_MUST_NOT_ESCAPE"
+            return OAuthTokens(refresh_token="NEW_DRIVE_READ_REFRESH_MUST_NOT_ESCAPE")
+
+    monkeypatch.setattr(
+        google_drive_cli, "WindowsCredentialManagerSecretStore", lambda: secrets
+    )
+    monkeypatch.setattr(google_drive_cli, "GoogleDesktopOAuthFlow", Flow)
+
+    assert google_drive_cli.main([
+        "--project-root", str(tmp_path), "connect", "--client-json", str(client_json),
+    ]) == 0
+
+    saved = config_store.load()
+    assert saved.document_write_secret_ref == GOOGLE_DOCUMENTS_WRITE_SECRET_REF
+    assert saved.document_write_requested_scope == GOOGLE_DOCUMENTS_WRITE_SCOPE
+    assert secrets.get(GOOGLE_DOCUMENTS_WRITE_SECRET_REF) == (
+        "DOCUMENT_WRITE_REFRESH_MUST_NOT_ESCAPE"
+    )
+    assert secrets.get(saved.secret_ref) == "NEW_DRIVE_READ_REFRESH_MUST_NOT_ESCAPE"

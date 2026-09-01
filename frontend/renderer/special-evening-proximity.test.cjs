@@ -21,10 +21,10 @@ assert.match(scenes, /specialProximity === "close"/);
 assert.match(scenes, /specialProximity === "near"/);
 
 const specialAt = scenes.indexOf("if (specialEvening)");
-const ordinaryAt = scenes.indexOf(
-  '  if (\n  activity === "idle"\n',
-  specialAt
+const ordinaryMatch = /  if \(\r?\n  activity === "idle"\r?\n/.exec(
+  scenes.slice(specialAt)
 );
+const ordinaryAt = ordinaryMatch ? specialAt + ordinaryMatch.index : -1;
 
 assert.ok(specialAt >= 0);
 assert.ok(ordinaryAt > specialAt);

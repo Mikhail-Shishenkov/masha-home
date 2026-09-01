@@ -272,7 +272,20 @@ def default_interpretation_specifications() -> tuple[InterpretationSpecification
             operation_kind="read",
             slots=(InterpretationSlotSpecification(name="target", meaning="selected source reference", normalizer="source_reference"),),
         ),
-        InterpretationSpecification(operation_id="google_calendar.read", purpose="read calendar information", operation_kind="read"),
+        InterpretationSpecification(
+            operation_id="google_calendar.read",
+            required_slots=("period",),
+            purpose=(
+                "показать события или расписание Google Calendar за явно "
+                "запрошенный период; это не входящие письма и не файлы"
+            ),
+            operation_kind="read",
+            slots=(InterpretationSlotSpecification(
+                name="period",
+                meaning="explicit requested calendar window such as today, tomorrow, a weekday, or one week",
+                normalizer="calendar_period",
+            ),),
+        ),
         InterpretationSpecification(
             operation_id="google_calendar.event.create",
             required_slots=("subject", "date", "time"),
@@ -298,15 +311,72 @@ def default_interpretation_specifications() -> tuple[InterpretationSpecification
         ),
         InterpretationSpecification(
             operation_id="google_calendar.event.update",
-            required_slots=("referent", "change"),
+            required_slots=("subject", "date", "time"),
             purpose="change one identified calendar event",
             operation_kind="update",
+            selection_evidence_meaning="человек прямо просит изменить, перенести или сдвинуть уже существующее событие",
+            selection_evidence_examples=("перенеси", "измени", "сдвинь"),
+            selection_evidence_terms=("перенес", "измен", "сдвин"),
             slots=(
-                InterpretationSlotSpecification(name="referent", meaning="event to change", normalizer="reference"),
-                InterpretationSlotSpecification(name="change", meaning="requested event change", normalizer="text"),
+                InterpretationSlotSpecification(name="subject", meaning="human description of the existing event to change, expressed as a noun or infinitive phrase", normalizer="text"),
+                InterpretationSlotSpecification(name="date", meaning="local day on which to look up the existing event", normalizer="date"),
+                InterpretationSlotSpecification(name="time", meaning="new local start time", normalizer="time"),
+                InterpretationSlotSpecification(name="old_time", meaning="current start time when explicitly supplied", required=False, normalizer="time"),
+                InterpretationSlotSpecification(name="duration_minutes", meaning="new event length when explicitly supplied", required=False, normalizer="duration"),
             ),
         ),
-        InterpretationSpecification(operation_id="google_drive.read", purpose="read or list files in Google Drive", operation_kind="read"),
+        InterpretationSpecification(
+            operation_id="google_calendar.event.delete",
+            required_slots=("subject", "date"),
+            purpose="удалить одно уже существующее событие из Google Calendar",
+            operation_kind="update",
+            slots=(
+                InterpretationSlotSpecification(
+                    name="subject",
+                    meaning="human description of the existing calendar event to delete",
+                    normalizer="text",
+                ),
+                InterpretationSlotSpecification(
+                    name="date",
+                    meaning="local day on which to find the event",
+                    normalizer="date",
+                ),
+                InterpretationSlotSpecification(
+                    name="time",
+                    meaning="current event start time when explicitly supplied",
+                    required=False,
+                    normalizer="time",
+                ),
+            ),
+        ),
+        InterpretationSpecification(
+            operation_id="google_drive.read",
+            required_slots=("mode",),
+            purpose=(
+                "прочитать, найти, показать или вывести ограниченный список файлов "
+                "в Google Drive; сюда относится просьба о недавних файлах"
+            ),
+            operation_kind="read",
+            slots=(
+                InterpretationSlotSpecification(
+                    name="mode",
+                    meaning="requested file action: list, recent, search, or read",
+                    normalizer="file_read_mode",
+                ),
+                InterpretationSlotSpecification(
+                    name="query",
+                    meaning="explicit filename or search topic, without provider/action words",
+                    required=False,
+                    normalizer="text",
+                ),
+                InterpretationSlotSpecification(
+                    name="target",
+                    meaning="one explicitly referenced already presented file",
+                    required=False,
+                    normalizer="presented_reference",
+                ),
+            ),
+        ),
         InterpretationSpecification(
             operation_id="home.timed_commitments",
             required_slots=("subject", "date", "time"),
@@ -322,16 +392,215 @@ def default_interpretation_specifications() -> tuple[InterpretationSpecification
             ),
             operation_selection_group="personal_scheduling",
         ),
-        InterpretationSpecification(operation_id="yandex_mail.read", purpose="read new or requested mail", operation_kind="read"),
-        InterpretationSpecification(operation_id="yandex_disk.read", purpose="read or list files on Yandex Disk", operation_kind="read"),
+        InterpretationSpecification(
+            operation_id="yandex_mail.read",
+            purpose=(
+                "проверить или показать почту, новые/непрочитанные письма, либо "
+                "прочитать конкретное уже показанное письмо; «что пришло» означает "
+                "входящие сообщения, а не календарные события"
+            ),
+            operation_kind="read",
+            slots=(
+                InterpretationSlotSpecification(
+                    name="view",
+                    meaning=(
+                        "which mailbox view was requested: unread/new, recent, "
+                        "today, or important"
+                    ),
+                    required=False,
+                    normalizer="mail_view",
+                    default_value="unread",
+                ),
+                InterpretationSlotSpecification(
+                    name="sender",
+                    meaning="explicit human sender to search for",
+                    required=False,
+                    normalizer="text",
+                ),
+                InterpretationSlotSpecification(
+                    name="topic",
+                    meaning="explicit mail subject or topic to search for",
+                    required=False,
+                    normalizer="text",
+                ),
+                InterpretationSlotSpecification(
+                    name="target",
+                    meaning="one explicitly referenced already presented message",
+                    required=False,
+                    normalizer="presented_reference",
+                ),
+            ),
+        ),
+        InterpretationSpecification(
+            operation_id="yandex_mail.message.delete",
+            required_slots=("target",),
+            purpose=(
+                "переместить в корзину одно реально показанное письмо; "
+                "это изменение существующего письма, не чтение"
+            ),
+            operation_kind="update",
+            slots=(InterpretationSlotSpecification(
+                name="target",
+                meaning="one explicit reference to an already presented email",
+                normalizer="presented_reference",
+            ),),
+        ),
+        InterpretationSpecification(
+            operation_id="yandex_mail.message.move",
+            required_slots=("target",),
+            purpose=(
+                "переместить в архив одно реально показанное письмо; "
+                "произвольные папки пока не поддерживаются"
+            ),
+            operation_kind="update",
+            slots=(InterpretationSlotSpecification(
+                name="target",
+                meaning="one explicit reference to an already presented email",
+                normalizer="presented_reference",
+            ),),
+        ),
+        InterpretationSpecification(
+            operation_id="yandex_disk.read",
+            required_slots=("mode",),
+            purpose=(
+                "прочитать, найти, показать или вывести ограниченный список файлов "
+                "на Яндекс Диске; сюда относится просьба о недавних файлах"
+            ),
+            operation_kind="read",
+            slots=(
+                InterpretationSlotSpecification(
+                    name="mode",
+                    meaning="requested file action: list, recent, search, or read",
+                    normalizer="file_read_mode",
+                ),
+                InterpretationSlotSpecification(
+                    name="query",
+                    meaning="explicit filename or search topic, without provider/action words",
+                    required=False,
+                    normalizer="text",
+                ),
+                InterpretationSlotSpecification(
+                    name="target",
+                    meaning="one explicitly referenced already presented file",
+                    required=False,
+                    normalizer="presented_reference",
+                ),
+            ),
+        ),
         InterpretationSpecification(
             operation_id="home.commitments",
+            purpose="показать или найти уже существующие домашние дела и задачи",
+            operation_kind="read",
+            slots=(InterpretationSlotSpecification(
+                name="query", meaning="optional task filter", required=False, normalizer="text",
+            ),),
+        ),
+        InterpretationSpecification(
+            operation_id="home.commitments.create",
             required_slots=("subject",),
-            purpose="create or manage a Home task",
-            operation_kind="manage",
-            slots=(InterpretationSlotSpecification(name="subject", meaning="task to manage", normalizer="text"),),
+            purpose="добавить новое домашнее дело без конкретных даты и времени",
+            operation_kind="create",
+            slots=(InterpretationSlotSpecification(
+                name="subject", meaning="the task to add", normalizer="text",
+            ),),
+        ),
+        InterpretationSpecification(
+            operation_id="home.commitments.complete",
+            required_slots=("target",),
+            purpose="отметить одно существующее домашнее дело выполненным",
+            operation_kind="update",
+            slots=(InterpretationSlotSpecification(
+                name="target", meaning="the existing task to complete", normalizer="text",
+            ),),
         ),
         InterpretationSpecification(operation_id="home.proactive_reminders", purpose="inspect Home reminders", operation_kind="read"),
+        InterpretationSpecification(
+            operation_id="home.memory.recall",
+            purpose=(
+                "ответить, что Маша подтверждённо помнит о человеке или теме; "
+                "это человеческий recall, не административный список памяти"
+            ),
+            operation_kind="read",
+            slots=(InterpretationSlotSpecification(
+                name="query",
+                meaning="explicit topic to recall, if one was named",
+                required=False,
+                normalizer="text",
+            ),),
+        ),
+        InterpretationSpecification(
+            operation_id="home.memory.inspect",
+            purpose="показать или найти сохранённые записи как административный список",
+            operation_kind="read",
+            slots=(InterpretationSlotSpecification(
+                name="query",
+                meaning="explicit filter for saved information",
+                required=False,
+                normalizer="text",
+            ),),
+        ),
+        InterpretationSpecification(
+            operation_id="home.memory.remember",
+            required_slots=("memory_content",),
+            purpose="сохранить явно названный факт, решение или эпизод в подтверждённой памяти",
+            operation_kind="create",
+            slots=(
+                InterpretationSlotSpecification(
+                    name="memory_content",
+                    meaning="the exact information to remember, without a leading speech complementizer",
+                    normalizer="memory_content",
+                ),
+                InterpretationSlotSpecification(
+                    name="record_kind", meaning="fact, decision, or episode when explicitly stated", required=False, normalizer="text",
+                ),
+            ),
+        ),
+        InterpretationSpecification(
+            operation_id="home.memory.forget",
+            required_slots=("target",),
+            purpose=(
+                "забыть по просьбе пользователя, то есть скрыть одно существующее "
+                "подтверждённое воспоминание без удаления других записей"
+            ),
+            operation_kind="update",
+            slots=(InterpretationSlotSpecification(
+                name="target",
+                meaning="the explicitly named existing memory or fact to forget",
+                normalizer="text",
+            ),),
+        ),
+        InterpretationSpecification(
+            operation_id="home.continuity.read",
+            purpose=(
+                "показать общую историю, сохранённые моменты или открытые темы, "
+                "к которым Миша и Маша хотели вернуться"
+            ),
+            operation_kind="read",
+            slots=(InterpretationSlotSpecification(
+                name="query",
+                meaning="explicit history or open-thread topic filter",
+                required=False,
+                normalizer="text",
+            ),),
+        ),
+        InterpretationSpecification(
+            operation_id="home.continuity.open",
+            required_slots=("topic",),
+            purpose="оставить явно названную тему открытой между разговорами",
+            operation_kind="create",
+            slots=(InterpretationSlotSpecification(
+                name="topic", meaning="the discussion topic to keep open", normalizer="text",
+            ),),
+        ),
+        InterpretationSpecification(
+            operation_id="home.continuity.resolve",
+            required_slots=("target",),
+            purpose="закрыть одну существующую открытую тему",
+            operation_kind="update",
+            slots=(InterpretationSlotSpecification(
+                name="target", meaning="the existing open topic to close", normalizer="text",
+            ),),
+        ),
     )
 
 
@@ -339,6 +608,7 @@ _CALENDAR_EXPLICIT = re.compile(r"^(?:поставь|запланируй|соз
 _CALENDAR_STRUCTURAL = re.compile(
     r"^(?:добавь|внеси)\b.*\b(?:в\s+)?календар(?:ь|е)\b"
 )
+_CALENDAR_DESTINATION = re.compile(r"\b(?:в\s+)?календар(?:ь|е)\b")
 _SCHEDULE_AMBIGUOUS = re.compile(r"^запиши\b")
 _REMINDER_EXPLICIT = re.compile(r"^(?:напомни|создай\s+напоминание|поставь\s+напоминание)\b")
 _SAVE_REFERENTIAL = re.compile(r"^сохрани\s+(?P<referent>это|этот\s+текст|эту\s+заметку)$")
@@ -387,7 +657,12 @@ class CapabilityCandidateDiscovery:
 
         self.temporal_engine = temporal_engine
 
-    def interpret(self, utterance: str) -> InterpretationFrame:
+    def interpret(
+        self,
+        utterance: str,
+        *,
+        turn_context=None,
+    ) -> InterpretationFrame:
         original = utterance.strip()
         if not original:
             raise ValueError("utterance must not be empty")
@@ -412,7 +687,10 @@ class CapabilityCandidateDiscovery:
             )
             if candidate is not None:
                 candidates.append(candidate)
-        elif _CALENDAR_EXPLICIT.search(text) or _CALENDAR_STRUCTURAL.search(text):
+        elif (
+            (_CALENDAR_EXPLICIT.search(text) or _SCHEDULE_AMBIGUOUS.search(text))
+            and _CALENDAR_DESTINATION.search(text)
+        ) or _CALENDAR_STRUCTURAL.search(text):
             subject = self._schedule_subject(original)
             if subject is not None:
                 slots = (*slots, InterpretationSlot(
@@ -425,7 +703,7 @@ class CapabilityCandidateDiscovery:
             )
             if candidate is not None:
                 candidates.append(candidate)
-        elif _SCHEDULE_AMBIGUOUS.search(text):
+        elif _CALENDAR_EXPLICIT.search(text) or _SCHEDULE_AMBIGUOUS.search(text):
             subject = self._schedule_subject(original)
             if subject is not None:
                 slots = (*slots, InterpretationSlot(
@@ -566,6 +844,15 @@ class CapabilityCandidateDiscovery:
         subject = re.sub(r"\bнапоминание\b", "", subject, flags=re.IGNORECASE)
         subject = re.sub(r"^\s*запись\s+", "", subject, flags=re.IGNORECASE)
         subject = re.sub(r"\s+", " ", subject).strip(" ,.-")
+        subject_tokens = re.findall(r"[a-zа-яё0-9]+", subject.casefold())
+        if subject_tokens and all(
+            token in {
+                "это", "этот", "эта", "эту", "его", "ее", "её", "их",
+                "событие", "дело", "задача", "напоминание",
+            }
+            for token in subject_tokens
+        ):
+            return None
         return subject[:500] or None
 
     def _candidate(

@@ -5,7 +5,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from backend.secrets import ConnectorCredentialState, SecretRef
 
 YANDEX_MAIL_SCOPE = "mail:imap_ro"
+YANDEX_MAIL_WRITE_SCOPE = "mail:imap_full"
 YANDEX_MAIL_SECRET_REF = SecretRef(value="yandex-mail-primary")
+YANDEX_MAIL_WRITE_SECRET_REF = SecretRef(value="yandex-mail-write-primary")
 YANDEX_MAIL_CLIENT_SECRET_REF = SecretRef(value="yandex-mail-client-secret")
 
 class YandexMailConfig(BaseModel):
@@ -17,8 +19,17 @@ class YandexMailConfig(BaseModel):
     secret_ref: SecretRef = YANDEX_MAIL_SECRET_REF
     client_secret_ref: SecretRef = YANDEX_MAIL_CLIENT_SECRET_REF
     requested_scope: str = Field(default=YANDEX_MAIL_SCOPE, pattern=r"^mail:imap_ro$")
+    write_secret_ref: SecretRef | None = None
+    write_requested_scope: str | None = Field(
+        default=None,
+        pattern=r"^mail:imap_full$",
+    )
     def credential_state(self, store) -> ConnectorCredentialState:
         return ConnectorCredentialState.READY if store.exists(self.secret_ref) and store.exists(self.client_secret_ref) else ConnectorCredentialState.NEEDS_RECONNECT
+    def write_credential_state(self, store) -> ConnectorCredentialState:
+        if self.write_secret_ref is None or self.write_requested_scope is None:
+            return ConnectorCredentialState.DISCONNECTED
+        return ConnectorCredentialState.READY if store.exists(self.write_secret_ref) and store.exists(self.client_secret_ref) else ConnectorCredentialState.NEEDS_RECONNECT
 
 class YandexMailConfigStore:
     def __init__(self, path: Path): self.path = Path(path)

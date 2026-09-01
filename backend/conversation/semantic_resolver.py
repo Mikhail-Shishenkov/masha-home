@@ -38,6 +38,7 @@ from backend.temporal.date_resolution import HomeCalendarDateResolver
 from backend.temporal.duration_resolution import HomeDurationResolver
 
 from .capability_router import normalize_utterance
+from .file_read_semantics import normalize_file_read_mode
 from .interpretation_v2 import (
     CandidateEvidence,
     CandidateEvidenceSource,
@@ -52,6 +53,7 @@ from .interpretation_v2 import (
     InterpretationSpecificationRegistry,
     InterpretationValueOrigin,
 )
+from .turn_context import TurnContextEnvelope
 
 
 _OPERATION_ID = r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$"
@@ -61,6 +63,52 @@ _PROTECTED_SHORT_FOLLOW_UP = frozenset((
     "забудь", "ладно не делай", "в календарь", "календарь",
     "просто напомни", "только напомни", "напоминание",
 ))
+
+# This is a narrow safety contradiction check, not Russian action routing.
+# A local semantic model remains responsible for understanding the request;
+# Home merely refuses to hand a literal move/change request to a CREATE or
+# reminder owner if the proposed operation kind contradicts that evidence.
+_HIGH_CONFIDENCE_UPDATE_WORDS = frozenset((
+    "перенеси", "перенесите", "перенести",
+    "измени", "измените", "изменить",
+    "сдвинь", "сдвиньте", "сдвинуть",
+))
+
+# Pure pointers are unresolved references, not durable slot values.  This is
+# deliberately a tiny grammatical class rather than an operation phrase list.
+_DEICTIC_WORDS = frozenset((
+    "это", "этот", "эта", "эту", "эти", "этого", "этой", "этим", "этих",
+    "то", "тот", "та", "ту", "те", "того", "той", "тем", "тех",
+    "его", "ее", "её", "их",
+))
+_GENERIC_REFERENT_WORDS = frozenset((
+    "тема", "тему", "темы", "нить", "нити", "запись", "записи",
+    "дело", "дела", "задача", "задачу", "событие", "события", "встреча",
+    "встречу", "письмо", "письма", "файл", "файла", "документ", "документа",
+    "напоминание", "напоминания", "факт", "факта", "объект", "объекта",
+    "открытая", "открытую", "сохраненная", "сохраненную", "сохранённая",
+    "сохранённую", "предыдущая", "предыдущую", "прошлая", "прошлую",
+))
+
+
+def _one_edit_apart(left: str, right: str) -> bool:
+    """Bounded typo/inflection check; never allocates a distance matrix."""
+
+    if left == right or abs(len(left) - len(right)) > 1:
+        return False
+    if len(left) == len(right):
+        return sum(a != b for a, b in zip(left, right)) == 1
+    shorter, longer = (left, right) if len(left) < len(right) else (right, left)
+    skipped = False
+    short_index = 0
+    for char in longer:
+        if short_index < len(shorter) and shorter[short_index] == char:
+            short_index += 1
+            continue
+        if skipped:
+            return False
+        skipped = True
+    return True
 
 
 class StrictSemanticModel(BaseModel):
@@ -94,6 +142,24 @@ class SemanticKnownSlot(StrictSemanticModel):
     value: str = Field(min_length=1, max_length=500)
 
 
+class ActionRequestEvidence(StrictSemanticModel):
+    """Literal current-turn evidence that the user is requesting an action."""
+
+    evidence_text: str | None = Field(
+        ...,
+        min_length=1,
+        max_length=300,
+        description=(
+            "Exact current-utterance substring expressing the request speech act. "
+            "Null for ordinary conversation. Context is never valid evidence."
+        ),
+    )
+
+    @property
+    def is_present(self) -> bool:
+        return self.evidence_text is not None
+
+
 class OperationSelectionEvidence(StrictSemanticModel):
     """One explicitly selected operation, or an explicit no-selection object.
 
@@ -114,15 +180,13 @@ class OperationSelectionEvidence(StrictSemanticModel):
         ),
     )
 
-    @model_validator(mode="after")
-    def selection_is_complete_or_absent(self):
-        if (self.operation_id is None) != (self.evidence_text is None):
-            raise ValueError("operation selection requires id and evidence together")
-        return self
-
     @property
     def is_present(self) -> bool:
-        return self.operation_id is not None
+        return self.operation_id is not None and self.evidence_text is not None
+
+    @property
+    def has_any_value(self) -> bool:
+        return self.operation_id is not None or self.evidence_text is not None
 
 
 class SemanticSlotMergeMode(str, Enum):
@@ -242,6 +306,12 @@ class SemanticInterpretationProposal(StrictSemanticModel):
     )
     unresolved_referents: tuple[str, ...] = Field(max_length=8)
     ambiguity_hint: SemanticAmbiguityHint
+    action_request_evidence: ActionRequestEvidence = Field(
+        description=(
+            "Grounded words in the current utterance that make this an action "
+            "request, or null evidence for ordinary conversation."
+        ),
+    )
     operation_selection_evidence: OperationSelectionEvidence = Field(
         description=(
             "One grounded explicit operation selection, or an object whose two "
@@ -264,18 +334,13 @@ class SemanticInterpretationProposal(StrictSemanticModel):
             raise ValueError("semantic proposal repeats a slot")
         if len(self.unresolved_referents) != len(set(self.unresolved_referents)):
             raise ValueError("semantic proposal repeats a referent")
-        if (
-            self.operation_selection_evidence.is_present
-            and self.operation_selection_evidence.operation_id
-            not in self.candidate_operation_ids
-        ):
-            raise ValueError("selection evidence must refer to a proposed operation")
         if self.kind is SemanticProposalKind.ORDINARY and (
             self.candidate_operation_ids
             or self.nearby_operation_ids
             or self.extracted_slots
             or self.unresolved_referents
-            or self.operation_selection_evidence.is_present
+            or self.action_request_evidence.is_present
+            or self.operation_selection_evidence.has_any_value
             or self.ambiguity_hint is not SemanticAmbiguityHint.NONE
         ):
             raise ValueError("ordinary proposal cannot carry capability structure")
@@ -283,7 +348,7 @@ class SemanticInterpretationProposal(StrictSemanticModel):
             self.candidate_operation_ids
             or self.extracted_slots
             or self.unresolved_referents
-            or self.operation_selection_evidence.is_present
+            or self.operation_selection_evidence.has_any_value
             or self.ambiguity_hint is not SemanticAmbiguityHint.NONE
         ):
             raise ValueError("unsupported action cannot carry supported structure")
@@ -292,7 +357,74 @@ class SemanticInterpretationProposal(StrictSemanticModel):
                 raise ValueError("supported action requires a candidate")
             if self.nearby_operation_ids:
                 raise ValueError("supported action cannot carry nearby operations")
+        if (
+            self.kind is not SemanticProposalKind.ORDINARY
+            and not self.action_request_evidence.is_present
+        ):
+            raise ValueError("action proposal requires current-turn action evidence")
         return None
+
+
+def semantic_interpretation_json_schema() -> dict:
+    """Expose the kind-specific wire shapes to constrained generation."""
+
+    schema = SemanticInterpretationProposal.model_json_schema()
+    schema["allOf"] = [{
+        "oneOf": [
+            {
+                "properties": {
+                    "kind": {"const": "ordinary"},
+                    "candidate_operation_ids": {"maxItems": 0},
+                    "nearby_operation_ids": {"maxItems": 0},
+                    "extracted_slots": {"maxItems": 0},
+                    "unresolved_referents": {"maxItems": 0},
+                    "ambiguity_hint": {"const": "none"},
+                    "action_request_evidence": {
+                        "properties": {"evidence_text": {"const": None}},
+                    },
+                    "operation_selection_evidence": {
+                        "properties": {
+                            "operation_id": {"const": None},
+                            "evidence_text": {"const": None},
+                        },
+                    },
+                },
+            },
+            {
+                "properties": {
+                    "kind": {"const": "supported_action"},
+                    "candidate_operation_ids": {"minItems": 1},
+                    "nearby_operation_ids": {"maxItems": 0},
+                    "action_request_evidence": {
+                        "properties": {
+                            "evidence_text": {"type": "string", "minLength": 1},
+                        },
+                    },
+                },
+            },
+            {
+                "properties": {
+                    "kind": {"const": "unsupported_action"},
+                    "candidate_operation_ids": {"maxItems": 0},
+                    "extracted_slots": {"maxItems": 0},
+                    "unresolved_referents": {"maxItems": 0},
+                    "ambiguity_hint": {"const": "none"},
+                    "action_request_evidence": {
+                        "properties": {
+                            "evidence_text": {"type": "string", "minLength": 1},
+                        },
+                    },
+                    "operation_selection_evidence": {
+                        "properties": {
+                            "operation_id": {"const": None},
+                            "evidence_text": {"const": None},
+                        },
+                    },
+                },
+            },
+        ],
+    }]
+    return schema
 
 
 def parse_semantic_interpretation(value) -> SemanticInterpretationProposal:
@@ -341,6 +473,7 @@ class SemanticValidationTrace(StrictSemanticModel):
 
     accepted_operation_ids: tuple[str, ...] = Field(default=(), max_length=8)
     rejected_operations: tuple[SemanticFieldValidation, ...] = Field(default=(), max_length=8)
+    action_request: SemanticFieldValidation | None = None
     operation_selection: SemanticFieldValidation | None = None
     slots: tuple[SemanticFieldValidation, ...] = Field(default=(), max_length=24)
     referents: tuple[SemanticFieldValidation, ...] = Field(default=(), max_length=8)
@@ -410,6 +543,7 @@ class SemanticResolver(Protocol):
         vocabulary: tuple[SemanticVocabularyItem, ...],
         *,
         profile_id: str | None = None,
+        turn_context: TurnContextEnvelope | None = None,
     ) -> SemanticResolverResult: ...
 
     def resolve_follow_up(
@@ -419,6 +553,7 @@ class SemanticResolver(Protocol):
         context: SemanticPendingContext,
         *,
         profile_id: str | None = None,
+        turn_context: TurnContextEnvelope | None = None,
     ) -> SemanticFollowUpResult: ...
 
 
@@ -448,7 +583,7 @@ class LocalSemanticResolver:
         *,
         router,
         role_profiles: ModelRoleProfileStore,
-        timeout_seconds: float = 8.0,
+        timeout_seconds: float = 15.0,
         clock=perf_counter,
     ):
         if not 0 < timeout_seconds <= 15:
@@ -465,6 +600,7 @@ class LocalSemanticResolver:
         vocabulary: tuple[SemanticVocabularyItem, ...],
         *,
         profile_id: str | None = None,
+        turn_context: TurnContextEnvelope | None = None,
     ) -> SemanticResolverResult:
         started = self.clock()
         try:
@@ -477,9 +613,13 @@ class LocalSemanticResolver:
                 raise ValueError("semantic profile disabled")
         except (KeyError, ValueError):
             return self._failed(SemanticResolverFailure.ROLE_UNAVAILABLE, started)
+        total_timeout = min(profile.timeout_seconds, self.timeout_seconds)
         request = ModelRequest(
             messages=(
-                ModelMessage(role=MessageRole.SYSTEM, content=self._prompt(vocabulary)),
+                ModelMessage(
+                    role=MessageRole.SYSTEM,
+                    content=self._prompt(vocabulary, turn_context),
+                ),
                 ModelMessage(role=MessageRole.USER, content=utterance[:20_000]),
             ),
             identity_context=_resolver_identity(),
@@ -489,19 +629,47 @@ class LocalSemanticResolver:
             ),
             privacy_scope=PrivacyScope.LOCAL_ONLY,
             preferred_provider_id=profile.provider_id,
-            timeout_seconds=min(profile.timeout_seconds, self.timeout_seconds),
+            timeout_seconds=total_timeout,
             execution_model_id=profile.model_id,
             execution_think=False,
-            structured_output_schema=SemanticInterpretationProposal.model_json_schema(),
+            structured_output_schema=semantic_interpretation_json_schema(),
             generation_temperature=0,
         )
         try:
             response = self.router.generate(request)
             if response.finish_reason not in {FinishReason.COMPLETED, FinishReason.LENGTH}:
                 return self._failed(SemanticResolverFailure.MALFORMED_OUTPUT, started)
-            proposal = SemanticInterpretationProposal.model_validate(
-                json.loads(response.text)
-            )
+            try:
+                proposal = self._parse_fresh_proposal(response.text)
+            except (json.JSONDecodeError, ValidationError, ValueError, TypeError) as error:
+                remaining = total_timeout - max(0.0, self.clock() - started)
+                if remaining <= 0:
+                    return self._failed(SemanticResolverFailure.TIMEOUT, started)
+                repaired_system = request.messages[0].model_copy(update={
+                    "content": (
+                        request.messages[0].content
+                        + "\nSchema repair: предыдущий JSON нарушил взаимоисключающую "
+                        "форму kind. candidate_operation_ids непустой только для "
+                        "supported_action; ordinary/unsupported_action не несут "
+                        "supported slots или selection. Верни исправленный JSON, "
+                        "не меняя смысл и не выдумывая evidence. Если подходящая "
+                        "operation уже есть в безопасном каталоге, отсутствие или "
+                        "неясность target/slot требует supported_action и дальнейшего "
+                        "уточнения, а не unsupported_action."
+                    ),
+                })
+                repair_request = request.model_copy(update={
+                    "messages": (repaired_system, request.messages[1]),
+                    "timeout_seconds": remaining,
+                })
+                repaired = self.router.generate(repair_request)
+                if repaired.finish_reason not in {
+                    FinishReason.COMPLETED, FinishReason.LENGTH,
+                }:
+                    return self._failed(
+                        SemanticResolverFailure.MALFORMED_OUTPUT, started,
+                    )
+                proposal = self._parse_fresh_proposal(repaired.text)
         except ModelTimeoutError:
             return self._failed(SemanticResolverFailure.TIMEOUT, started)
         except ModelCapabilityUnavailableError:
@@ -519,6 +687,12 @@ class LocalSemanticResolver:
         self.last_result = result
         return result
 
+    @staticmethod
+    def _parse_fresh_proposal(text: str) -> SemanticInterpretationProposal:
+        proposal = SemanticInterpretationProposal.model_validate(json.loads(text))
+        proposal.validate_home_shape()
+        return proposal
+
     def resolve_follow_up(
         self,
         utterance: str,
@@ -526,6 +700,7 @@ class LocalSemanticResolver:
         context: SemanticPendingContext,
         *,
         profile_id: str | None = None,
+        turn_context: TurnContextEnvelope | None = None,
     ) -> SemanticFollowUpResult:
         """Interpret one turn against bounded pending meaning, never history."""
 
@@ -546,7 +721,11 @@ class LocalSemanticResolver:
             messages=(
                 ModelMessage(
                     role=MessageRole.SYSTEM,
-                    content=self._follow_up_prompt(vocabulary, context),
+                    content=self._follow_up_prompt(
+                        vocabulary,
+                        context,
+                        turn_context,
+                    ),
                 ),
                 ModelMessage(role=MessageRole.USER, content=utterance[:20_000]),
             ),
@@ -614,7 +793,10 @@ class LocalSemanticResolver:
         )
 
     @staticmethod
-    def _prompt(vocabulary: tuple[SemanticVocabularyItem, ...]) -> str:
+    def _prompt(
+        vocabulary: tuple[SemanticVocabularyItem, ...],
+        turn_context: TurnContextEnvelope | None = None,
+    ) -> str:
         operations = [item.model_dump(mode="json") for item in vocabulary]
         selection_rules = [
             {
@@ -636,13 +818,20 @@ class LocalSemanticResolver:
             for item in vocabulary
             for example in item.selection_evidence_examples
         ]
+        context_contract = LocalSemanticResolver._turn_context_contract(turn_context)
         return (
             "Ты локальный семантический интерпретатор одной текущей русской реплики. "
             "Ты не отвечаешь человеку, не выполняешь действия и не даёшь разрешений. "
             "Определи основной речевой акт, даже если просьба окружена приветствием, "
             "вежливостью или разговорной вводной. Не превращай рассказ, предположение, "
             "воспоминание или вопрос-совет в действие. Используй только операции из "
-            "переданного списка и только смысл текущей реплики. Не выдумывай значения "
+            "переданного списка и только смысл текущей реплики. Не выдумывай значения. "
+            "Различай operation_kind: create означает просьбу создать новый объект, "
+            "update — изменить уже существующий объект (например перенести, изменить "
+            "или сдвинуть его), read — прочитать или проверить. Слова о месте или "
+            "провайдере отвечают только на вопрос «где» и сами по себе никогда не "
+            "доказывают create. Если человек просит изменить существующий объект, "
+            "выбирай подходящую catalog operation с kind=update, а не create. "
             "и не вычисляй даты, время или длительность. Для каждого slot верни "
             "evidence_text — точный фрагмент текущей реплики. Для неоднозначного "
             "действия верни все правдоподобные операции. kind обязан быть ровно "
@@ -650,13 +839,39 @@ class LocalSemanticResolver:
             "ordinary — человек не просит выполнить действие. supported_action — "
             "в каталоге есть хотя бы одна операция, подходящая по смыслу просьбы; "
             "тогда верни candidate_operation_ids и grounded slot evidence. "
+            "Read-only просьбы показать, проверить, прочитать, найти или перечислить "
+            "данные тоже являются supported_action, если в каталоге есть подходящая "
+            "read-операция; вопрос о том, что имеется в явно названном источнике, "
+            "тоже является просьбой показать его содержимое. Отсутствие мутации не "
+            "делает такие просьбы ordinary. "
             "unsupported_action — явное действие, для которого в каталоге нет ни "
             "одной подходящей операции; не выбирай его, если подходящая операция "
-            "в каталоге существует. nearby_operation_ids допустимы только для "
+            "в каталоге существует. Недостающий или неясный slot/target не делает "
+            "известную catalog operation неподдерживаемой: это supported_action, которой "
+            "потребуется уточнение. nearby_operation_ids допустимы только для "
             "unsupported_action. "
+            "action_request_evidence.evidence_text для supported_action и "
+            "unsupported_action обязан быть точным фрагментом ТЕКУЩЕЙ реплики, "
+            "который выражает просьбу выполнить действие (включая разговорную или "
+            "вопросительную форму). Копируй минимальную предикативную часть просьбы, "
+            "и никогда не возвращай null для supported_action. Для вопросительной "
+            "read-просьбы скопируй вопросительный предикат вроде «что нового», "
+            "«какие ... есть» или «не пришло ли ...», а не только имя источника. "
+            "без приветствия: повелительная, вежливая вопросительная и совместная "
+            "форма могут быть просьбой. Выражение потребности является просьбой "
+            "только когда человек просит Машу что-то сделать; личное «мне надо на "
+            "занятие» без обращения к Маше остаётся сообщением. Рассказ о планах, "
+            "предмете или будущем без просьбы выполнить действие остаётся ordinary. "
+            "Не используй для evidence только название объекта, место, память или "
+            "контекст без самой просьбы. Для ordinary верни "
+            "action_request_evidence={\"evidence_text\":null}. "
             "operation_selection_evidence добавляй только когда точный фрагмент "
             "реплики явно выбирает конкретное место или тип действия; общая просьба "
             "запланировать не является таким выбором. Для item с непустым "
+            "operation_selection_group это отдельное доказательство выбора внутри "
+            "группы. Если у выбранной operation operation_selection_group=null, "
+            "всегда верни оба поля operation_selection_evidence null: сам выбор "
+            "candidate не является operation selection. "
             "selection_evidence_meaning проверь, выражен ли этот человеческий смысл "
             "буквально в текущей реплике: тогда выбери именно этот operation_id и "
             "скопируй реальные слова человека как evidence_text. Если явного выбора "
@@ -664,6 +879,11 @@ class LocalSemanticResolver:
             "даже если предлагаешь один candidate. "
             "unresolved_referents содержит только реально присутствующее указание "
             "на неизвестный объект (например «это»), а не отсутствующий slot. "
+            "extracted_slots может содержать только slot names, объявленные в slots "
+            "подходящих operations; не придумывай period/target или другие поля для "
+            "operation без таких slots. Если единственный P-объект однозначно "
+            "разрешает местоимение текущей read-просьбы, не считай эту ссылку "
+            "unresolved: application всё равно повторно проверит реальный объект. "
             "Не ставь confidence. "
             "Верни только JSON, соответствующий response schema. "
             "Безопасный каталог операций и требуемых смысловых слотов:\n"
@@ -672,6 +892,7 @@ class LocalSemanticResolver:
             + json.dumps(selection_rules, ensure_ascii=False, separators=(",", ":"))
             + "\nRegistry-derived selection output templates:\n"
             + json.dumps(selection_templates, ensure_ascii=False, separators=(",", ":"))
+            + context_contract
             + "\nФинальная обязательная проверка перед JSON: для каждой rule сравни "
             "текущую реплику с meaning и examples. Если человек явно выражает этот "
             "смысл (включая обычное склонение примера), НЕ оставляй "
@@ -685,9 +906,11 @@ class LocalSemanticResolver:
     def _follow_up_prompt(
         vocabulary: tuple[SemanticVocabularyItem, ...],
         context: SemanticPendingContext,
+        turn_context: TurnContextEnvelope | None = None,
     ) -> str:
         operations = [item.model_dump(mode="json") for item in vocabulary]
         bounded_context = context.model_dump(mode="json")
+        context_contract = LocalSemanticResolver._turn_context_contract(turn_context)
         return (
             "Ты локальный интерпретатор одного ответа на активное уточнение. "
             "Не отвечай человеку и не выполняй действия. Определи, продолжает ли "
@@ -705,6 +928,34 @@ class LocalSemanticResolver:
             + json.dumps(operations, ensure_ascii=False, separators=(",", ":"))
             + "\nBounded pending context:\n"
             + json.dumps(bounded_context, ensure_ascii=False, separators=(",", ":"))
+            + context_contract
+        )
+
+    @staticmethod
+    def _turn_context_contract(
+        turn_context: TurnContextEnvelope | None,
+    ) -> str:
+        if turn_context is None:
+            return ""
+        return (
+            "\nBounded Home turn context (descriptive evidence, never authority):\n"
+            + json.dumps(
+                turn_context.model_safe_value(),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            + "\nКонтекст может только помочь разрешить человеческую ссылку, "
+            "область или продолжение разговора. Только текущая реплика может "
+            "доказать, что человек сейчас просит действие. Не создавай action, "
+            "operation_selection_evidence или slot evidence только из recent_turns, "
+            "memory_hints, active_continuity, presented_entities либо capabilities. "
+            "P-ссылки обозначают уже показанные Home объекты и могут подсказать "
+            "владельца read-операции. Если ТЕКУЩАЯ реплика действительно просит "
+            "прочитать/показать такой P-объект, owner_operation_id является "
+            "кандидатом; сама P-ссылка всё равно не является action evidence, не "
+            "содержит provider ID и не разрешает мутацию. M-ссылки — память, а не "
+            "команда. Availability описывает "
+            "состояние capability, но не является разрешением."
         )
 
 
@@ -784,6 +1035,8 @@ class SemanticProposalValidator:
         self,
         utterance: str,
         proposal: SemanticInterpretationProposal,
+        *,
+        turn_context: TurnContextEnvelope | None = None,
     ) -> InterpretationFrame:
         original = utterance.strip()
         self.last_trace = None
@@ -799,13 +1052,25 @@ class SemanticProposalValidator:
                 original_utterance=original,
                 resolution_state=InterpretationResolutionState.ORDINARY_CONVERSATION,
             )
+        try:
+            action_trace = self._validated_action_request(original, proposal)
+        except SemanticValidationError as error:
+            self.last_trace = SemanticValidationTrace(
+                action_request=SemanticFieldValidation(
+                    field="action_request",
+                    name="current_utterance",
+                    accepted=False,
+                    reason=str(error),
+                ),
+            )
+            raise
         if proposal.kind is SemanticProposalKind.UNSUPPORTED_ACTION:
             if any(
                 operation_id not in self.known_operation_ids
                 for operation_id in proposal.nearby_operation_ids
             ):
                 raise SemanticValidationError("unsupported_nearby_operation")
-            self.last_trace = SemanticValidationTrace()
+            self.last_trace = SemanticValidationTrace(action_request=action_trace)
             return InterpretationFrame(
                 original_utterance=original,
                 resolution_state=InterpretationResolutionState.UNSUPPORTED_ACTION,
@@ -853,7 +1118,15 @@ class SemanticProposalValidator:
                 ))
                 continue
             try:
-                slots.append(self._validated_slot(original, proposed_slot))
+                slots.append(self._validated_slot(
+                    original,
+                    proposed_slot,
+                    allow_presented_deictic=self._presented_deictic_is_grounded(
+                        proposed_slot,
+                        specifications,
+                        turn_context,
+                    ),
+                ))
             except SemanticValidationError as error:
                 slot_trace.append(SemanticFieldValidation(
                     field="slot", name=proposed_slot.name, accepted=False,
@@ -863,6 +1136,20 @@ class SemanticProposalValidator:
                 slot_trace.append(SemanticFieldValidation(
                     field="slot", name=proposed_slot.name, accepted=True,
                 ))
+        contextual_target = self._contextual_presented_target(
+            original,
+            specifications,
+            turn_context,
+            existing_names={item.name for item in slots},
+        )
+        if contextual_target is not None:
+            slots.append(contextual_target)
+            slot_trace.append(SemanticFieldValidation(
+                field="slot",
+                name="target",
+                accepted=True,
+                reason="single_presented_entity_grounded",
+            ))
         slots = tuple(slots)
         slot_names = {slot.name for slot in slots}
         candidates = tuple(
@@ -918,24 +1205,55 @@ class SemanticProposalValidator:
         self.last_trace = SemanticValidationTrace(
             accepted_operation_ids=tuple(item.operation_id for item in specifications),
             rejected_operations=tuple(rejected_operations),
+            action_request=action_trace,
             operation_selection=selection_trace,
             slots=tuple(slot_trace),
             referents=tuple(referent_trace),
         )
         return frame
 
+    def _validated_action_request(
+        self,
+        utterance: str,
+        proposal: SemanticInterpretationProposal,
+    ) -> SemanticFieldValidation:
+        evidence = proposal.action_request_evidence.evidence_text
+        if evidence is None or not self._action_evidence_is_grounded(
+            utterance, evidence,
+        ):
+            raise SemanticValidationError("invented_action_request_evidence")
+        return SemanticFieldValidation(
+            field="action_request",
+            name="current_utterance",
+            accepted=True,
+        )
+
     def _validated_operation_selection(
         self,
         utterance: str,
         proposal: SupportedActionProposal,
     ) -> tuple[str | None, SemanticFieldValidation | None]:
-        if not proposal.operation_selection_evidence.is_present:
-            return None, None
         evidence = proposal.operation_selection_evidence
+        if not evidence.has_any_value:
+            return None, None
+        if not evidence.is_present:
+            return None, SemanticFieldValidation(
+                field="operation_selection",
+                name=evidence.operation_id or "incomplete",
+                accepted=False,
+                reason="incomplete_operation_selection_evidence",
+            )
         if evidence.operation_id not in self.known_operation_ids:
             return None, SemanticFieldValidation(
                 field="operation_selection", name=evidence.operation_id or "unknown",
                 accepted=False, reason="unknown_operation_selection",
+            )
+        if evidence.operation_id not in proposal.candidate_operation_ids:
+            return None, SemanticFieldValidation(
+                field="operation_selection",
+                name=evidence.operation_id,
+                accepted=False,
+                reason="operation_selection_not_in_candidates",
             )
         if not self._evidence_is_grounded(utterance, evidence.evidence_text):
             return None, SemanticFieldValidation(
@@ -1014,6 +1332,16 @@ class SemanticProposalValidator:
                     name="date",
                     value=resolved_date.canonical,
                     origin=InterpretationValueOrigin.TEMPORAL_NORMALIZED,
+                )
+        for slot in specification.slots:
+            if slot.name in slots or slot.normalizer != "file_read_mode":
+                continue
+            mode = normalize_file_read_mode(frame.original_utterance)
+            if mode is not None:
+                slots[slot.name] = InterpretationSlot(
+                    name=slot.name,
+                    value=mode,
+                    origin=InterpretationValueOrigin.DETERMINISTIC,
                 )
         for slot in specification.slots:
             if not slot.required and slot.default_value is not None and slot.name not in slots:
@@ -1181,12 +1509,18 @@ class SemanticProposalValidator:
     ) -> InterpretationSlot:
         value = proposal.evidence_text.strip()
         normalized = normalize_utterance(utterance)
-        if not SemanticProposalValidator._evidence_is_grounded(utterance, value):
+        if not SemanticProposalValidator._slot_evidence_is_grounded(
+            utterance, value,
+        ):
             raise SemanticValidationError(
                 "follow_up_subject_not_grounded"
                 if proposal.name == "subject"
                 else "follow_up_value_not_grounded"
             )
+        if SemanticProposalValidator._is_deictic_only_slot_value(
+            proposal.name, value,
+        ):
+            raise SemanticValidationError("follow_up_unresolved_deictic_value")
         if proposal.name == "date":
             resolved = date_resolver.resolve(value)
             if resolved is None:
@@ -1196,7 +1530,7 @@ class SemanticProposalValidator:
                 value=resolved.canonical,
                 origin=InterpretationValueOrigin.TEMPORAL_NORMALIZED,
             )
-        if proposal.name == "time":
+        if proposal.name in {"time", "old_time"}:
             proposed_times = _utterance_times(value.casefold().replace("ё", "е"))
             grounded_times = _utterance_times(
                 utterance.casefold().replace("ё", "е")
@@ -1205,7 +1539,7 @@ class SemanticProposalValidator:
             if len(matches) != 1:
                 raise SemanticValidationError("follow_up_time_not_grounded")
             return InterpretationSlot(
-                name="time",
+                name=proposal.name,
                 value=next(iter(matches)),
                 origin=InterpretationValueOrigin.TEMPORAL_NORMALIZED,
             )
@@ -1220,10 +1554,21 @@ class SemanticProposalValidator:
                 value=resolved.canonical,
                 origin=InterpretationValueOrigin.TEMPORAL_NORMALIZED,
             )
+        if proposal.name == "mode":
+            mode = normalize_file_read_mode(value)
+            if mode is None:
+                raise SemanticValidationError("follow_up_file_read_mode_invalid")
+            return InterpretationSlot(
+                name="mode",
+                value=mode,
+                origin=InterpretationValueOrigin.FOLLOW_UP_SEMANTIC,
+            )
+        if proposal.name == "memory_content":
+            value = SemanticProposalValidator._normalize_memory_content(value)
         if proposal.name == "subject":
-            utterance_tokens = set(meaningful_tokens(normalized))
-            value_tokens = set(meaningful_tokens(value))
-            if not value_tokens or not value_tokens.issubset(utterance_tokens):
+            if not SemanticProposalValidator._slot_evidence_is_grounded(
+                utterance, value,
+            ):
                 raise SemanticValidationError("follow_up_subject_not_grounded")
         return InterpretationSlot(
             name=proposal.name,
@@ -1273,15 +1618,22 @@ class SemanticProposalValidator:
         self,
         utterance: str,
         proposal: SemanticSlotEvidenceProposal,
+        *,
+        allow_presented_deictic: bool = False,
     ) -> InterpretationSlot:
         value = proposal.evidence_text.strip()
         normalized = normalize_utterance(utterance)
-        if not self._evidence_is_grounded(utterance, value):
+        if not self._slot_evidence_is_grounded(utterance, value):
             raise SemanticValidationError(
                 "invented_subject"
                 if proposal.name == "subject"
                 else "slot_evidence_not_grounded"
             )
+        if (
+            self._is_deictic_only_slot_value(proposal.name, value)
+            and not allow_presented_deictic
+        ):
+            raise SemanticValidationError("unresolved_deictic_slot_value")
         if proposal.name == "date":
             if self.date_resolver is None:
                 raise SemanticValidationError("date_normalization_unavailable")
@@ -1293,12 +1645,12 @@ class SemanticProposalValidator:
                 value=resolved.canonical,
                 origin=InterpretationValueOrigin.TEMPORAL_NORMALIZED,
             )
-        elif proposal.name == "time":
+        elif proposal.name in {"time", "old_time"}:
             proposed_times = _utterance_times(value.casefold().replace("ё", "е"))
             if len(proposed_times) != 1:
                 raise SemanticValidationError("time_normalization_error")
             return InterpretationSlot(
-                name="time",
+                name=proposal.name,
                 value=next(iter(proposed_times)),
                 origin=InterpretationValueOrigin.TEMPORAL_NORMALIZED,
             )
@@ -1311,10 +1663,19 @@ class SemanticProposalValidator:
                 value=resolved.canonical,
                 origin=InterpretationValueOrigin.TEMPORAL_NORMALIZED,
             )
+        elif proposal.name == "mode":
+            mode = normalize_file_read_mode(value)
+            if mode is None:
+                raise SemanticValidationError("file_read_mode_normalization_error")
+            return InterpretationSlot(
+                name="mode",
+                value=mode,
+                origin=InterpretationValueOrigin.SEMANTIC,
+            )
+        elif proposal.name == "memory_content":
+            value = self._normalize_memory_content(value)
         elif proposal.name == "subject":
-            utterance_tokens = set(meaningful_tokens(normalized))
-            value_tokens = set(meaningful_tokens(value))
-            if not value_tokens or not value_tokens.issubset(utterance_tokens):
+            if not self._slot_evidence_is_grounded(utterance, value):
                 raise SemanticValidationError("invented_subject")
         return InterpretationSlot(
             name=proposal.name,
@@ -1327,6 +1688,169 @@ class SemanticProposalValidator:
         evidence = normalize_utterance(evidence_text)
         source = normalize_utterance(utterance)
         return bool(evidence and evidence in source)
+
+    @classmethod
+    def _action_evidence_is_grounded(
+        cls,
+        utterance: str,
+        evidence_text: str,
+    ) -> bool:
+        if cls._evidence_is_grounded(utterance, evidence_text):
+            return True
+        # A model may silently fix one typo while copying a longer request.
+        # Keep the first predicate literal so narration such as ``создал``
+        # cannot become imperative ``создай`` authority.
+        return cls._near_literal_phrase(
+            utterance,
+            evidence_text,
+            require_first_exact=True,
+            minimum_tokens=3,
+        )
+
+    @classmethod
+    def _slot_evidence_is_grounded(
+        cls,
+        utterance: str,
+        evidence_text: str,
+    ) -> bool:
+        return cls._evidence_is_grounded(
+            utterance, evidence_text,
+        ) or cls._near_literal_phrase(
+            utterance,
+            evidence_text,
+            require_first_exact=False,
+            minimum_tokens=1,
+        )
+
+    @staticmethod
+    def _near_literal_phrase(
+        utterance: str,
+        evidence_text: str,
+        *,
+        require_first_exact: bool,
+        minimum_tokens: int,
+    ) -> bool:
+        source = re.findall(
+            r"[a-zа-яё0-9]+", normalize_utterance(utterance),
+        )
+        evidence = re.findall(
+            r"[a-zа-яё0-9]+", normalize_utterance(evidence_text),
+        )
+        if not minimum_tokens <= len(evidence) <= 32 or len(evidence) > len(source):
+            return False
+        for offset in range(len(source) - len(evidence) + 1):
+            window = source[offset:offset + len(evidence)]
+            if require_first_exact and evidence[0] != window[0]:
+                continue
+            mismatches = 0
+            for expected, actual in zip(evidence, window):
+                if expected == actual:
+                    continue
+                if min(len(expected), len(actual)) < 4 or not _one_edit_apart(
+                    expected, actual,
+                ):
+                    break
+                mismatches += 1
+                if mismatches > 1:
+                    break
+            else:
+                return mismatches == 1
+        return False
+
+    @staticmethod
+    def _is_deictic_only_slot_value(name: str, value: str) -> bool:
+        if name not in {"content", "memory_content", "target", "topic", "subject"}:
+            return False
+        tokens = tuple(re.findall(r"[a-zа-яё0-9]+", value.casefold()))
+        return bool(
+            tokens
+            and any(token in _DEICTIC_WORDS for token in tokens)
+            and all(
+                token in _DEICTIC_WORDS or token in _GENERIC_REFERENT_WORDS
+                for token in tokens
+            )
+        )
+
+    def _presented_deictic_is_grounded(
+        self,
+        proposal: SemanticSlotEvidenceProposal,
+        specifications,
+        turn_context: TurnContextEnvelope | None,
+    ) -> bool:
+        if (
+            proposal.name != "target"
+            or not self._is_deictic_only_slot_value(proposal.name, proposal.evidence_text)
+            or turn_context is None
+            or len(turn_context.presented_entities) != 1
+        ):
+            return False
+        owner_operation_id = turn_context.presented_entities[0].owner_operation_id
+        try:
+            owner_family = self.catalog.get(owner_operation_id).family
+            candidate_families = {
+                self.catalog.get(item.operation_id).family
+                for item in specifications
+            }
+        except CapabilityNotFoundError:
+            return False
+        return candidate_families == {owner_family}
+
+    def _contextual_presented_target(
+        self,
+        utterance: str,
+        specifications,
+        turn_context: TurnContextEnvelope | None,
+        *,
+        existing_names: set[str],
+    ) -> InterpretationSlot | None:
+        """Resolve only a deictic pointer to one visible same-family entity."""
+
+        if (
+            "target" in existing_names
+            or turn_context is None
+            or len(turn_context.presented_entities) != 1
+            or not specifications
+        ):
+            return None
+        target_slots = [
+            next((slot for slot in item.slots if slot.name == "target"), None)
+            for item in specifications
+        ]
+        if any(
+            slot is None or slot.normalizer != "presented_reference"
+            for slot in target_slots
+        ):
+            return None
+        owner_operation_id = turn_context.presented_entities[0].owner_operation_id
+        try:
+            owner_family = self.catalog.get(owner_operation_id).family
+            candidate_families = {
+                self.catalog.get(item.operation_id).family
+                for item in specifications
+            }
+        except CapabilityNotFoundError:
+            return None
+        if candidate_families != {owner_family}:
+            return None
+        normalized = normalize_utterance(utterance)
+        words = "|".join(
+            sorted(map(re.escape, _DEICTIC_WORDS), key=len, reverse=True)
+        )
+        match = re.search(rf"\b(?:{words})\b", normalized)
+        if match is None:
+            return None
+        return InterpretationSlot(
+            name="target",
+            value=match.group(0),
+            origin=InterpretationValueOrigin.DETERMINISTIC,
+        )
+
+    @staticmethod
+    def _normalize_memory_content(value: str) -> str:
+        normalized = re.sub(r"^что\s+", "", value.strip(), count=1, flags=re.IGNORECASE)
+        if not normalized:
+            raise SemanticValidationError("empty_memory_content")
+        return normalized
 
     @staticmethod
     def _referent_is_supported(normalized: str, expression: str) -> bool:
@@ -1375,16 +1899,19 @@ class HybridCapabilityCandidateDiscovery:
         self.last_rejection: str | None = None
         self.last_information_space: InformationSpace | None = None
 
-    def interpret(self, utterance: str) -> InterpretationFrame:
+    def interpret(
+        self,
+        utterance: str,
+        *,
+        turn_context: TurnContextEnvelope | None = None,
+    ) -> InterpretationFrame:
         deterministic = self.deterministic.interpret(utterance)
         self.last_result = None
         self.last_rejection = None
         self.last_information_space = classify_information_space(utterance)
-        # Web authority and explicit document material retain their existing
-        # strict owner.  Connector scope itself is merely useful evidence for
-        # semantic understanding and must not bypass it.
-        if self.last_information_space is InformationSpace.EXTERNAL_PUBLIC:
-            return self.validator.materialize_defaults(deterministic)
+        # Information-space classification is evidence, never a language
+        # bypass. Web authority is checked later by Home policy; semantic
+        # understanding may only propose that fresh public evidence is needed.
         if any(
             evidence.signal == "explicit_google_drive_document_create"
             for candidate in deterministic.candidates
@@ -1398,12 +1925,20 @@ class HybridCapabilityCandidateDiscovery:
         except SemanticValidationError as error:
             self.last_rejection = str(error)
             return self.validator.materialize_defaults(deterministic)
-        result = self.resolver.resolve(utterance, vocabulary)
+        result = self.resolver.resolve(
+            utterance,
+            vocabulary,
+            turn_context=turn_context,
+        )
         self.last_result = result
         if result.proposal is None:
             return self.validator.materialize_defaults(deterministic)
         try:
-            semantic = self.validator.validate(utterance, result.proposal)
+            semantic = self.validator.validate(
+                utterance,
+                result.proposal,
+                turn_context=turn_context,
+            )
             if (
                 semantic.resolution_state
                 is InterpretationResolutionState.UNSUPPORTED_ACTION
@@ -1419,6 +1954,11 @@ class HybridCapabilityCandidateDiscovery:
             if self._strict_structural_conflict(deterministic, semantic):
                 self.last_rejection = "semantic_conflicts_with_structural_owner"
                 return self.validator.materialize_defaults(deterministic)
+            semantic = self._enforce_update_operation_kind(
+                utterance, semantic,
+            )
+            if semantic.resolution_state is InterpretationResolutionState.UNSUPPORTED_ACTION:
+                self.last_rejection = "update_operation_kind_conflict"
             return semantic
         except SemanticValidationError as error:
             self.last_rejection = str(error)
@@ -1447,4 +1987,135 @@ class HybridCapabilityCandidateDiscovery:
         }
         return not semantic_operations or not semantic_operations.issubset(
             deterministic_operations
+        )
+
+    def _enforce_update_operation_kind(
+        self,
+        utterance: str,
+        semantic: InterpretationFrame,
+    ) -> InterpretationFrame:
+        """Never let explicit UPDATE meaning degrade into CREATE/reminder work."""
+
+        tokens = re.findall(r"[a-zа-яё]+", normalize_utterance(utterance))
+        if not any(token in _HIGH_CONFIDENCE_UPDATE_WORDS for token in tokens):
+            return semantic
+        if semantic.resolution_state is InterpretationResolutionState.ORDINARY_CONVERSATION:
+            # A literal imperative UPDATE that the semantic model failed to
+            # structure is still a protected action turn.  Fail closed before
+            # unrestricted conversation prose can invent completion.
+            return InterpretationFrame(
+                original_utterance=semantic.original_utterance,
+                resolution_state=InterpretationResolutionState.UNSUPPORTED_ACTION,
+            )
+        contradictory = tuple(
+            candidate for candidate in semantic.candidates
+            if self.validator.specifications.get(
+                candidate.operation_id,
+            ).operation_kind != "update"
+        )
+        if not contradictory:
+            return semantic
+        candidates = tuple(
+            candidate for candidate in semantic.candidates
+            if self.validator.specifications.get(
+                candidate.operation_id,
+            ).operation_kind == "update"
+        )
+        if not candidates:
+            slot_names = {slot.name for slot in semantic.slots}
+            scored_updates = []
+            proposed_families = {
+                self.validator.catalog.get(candidate.operation_id).family
+                for candidate in contradictory
+            }
+            grounded_updates = tuple(
+                specification
+                for operation_id in sorted(self.validator.known_operation_ids)
+                if (
+                    (specification := self.validator.specifications.get(operation_id))
+                    .operation_kind == "update"
+                    and self.validator._selection_evidence_matches_spec(
+                        utterance,
+                        specification,
+                    )
+                )
+            )
+            for operation_id in sorted(self.validator.known_operation_ids):
+                specification = self.validator.specifications.get(operation_id)
+                if specification.operation_kind != "update":
+                    continue
+                accepted_slot_names = {
+                    slot.name for slot in specification.slots
+                }
+                overlap = len(slot_names & accepted_slot_names)
+                if overlap == 0:
+                    continue
+                family_match = int(
+                    self.validator.catalog.get(operation_id).family
+                    in proposed_families
+                )
+                scored_updates.append((overlap + family_match, specification))
+            if len(grounded_updates) == 1:
+                update_specifications = grounded_updates
+            else:
+                best_score = max((score for score, _ in scored_updates), default=0)
+                update_specifications = tuple(
+                    specification
+                    for score, specification in scored_updates
+                    if score == best_score and score >= 2
+                )
+            if len(update_specifications) != 1:
+                update_specifications = ()
+            candidates = tuple(
+                CapabilityCandidate(
+                    operation_id=specification.operation_id,
+                    evidence=(CandidateEvidence(
+                        signal="semantic_operation_kind_contradiction_corrected",
+                        source=CandidateEvidenceSource.SEMANTIC,
+                    ),),
+                    slot_names=tuple(slot.name for slot in semantic.slots),
+                    missing_slots=tuple(
+                        name for name in specification.required_slots
+                        if name not in {slot.name for slot in semantic.slots}
+                    ),
+                )
+                for specification in update_specifications
+            )
+        if not candidates:
+            return InterpretationFrame(
+                original_utterance=semantic.original_utterance,
+                resolution_state=InterpretationResolutionState.UNSUPPORTED_ACTION,
+            )
+        allowed_slots = {
+            slot.name
+            for candidate in candidates
+            for slot in self.validator.specifications.get(candidate.operation_id).slots
+        }
+        slots = tuple(
+            slot for slot in semantic.slots
+            if slot.name in allowed_slots
+        )
+        missing = tuple(
+            slot for candidate in candidates for slot in candidate.missing_slots
+        )
+        ambiguity = (
+            InterpretationAmbiguity.NONE
+            if not missing and not semantic.referents
+            else InterpretationAmbiguity.SLOT
+        )
+        return InterpretationFrame(
+            original_utterance=semantic.original_utterance,
+            normalized_goal=(
+                candidates[0].operation_id if len(candidates) == 1 else None
+            ),
+            candidates=candidates,
+            slots=slots,
+            missing_slots=tuple(dict.fromkeys(missing)),
+            referents=semantic.referents,
+            ambiguity=ambiguity,
+            resolution_state=(
+                InterpretationResolutionState.RESOLVED
+                if ambiguity is InterpretationAmbiguity.NONE
+                else InterpretationResolutionState.CLARIFICATION_REQUIRED
+            ),
         )

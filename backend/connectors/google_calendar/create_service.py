@@ -7,6 +7,10 @@ from datetime import datetime, timedelta
 from uuid import uuid4
 
 from backend.conversation.memory_intent import MemoryProposal, MemoryProposalStore, ProposalStatus, PendingProposalConflict
+from backend.runtime.action_contracts import (
+    ProposalPreparation,
+    ProposalPreparationStatus,
+)
 
 from .intent import calendar_create_from_resolved_slots, calendar_create_intent
 from .writer import CalendarCreateOperation, CalendarCreateReceipt, GoogleCalendarWriter
@@ -27,11 +31,11 @@ class GoogleCalendarCreateConversationService:
         intent = calendar_create_intent(message, now_local)
         if intent is None:
             return None
-        return self._propose_intent(
+        return self._prepare_intent(
             intent,
             conversation_id=conversation_id,
             now_local=now_local,
-        )
+        ).response
 
     def propose_from_resolved_intent(
         self,
@@ -43,6 +47,25 @@ class GoogleCalendarCreateConversationService:
         conversation_id: str,
         now_local: datetime,
     ):
+        return self.prepare_from_resolved_intent(
+            subject=subject,
+            date=date,
+            time=time,
+            duration_minutes=duration_minutes,
+            conversation_id=conversation_id,
+            now_local=now_local,
+        ).response
+
+    def prepare_from_resolved_intent(
+        self,
+        *,
+        subject: str,
+        date: str,
+        time: str,
+        duration_minutes: str,
+        conversation_id: str,
+        now_local: datetime,
+    ) -> ProposalPreparation:
         intent = calendar_create_from_resolved_slots(
             subject=subject,
             date=date,
@@ -50,21 +73,24 @@ class GoogleCalendarCreateConversationService:
             duration=timedelta(minutes=int(duration_minutes)),
             now_local=now_local,
         )
-        return self._propose_intent(
+        return self._prepare_intent(
             intent,
             conversation_id=conversation_id,
             now_local=now_local,
         )
 
-    def _propose_intent(
+    def _prepare_intent(
         self,
         intent,
         *,
         conversation_id: str,
         now_local: datetime,
-    ):
+    ) -> ProposalPreparation:
         if intent.clarification is not None:
-            return intent.clarification
+            return ProposalPreparation(
+                response=intent.clarification,
+                status=ProposalPreparationStatus.NO_ACTION,
+            )
         assert intent.title is not None and intent.start is not None and intent.end is not None
         operation = CalendarCreateOperation(
             operation_id=str(uuid4()), title=intent.title, start=intent.start, end=intent.end,
@@ -78,14 +104,21 @@ class GoogleCalendarCreateConversationService:
         try:
             self.proposal_store.create(proposal)
         except PendingProposalConflict:
-            return "Сначала закончим предыдущее подтверждение — пока ничего нового не создаю."
+            return ProposalPreparation(
+                response="Сначала закончим предыдущее подтверждение — пока ничего нового не создаю.",
+                status=ProposalPreparationStatus.NO_ACTION,
+            )
         self.writer.receipt_store.put(
             CalendarCreateReceipt(
                 operation=operation, status="proposed",
                 provider_event_id=operation.provider_event_id(),
             )
         )
-        return f"Поставить «{operation.title}» в Основной календарь: {operation.start:%d.%m в %H:%M}–{operation.end:%H:%M}?"
+        return ProposalPreparation(
+            response=f"Поставить «{operation.title}» в Основной календарь: {operation.start:%d.%m в %H:%M}–{operation.end:%H:%M}?",
+            status=ProposalPreparationStatus.PENDING_CONFIRMATION,
+            application_operation="google_calendar_create",
+        )
 
     def resolve(self, message: str, *, conversation_id: str, proposal_id: str | None = None):
         command = _CONFIRM.match(message) or _REJECT.match(message)

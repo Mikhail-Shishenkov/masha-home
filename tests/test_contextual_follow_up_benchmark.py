@@ -30,7 +30,9 @@ class FixtureResolver:
     def __init__(self, proposals):
         self.proposals = proposals
 
-    def resolve_follow_up(self, utterance, vocabulary, context, *, profile_id=None):
+    def resolve_follow_up(
+        self, utterance, vocabulary, context, *, profile_id=None, turn_context=None,
+    ):
         payload = self.proposals.get(utterance)
         if payload is None:
             return SemanticFollowUpResult(failure=SemanticResolverFailure.MALFORMED_OUTPUT, latency_ms=0)

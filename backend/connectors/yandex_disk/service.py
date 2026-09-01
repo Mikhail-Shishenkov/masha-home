@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from backend.connectors.presented_read_sets import (
+    PresentedEntityReferenceKind,
+    parse_presented_entity_reference,
+)
+
 from .intent import disk_intent
 from .reader import DiskFileCandidate, DiskReadOutcome, YandexDiskReader
 
@@ -49,6 +54,80 @@ class YandexDiskConversationService:
         if outcome.status == "search_completed":
             self._present(conversation_id, outcome.files)
         return outcome
+
+    def observe_resolved(
+        self,
+        *,
+        conversation_id: str,
+        original_utterance: str,
+        mode: str,
+        query: str | None = None,
+        target: str | None = None,
+    ) -> DiskReadOutcome:
+        """Execute already validated file meaning without re-routing language."""
+
+        if mode == "recent":
+            outcome = self.reader.recent()
+        elif mode == "list":
+            outcome = self.reader.list_files()
+        elif mode == "search":
+            outcome = (
+                DiskReadOutcome("clarification_required")
+                if not query
+                else self.reader.search(query)
+            )
+        elif mode == "read" and target is not None:
+            selected = self._resolve_presented_target(
+                conversation_id,
+                original_utterance,
+            )
+            return (
+                self.reader.read_file(selected)
+                if selected is not None
+                else DiskReadOutcome("clarification_required")
+            )
+        elif mode == "read" and query:
+            found = self.reader.search(query)
+            if found.status != "search_completed":
+                return found
+            matches = tuple(
+                file for file in found.files if _same_name(file.name, query)
+            )
+            if len(matches) != 1:
+                self._present(conversation_id, found.files)
+                return DiskReadOutcome("clarification_required", files=found.files)
+            return self.reader.read_file(matches[0])
+        else:
+            return DiskReadOutcome("clarification_required")
+        if outcome.status == "search_completed":
+            self._present(conversation_id, outcome.files)
+        return outcome
+
+    def _resolve_presented_target(
+        self,
+        conversation_id: str,
+        utterance: str,
+    ) -> DiskFileCandidate | None:
+        files = self._files(conversation_id)
+        if not files:
+            return None
+        reference = parse_presented_entity_reference(
+            utterance,
+            entity_kind="файл",
+            visible_labels=tuple(item.name for item in files),
+        )
+        if reference is None:
+            return None
+        if reference.kind is PresentedEntityReferenceKind.ORDINAL:
+            index = (reference.ordinal or 0) - 1
+            return files[index] if 0 <= index < len(files) else None
+        if reference.kind is PresentedEntityReferenceKind.EXACT_LABEL:
+            matches = tuple(
+                item for item in files
+                if _same_name(item.name, reference.label or "")
+            )
+            return matches[0] if len(matches) == 1 else None
+        return files[0] if len(files) == 1 else None
 
     def attach_assistant_message(self, outcome: DiskReadOutcome, message_id: str) -> None:
         receipt = outcome.document_receipt

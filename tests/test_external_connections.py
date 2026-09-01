@@ -8,7 +8,12 @@ from backend.connectors.google_drive.config import (
     GoogleDriveConfig, GoogleDriveConfigStore,
 )
 from backend.connectors.yandex_disk.config import YandexDiskConfig, YandexDiskConfigStore
-from backend.connectors.yandex_mail.config import YandexMailConfig, YandexMailConfigStore
+from backend.connectors.yandex_mail.config import (
+    YANDEX_MAIL_WRITE_SCOPE,
+    YANDEX_MAIL_WRITE_SECRET_REF,
+    YandexMailConfig,
+    YandexMailConfigStore,
+)
 from backend.secrets import InMemorySecretStore
 
 
@@ -91,3 +96,30 @@ def test_drive_connection_projects_separate_document_create_truth(tmp_path):
     secrets.put(GOOGLE_DOCUMENTS_WRITE_SECRET_REF, "WRITE_TOKEN")
     row = next(item for item in service.view() if item.connector_id == "google-drive")
     assert (row.state, row.access) == ("ready", "read_and_document_create")
+
+
+def test_mail_connection_projects_separate_manage_truth(tmp_path):
+    secrets = InMemorySecretStore()
+    service, stores = _service(tmp_path, secrets)
+    mail = YandexMailConfig(
+        client_id="mail-client",
+        account_email="misha@example.com",
+    )
+    stores["yandex-mail"].save(mail)
+    secrets.put(mail.secret_ref, "READ_TOKEN")
+    secrets.put(mail.client_secret_ref, "CLIENT_SECRET")
+    row = next(
+        item for item in service.view() if item.connector_id == "yandex-mail"
+    )
+    assert (row.state, row.access) == ("ready", "read_with_manage_setup")
+
+    configured = mail.model_copy(update={
+        "write_secret_ref": YANDEX_MAIL_WRITE_SECRET_REF,
+        "write_requested_scope": YANDEX_MAIL_WRITE_SCOPE,
+    })
+    stores["yandex-mail"].save(configured)
+    secrets.put(YANDEX_MAIL_WRITE_SECRET_REF, "WRITE_TOKEN")
+    row = next(
+        item for item in service.view() if item.connector_id == "yandex-mail"
+    )
+    assert (row.state, row.access) == ("ready", "read_and_manage")

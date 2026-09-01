@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from backend.connectors.presented_read_sets import (
+    PresentedEntityReferenceKind,
+    parse_presented_entity_reference,
+)
+
 from .intent import drive_intent
 from .reader import DriveFileCandidate, DriveReadOutcome, GoogleDriveReader
 
@@ -74,6 +79,79 @@ class GoogleDriveConversationService:
                 self._present(conversation_id, found.files)
             return DriveReadOutcome("clarification_required", files=found.files)
         return self.reader.read_file(exact[0])
+
+    def observe_resolved(
+        self,
+        *,
+        conversation_id: str,
+        original_utterance: str,
+        mode: str,
+        query: str | None = None,
+        target: str | None = None,
+    ) -> DriveReadOutcome:
+        """Execute already validated file meaning without re-routing language."""
+
+        if mode in {"list", "recent"}:
+            found = self.reader.search("")
+            if found.status == "search_completed":
+                self._present(conversation_id, found.files)
+            return found
+        if mode == "search":
+            if not query:
+                return DriveReadOutcome("clarification_required")
+            found = self.reader.search(query)
+            if found.status == "search_completed":
+                self._present(conversation_id, found.files)
+            return found
+        if mode != "read":
+            return DriveReadOutcome("clarification_required")
+
+        if target is not None:
+            selected = self._resolve_presented_target(
+                conversation_id,
+                original_utterance,
+            )
+            return (
+                self.reader.read_file(selected)
+                if selected is not None
+                else DriveReadOutcome("clarification_required")
+            )
+        if not query:
+            return DriveReadOutcome("clarification_required")
+        found = self.reader.search(query)
+        if found.status != "search_completed":
+            return found
+        exact = tuple(item for item in found.files if _same_name(item.name, query))
+        if len(exact) != 1:
+            self._present(conversation_id, found.files)
+            return DriveReadOutcome("clarification_required", files=found.files)
+        return self.reader.read_file(exact[0])
+
+    def _resolve_presented_target(
+        self,
+        conversation_id: str,
+        utterance: str,
+    ) -> DriveFileCandidate | None:
+        candidates = self._candidates(conversation_id)
+        if not candidates:
+            return None
+        reference = parse_presented_entity_reference(
+            utterance,
+            entity_kind="файл",
+            visible_labels=tuple(item.name for item in candidates),
+        )
+        if reference is None:
+            return None
+        if reference.kind is PresentedEntityReferenceKind.ORDINAL:
+            index = (reference.ordinal or 0) - 1
+            return candidates[index] if 0 <= index < len(candidates) else None
+        if reference.kind is PresentedEntityReferenceKind.EXACT_LABEL:
+            matches = tuple(
+                item for item in candidates
+                if _same_name(item.name, reference.label or "")
+            )
+            return matches[0] if len(matches) == 1 else None
+        return candidates[0] if len(candidates) == 1 else None
 
     def attach_assistant_message(self, outcome: DriveReadOutcome, message_id: str) -> None:
         """Keep the existing bounded Document Read receipt linked to its answer."""

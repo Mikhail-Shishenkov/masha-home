@@ -64,7 +64,21 @@ def main(argv: list[str] | None = None) -> int:
         }))
         print("READY")
         return 0
-    config = GoogleCalendarConfig(client_id=desktop_client.client_id, account_label=args.account_label)
+    existing = store.load()
+    config = (
+        existing.model_copy(update={
+            "account_label": (
+                existing.account_label
+                if args.account_label is None
+                else args.account_label
+            ),
+        })
+        if existing is not None and existing.client_id == desktop_client.client_id
+        else GoogleCalendarConfig(
+            client_id=desktop_client.client_id,
+            account_label=args.account_label,
+        )
+    )
     tokens = GoogleDesktopOAuthFlow(policy_store=policy_store, safety_store=safety_store).authorize(
         config, client_secret=desktop_client.client_secret,
     )
