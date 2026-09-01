@@ -41,7 +41,8 @@ DEFAULT_PROFILES: tuple[LocalModelProfile, ...] = (
         profile_id="fast",
         display_name="Fast",
         provider_id="ollama-local",
-        model_id="qwen3.5:4b",
+        model_id="masha-fast:4b",
+        capabilities=("text", "structured_output"),
         description="Быстрый ручной режим",
     ),
     LocalModelProfile(
@@ -111,7 +112,7 @@ class ModelProfileStore:
     @staticmethod
     def _default_data() -> dict:
         return {
-            "active_profile_id": "primary",
+            "active_profile_id": "fast",
             "profiles": [profile.model_dump(mode="json") for profile in DEFAULT_PROFILES],
         }
 
