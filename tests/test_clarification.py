@@ -51,76 +51,6 @@ def _slots(frame: InterpretationFrame) -> dict[str, str | None]:
     return {slot.name: slot.value for slot in frame.slots}
 
 
-def test_capability_clarification_uses_human_labels_and_internal_operation_ids():
-    request, pending = _build("Запиши занятие завтра в 10")
-
-    assert request.clarification_kind is ClarificationKind.CAPABILITY
-    assert request.prompt == "Занятие — поставить в календарь или просто напомнить в 10:00?"
-    assert [choice.label for choice in request.choices] == [
-        "В календарь",
-        "Просто напомнить",
-    ]
-    assert [choice.operation_id for choice in request.choices] == [
-        "google_calendar.event.create",
-        "home.timed_commitments",
-    ]
-    assert all(choice.operation_id not in request.prompt for choice in request.choices)
-    assert pending.choices == request.choices
-
-
-@pytest.mark.parametrize("answer", ("в календарь", "календарь", "поставь в календарь"))
-def test_calendar_choice_patches_same_frame_and_preserves_known_structure(answer):
-    _, pending = _build("Запиши занятие завтра в 10 на час")
-    original_evidence = pending.interpretation.candidates[0].evidence
-
-    result = FollowUpResolutionEngine().resolve(pending, answer)
-
-    assert result.outcome is FollowUpOutcome.RESOLVED
-    assert result.selected_operation_id == "google_calendar.event.create"
-    assert result.interpretation.original_utterance == "Запиши занятие завтра в 10 на час"
-    assert _slots(result.interpretation) == {
-        "date": "завтра",
-        "time": "10:00",
-        "duration_minutes": "60",
-        "subject": "занятие",
-    }
-    assert result.interpretation.candidates[0].evidence == original_evidence
-
-
-@pytest.mark.parametrize("answer", ("просто напомни", "напоминание", "только напомни"))
-def test_timed_reminder_choice_selects_existing_candidate(answer):
-    _, pending = _build("Запиши занятие завтра в 10")
-
-    result = FollowUpResolutionEngine().resolve(pending, answer)
-
-    assert result.outcome is FollowUpOutcome.RESOLVED
-    assert result.selected_operation_id == "home.timed_commitments"
-    assert _slots(result.interpretation)["time"] == "10:00"
-
-
-def test_missing_subject_builder_and_follow_up_fill_only_the_requested_slot():
-    request, pending = _build("Поставь в календарь завтра в 19 на час")
-
-    assert request.clarification_kind is ClarificationKind.SLOT
-    assert request.requested_slot == "subject"
-    assert request.prompt == "Что именно поставить в календарь?"
-
-    result = FollowUpResolutionEngine().resolve(pending, "Занятие по AI")
-
-    assert result.outcome is FollowUpOutcome.RESOLVED
-    assert result.supplied_slot == InterpretationSlot(
-        name="subject",
-        value="Занятие по AI",
-        origin=InterpretationValueOrigin.EXPLICIT,
-    )
-    assert _slots(result.interpretation) == {
-        "date": "завтра",
-        "time": "19:00",
-        "duration_minutes": "60",
-        "subject": "Занятие по AI",
-    }
-
-
 def test_unresolved_referent_is_not_invented_and_explicit_material_is_bounded_evidence():
     request, pending = _build("Сохрани это")
 
@@ -150,18 +80,6 @@ def test_narrow_cancel_language_cancels_only_pending_meaning(answer):
     result = FollowUpResolutionEngine().resolve(pending, answer)
 
     assert result.outcome is FollowUpOutcome.CANCELLED
-    assert result.interpretation == pending.interpretation
-
-
-def test_independent_question_is_not_forced_into_pending_schedule():
-    _, pending = _build("Запиши занятие завтра в 10")
-
-    result = FollowUpResolutionEngine().resolve(
-        pending,
-        "Маш, а какая завтра погода?",
-    )
-
-    assert result.outcome is FollowUpOutcome.NOT_A_FOLLOW_UP
     assert result.interpretation == pending.interpretation
 
 

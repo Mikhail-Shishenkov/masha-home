@@ -35,40 +35,6 @@ def _slots(frame: InterpretationFrame) -> dict[str, str | None]:
     return {slot.name: slot.value for slot in frame.slots}
 
 
-def test_explicit_calendar_language_is_a_resolved_structural_candidate():
-    frame = _discovery().interpret(
-        "Поставь в календарь завтра в 19 занятие по AI на час"
-    )
-
-    assert [candidate.operation_id for candidate in frame.candidates] == [
-        "google_calendar.event.create"
-    ]
-    assert _slots(frame) == {
-        "date": "завтра",
-        "time": "19:00",
-        "duration_minutes": "60",
-        "subject": "занятие по AI",
-    }
-    assert frame.ambiguity is InterpretationAmbiguity.NONE
-    assert frame.resolution_state is InterpretationResolutionState.RESOLVED
-
-
-def test_ambiguous_schedule_preserves_both_plausible_capabilities():
-    frame = _discovery().interpret("Поставь занятие завтра в 10")
-
-    assert [candidate.operation_id for candidate in frame.candidates] == [
-        "google_calendar.event.create",
-        "home.timed_commitments",
-    ]
-    assert _slots(frame) == {
-        "date": "завтра",
-        "time": "10:00",
-        "subject": "занятие",
-    }
-    assert frame.ambiguity is InterpretationAmbiguity.CAPABILITY
-    assert frame.resolution_state is InterpretationResolutionState.CLARIFICATION_REQUIRED
-
-
 def test_document_material_is_not_independently_routed_by_temporal_words():
     material = "Сегодня мы продолжили делать наш Дом"
     frame = _discovery().interpret(
@@ -104,29 +70,6 @@ def test_today_word_boundary_does_not_match_today_adjective():
     assert frame.resolution_state is InterpretationResolutionState.ORDINARY_CONVERSATION
     assert frame.candidates == ()
     assert frame.slots == ()
-
-
-def test_unscoped_save_preserves_unresolved_referent_without_invention():
-    frame = _discovery().interpret("Сохрани это")
-
-    assert [candidate.operation_id for candidate in frame.candidates] == [
-        "google_drive.document.create",
-        "home.timed_commitments",
-    ]
-    assert frame.referents == (
-        InterpretationReferent(expression="это"),
-    )
-    assert frame.referents[0].value is None
-    assert frame.ambiguity is InterpretationAmbiguity.CAPABILITY
-    assert frame.resolution_state is InterpretationResolutionState.CLARIFICATION_REQUIRED
-
-
-def test_companion_conversation_is_a_first_class_ordinary_state():
-    frame = _discovery().interpret("Маш, иди сюда, хочу немного побыть с тобой")
-
-    assert frame.resolution_state is InterpretationResolutionState.ORDINARY_CONVERSATION
-    assert frame.ambiguity is InterpretationAmbiguity.NONE
-    assert frame.candidates == ()
 
 
 @pytest.mark.parametrize(
@@ -194,14 +137,3 @@ def test_strict_models_reject_unresolved_values_and_extra_authority_fields():
             evidence=(CandidateEvidence(signal="explicit"),),
             permission_granted=True,
         )
-
-
-def test_v2_discovery_does_not_replace_or_mutate_v1_router_contract():
-    router = NaturalLanguageCapabilityRouter()
-    before = router.route("Поставь завтра в 19 занятие по AI")
-
-    _discovery().interpret("Поставь завтра в 19 занятие по AI")
-
-    assert router.route("Поставь завтра в 19 занятие по AI") == before
-    assert not hasattr(CapabilityCandidateDiscovery, "execute")
-    assert not hasattr(CapabilityCandidateDiscovery, "authorize")

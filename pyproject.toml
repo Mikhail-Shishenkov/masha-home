@@ -41,3 +41,8 @@ include = ["backend*"]
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-ra"
+markers = [
+    "release: deterministic critical product journeys used as the release gate",
+    "contract: narrow authority, storage, safety, privacy, and adapter invariants",
+    "live_smoke: tests that require a live provider, network, connector, or local model",
+]

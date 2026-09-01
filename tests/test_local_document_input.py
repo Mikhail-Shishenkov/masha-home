@@ -18,7 +18,7 @@ from backend.document_read import (
 from backend.document_read.reader import MAX_RAW_PDF_BYTES
 from backend.external_observation import InternetAccessMode, InternetAccessPolicy, InternetAccessPolicyStore
 from backend.llm.model_router import ModelRouter
-from tests.test_application_boundary import LocalProfileProvider, _isolated_root
+from tests.test_support import LocalProfileProvider, _isolated_root
 
 
 PROJECT_ID = "project_masha_home"

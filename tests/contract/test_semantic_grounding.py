@@ -2,6 +2,8 @@ from datetime import datetime, timezone
 
 import pytest
 
+pytestmark = pytest.mark.contract
+
 from backend.application.home_capabilities import default_home_capability_catalog
 from backend.conversation.interpretation_v2 import (
     CapabilityCandidateDiscovery,

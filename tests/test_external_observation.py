@@ -37,7 +37,7 @@ from backend.llm.model_models import PrivacyScope
 from backend.llm.model_router import ModelRouter
 from backend.runtime.safety import AutonomySafetyService, AutonomySafetyStore
 from backend.skills.registry import SkillRegistry
-from tests.test_application_boundary import LocalProfileProvider, _isolated_root
+from tests.test_support import LocalProfileProvider, _isolated_root
 
 
 NOW = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)

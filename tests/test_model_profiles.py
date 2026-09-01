@@ -24,7 +24,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 class LocalProfileProvider(FakeProvider):
     def __init__(self, *, available: bool = True, available_models: set[str] | None = None):
         super().__init__(provider_id="ollama-local", available=available, response_text="ok")
-        self.available_models = available_models or {"qwen3.5:9b", "qwen3.5:4b"}
+        self.available_models = available_models or {"qwen3.5:9b", "masha-fast:4b"}
 
     def is_model_available(self, model_id: str) -> bool:
         return model_id in self.available_models
@@ -46,12 +46,13 @@ def test_default_profiles_and_active_profile_survive_restart(tmp_path):
     profiles = ModelProfileStore(path)
 
     assert [profile.profile_id for profile in profiles.list_profiles()] == ["primary", "fast", "experimental", "vision-candidate"]
-    assert profiles.get_active_profile().model_id == "qwen3.5:9b"
-    profiles.set_active_profile("fast")
+    assert profiles.get_active_profile().profile_id == "fast"
+    assert profiles.get_active_profile().model_id == "masha-fast:4b"
+    profiles.set_active_profile("primary")
 
     restarted = ModelProfileStore(path)
-    assert restarted.get_active_profile().profile_id == "fast"
-    assert restarted.get_active_profile().model_id == "qwen3.5:4b"
+    assert restarted.get_active_profile().profile_id == "primary"
+    assert restarted.get_active_profile().model_id == "qwen3.5:9b"
     assert restarted.get_active_profile().think is False
 
 
@@ -63,7 +64,7 @@ def test_disabled_or_unknown_profile_does_not_change_active_profile(tmp_path):
     with pytest.raises(ValueError, match="disabled"):
         profiles.set_active_profile("experimental")
 
-    assert profiles.get_active_profile().profile_id == "primary"
+    assert profiles.get_active_profile().profile_id == "fast"
 
 
 def test_cli_lists_current_and_switches_only_after_availability_checks(tmp_path):
@@ -71,15 +72,17 @@ def test_cli_lists_current_and_switches_only_after_availability_checks(tmp_path)
     provider = LocalProfileProvider()
     service = _service(tmp_path, provider, profiles)
     output: list[str] = []
+    active = profiles.get_active_profile()
+    target = profiles.get_profile("primary")
 
     _run_model_command("list", service=service, output_fn=output.append)
     _run_model_command("current", service=service, output_fn=output.append)
-    _run_model_command("use fast", service=service, output_fn=output.append)
+    _run_model_command(f"use {target.profile_id}", service=service, output_fn=output.append)
 
     assert "primary" in output[0] and "fast" in output[0]
-    assert "qwen3.5:9b" in output[1]
-    assert "Переключено на fast" in output[2]
-    assert profiles.get_active_profile().profile_id == "fast"
+    assert active.model_id in output[1]
+    assert f"Переключено на {target.profile_id}" in output[2]
+    assert profiles.get_active_profile().profile_id == target.profile_id
 
 
 @pytest.mark.parametrize(
@@ -87,8 +90,8 @@ def test_cli_lists_current_and_switches_only_after_availability_checks(tmp_path)
     [
         ("use missing", LocalProfileProvider(), "Не удалось"),
         ("use experimental", LocalProfileProvider(), "Не удалось"),
-        ("use fast", LocalProfileProvider(available=False), "Ollama недоступен"),
-        ("use fast", LocalProfileProvider(available_models={"qwen3.5:9b"}), "qwen3.5:4b недоступна"),
+        ("use primary", LocalProfileProvider(available=False), "Ollama недоступен"),
+        ("use primary", LocalProfileProvider(available_models={"masha-fast:4b"}), "qwen3.5:9b недоступна"),
     ],
 )
 def test_failed_cli_switch_preserves_previous_profile(tmp_path, command, provider, expected):
@@ -99,7 +102,7 @@ def test_failed_cli_switch_preserves_previous_profile(tmp_path, command, provide
     _run_model_command(command, service=service, output_fn=output.append)
 
     assert expected in output[0]
-    assert profiles.get_active_profile().profile_id == "primary"
+    assert profiles.get_active_profile().profile_id == "fast"
 
 
 def test_failed_profile_persistence_preserves_file_and_active_profile(tmp_path, monkeypatch):
@@ -108,25 +111,25 @@ def test_failed_profile_persistence_preserves_file_and_active_profile(tmp_path, 
     monkeypatch.setattr(profiles, "_write", lambda _data: (_ for _ in ()).throw(OSError("disk full")))
 
     with pytest.raises(OSError):
-        profiles.set_active_profile("fast")
+        profiles.set_active_profile("primary")
 
     assert profiles.path.read_bytes() == original
-    assert profiles.get_active_profile().profile_id == "primary"
+    assert profiles.get_active_profile().profile_id == "fast"
 
 
 def test_selected_profile_is_the_only_execution_target_and_preserves_context_state(tmp_path):
     profiles = ModelProfileStore(tmp_path / "models.json")
-    profiles.set_active_profile("fast")
     provider = LocalProfileProvider()
     service = _service(tmp_path, provider, profiles)
+    active = profiles.get_active_profile()
     identity_before = service.identity_kernel.build_context().model_dump(mode="json")
     memory_before = (PROJECT_ROOT / "tests" / "fixtures" / "test_memory.json").read_bytes()
 
     conversation_id, _ = service.send("привет", project_id="project_masha_home")
 
-    assert provider.last_request.execution_model_id == "qwen3.5:4b"
-    assert provider.last_request.execution_think is False
-    assert provider.last_request.timeout_seconds == 30.0
+    assert provider.last_request.execution_model_id == active.model_id
+    assert provider.last_request.execution_think is active.think
+    assert provider.last_request.timeout_seconds == active.timeout_seconds
     assert service.router.select_provider(provider.last_request) is provider
     assert service.identity_kernel.build_context().model_dump(mode="json") == identity_before
     assert (PROJECT_ROOT / "tests" / "fixtures" / "test_memory.json").read_bytes() == memory_before
@@ -142,7 +145,7 @@ def test_switch_does_not_write_conversation_or_memory_proposal_files(tmp_path):
     proposal_path.write_text(json.dumps({"proposals": []}), encoding="utf-8")
     history_before, proposals_before = history_path.read_bytes(), proposal_path.read_bytes()
 
-    profiles.set_active_profile("fast")
+    profiles.set_active_profile("primary")
 
     assert history_path.read_bytes() == history_before
     assert proposal_path.read_bytes() == proposals_before

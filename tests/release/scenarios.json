@@ -1,0 +1,1107 @@
+{
+  "schema_version": "1.0",
+  "target_count": 96,
+  "scenarios": [
+    {
+      "id": "REL-001",
+      "area": "Dialogue",
+      "journey": "Личная реплика остаётся обычным разговором",
+      "invariant": "Companion/personal conversation не становится action и не создаёт pending state",
+      "legacy_owners": [
+        "test_natural_language_v2_integration.py",
+        "test_interpretation_v2.py",
+        "test_capability_router.py"
+      ],
+      "status": "implemented",
+      "owner": "tests/release/test_dialogue_language.py::test_rel_001_to_005_keep_language_meaning_grounded_and_non_authoritative"
+    },
+    {
+      "id": "REL-002",
+      "area": "Dialogue",
+      "journey": "Общее «запиши занятие завтра в 11»",
+      "invariant": "Home сохраняет Calendar/Reminder ambiguity и задаёт уточнение",
+      "legacy_owners": [
+        "test_natural_language_v2_integration.py",
+        "test_semantic_boundary_2f.py",
+        "test_dialogue_core.py"
+      ],
+      "status": "implemented",
+      "owner": "tests/release/test_dialogue_language.py::test_rel_001_to_005_keep_language_meaning_grounded_and_non_authoritative"
+    },
+    {
+      "id": "REL-003",
+      "area": "Dialogue",
+      "journey": "Явное «в календарь»",
+      "invariant": "Grounded destination выбирает Calendar, не legacy guess",
+      "legacy_owners": [
+        "test_semantic_boundary_2f.py",
+        "test_resolution_coordinator.py",
+        "test_natural_language_v2_integration.py"
+      ],
+      "status": "implemented",
+      "owner": "tests/release/test_dialogue_language.py::test_rel_001_to_005_keep_language_meaning_grounded_and_non_authoritative"
+    },
+    {
+      "id": "REL-004",
+      "area": "Dialogue",
+      "journey": "Явное «просто напомни»",
+      "invariant": "Grounded reminder wording выбирает timed commitment",
+      "legacy_owners": [
+        "test_semantic_boundary_2f.py",
+        "test_clarification.py",
+        "test_resolution_coordinator.py"
+      ],
+      "status": "implemented",
+      "owner": "tests/release/test_dialogue_language.py::test_rel_001_to_005_keep_language_meaning_grounded_and_non_authoritative"
+    },
+    {
+      "id": "REL-005",
+      "area": "Dialogue",
+      "journey": "Модель дала частично неверный slot/selection",
+      "invariant": "Home принимает валидные части и отклоняет только неграундированное",
+      "legacy_owners": [
+        "test_semantic_resolver.py",
+        "test_semantic_boundary_2f.py",
+        "test_turn_context.py"
+      ],
+      "status": "implemented",
+      "owner": "tests/release/test_dialogue_language.py::test_rel_001_to_005_keep_language_meaning_grounded_and_non_authoritative"
+    },
+    {
+      "id": "REL-006",
+      "area": "Dialogue",
+      "journey": "Просьба о неподдерживаемом внешнем действии",
+      "invariant": "Home сообщает правду и не делает fake success",
+      "legacy_owners": [
+        "test_natural_language_v2_integration.py",
+        "test_application_boundary.py"
+      ],
+      "status": "implemented",
+      "owner": "tests/test_natural_language_v2_integration.py::test_unsupported_external_registration_gets_human_truthful_fallback"
+    },
+    {
+      "id": "REL-007",
+      "area": "Dialogue",
+      "journey": "Новая явная задача во время уточнения",
+      "invariant": "Новый adopted request supersede старый pending flow",
+      "legacy_owners": [
+        "test_dialogue_core.py",
+        "test_resolution_coordinator.py",
+        "test_pending_resolution.py"
+      ],
+      "status": "implemented",
+      "owner": "tests/release/test_dialogue_language.py::test_rel_007_008_and_010_keep_pending_meaning_without_authorization"
+    },
+    {
+      "id": "REL-008",
+      "area": "Dialogue",
+      "journey": "Обычная реплика прерывает уточнение",
+      "invariant": "Pass-through не уничтожает pending flow; последующий ответ продолжает его",
+      "legacy_owners": [
+        "test_dialogue_core.py",
+        "test_resolution_coordinator.py",
+        "test_natural_language_v2_integration.py"
+      ],
+      "status": "implemented",
+      "owner": "tests/release/test_dialogue_language.py::test_rel_007_008_and_010_keep_pending_meaning_without_authorization"
+    },
+    {
+      "id": "REL-009",
+      "area": "Dialogue",
+      "journey": "Пользователь исправляет ранее названное время/дату",
+      "invariant": "Correction меняет нужный slot и не подменяет capability",
+      "legacy_owners": [
+        "test_dialogue_core.py",
+        "test_contextual_follow_up.py",
+        "test_semantic_resolver.py"
+      ],
+      "status": "implemented",
+      "owner": "tests/test_contextual_follow_up.py::test_semantic_enrichment_and_correction_accumulate_before_choice"
+    },
+    {
+      "id": "REL-010",
+      "area": "Dialogue",
+      "journey": "«Да» как ответ на уточнение",
+      "invariant": "Clarification answer не является authorization/confirmation",
+      "legacy_owners": [
+        "test_dialogue_core.py",
+        "test_clarification.py",
+        "test_resolved_capability_action_boundary.py"
+      ],
+      "status": "implemented",
+      "owner": "tests/release/test_dialogue_language.py::test_rel_007_008_and_010_keep_pending_meaning_without_authorization"
+    },
+    {
+      "id": "REL-011",
+      "area": "Dialogue",
+      "journey": "«Второй/тот/его» после показанного списка",
+      "invariant": "Context помогает понять reference, но реальный объект повторно разрешает application registry",
+      "legacy_owners": [
+        "test_turn_context.py",
+        "test_human_reference_resolution.py",
+        "test_presented_read_sets.py"
+      ],
+      "status": "implemented",
+      "owner": "tests/test_human_reference_resolution.py::test_model_generated_numbered_prose_never_becomes_selection_truth"
+    },
+    {
+      "id": "REL-012",
+      "area": "Dialogue",
+      "journey": "Semantic resolver вернул valid ordinary",
+      "invariant": "Valid ordinary не получает второй legacy action-routing шанс",
+      "legacy_owners": [
+        "test_natural_language_v2_integration.py",
+        "test_conversation_service.py",
+        "test_capability_router.py"
+      ],
+      "status": "implemented",
+      "owner": "tests/test_natural_language_v2_integration.py::test_dialogue_core_pass_through_never_reparses_raw_turn_in_legacy_handlers"
+    },
+    {
+      "id": "REL-013",
+      "area": "Calendar",
+      "journey": "Что у меня сегодня в календаре",
+      "invariant": "Calendar read возвращает bounded application-owned события",
+      "legacy_owners": [
+        "test_google_calendar.py",
+        "test_natural_language_v2_integration.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-014",
+      "area": "Calendar",
+      "journey": "Неоднозначный период календаря",
+      "invariant": "Home уточняет период, не выдумывает диапазон",
+      "legacy_owners": [
+        "test_google_calendar.py",
+        "test_contextual_follow_up.py",
+        "test_natural_language_v2_integration.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-015",
+      "area": "Calendar",
+      "journey": "Создать событие с полными данными",
+      "invariant": "До human confirmation нет provider mutation/network write",
+      "legacy_owners": [
+        "test_google_calendar_create.py",
+        "test_application_boundary.py",
+        "test_natural_language_v2_integration.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-016",
+      "area": "Calendar",
+      "journey": "Создать событие без длительности",
+      "invariant": "Home применяет объявленный default duration 60 минут",
+      "legacy_owners": [
+        "test_semantic_boundary_2f.py",
+        "test_google_calendar_create.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-017",
+      "area": "Calendar",
+      "journey": "Создать событие с явной длительностью",
+      "invariant": "Home канонизирует duration/date, модель их не вычисляет",
+      "legacy_owners": [
+        "test_semantic_boundary_2f.py",
+        "test_temporal_grounding.py",
+        "test_google_calendar_create.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-018",
+      "area": "Calendar",
+      "journey": "Отклонить создание события",
+      "invariant": "Reject закрывает proposal без provider mutation",
+      "legacy_owners": [
+        "test_google_calendar_create.py",
+        "test_application_boundary.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-019",
+      "area": "Calendar",
+      "journey": "Подтвердить создание события",
+      "invariant": "Confirm выполняет ровно одну операцию и truth идёт из receipt",
+      "legacy_owners": [
+        "test_google_calendar_create.py",
+        "test_confirmation_write_boundary.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-020",
+      "area": "Calendar",
+      "journey": "Явно перенести/изменить событие",
+      "invariant": "Update intent не путается с Create из-за времени в тексте",
+      "legacy_owners": [
+        "test_google_calendar_update.py",
+        "test_natural_language_v2_integration.py",
+        "test_semantic_resolver.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-021",
+      "area": "Calendar",
+      "journey": "Update с однозначным target",
+      "invariant": "Target разрешает Home/application, а не provider/model ID",
+      "legacy_owners": [
+        "test_google_calendar_update.py",
+        "test_human_reference_resolution.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-022",
+      "area": "Calendar",
+      "journey": "Update с несколькими похожими событиями",
+      "invariant": "Ambiguous target требует уточнения и не выбирает произвольно",
+      "legacy_owners": [
+        "test_google_calendar_update.py",
+        "test_presented_read_sets.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-023",
+      "area": "Calendar",
+      "journey": "Отклонить update",
+      "invariant": "Reject не меняет событие и не создаёт receipt успеха",
+      "legacy_owners": [
+        "test_google_calendar_update.py",
+        "test_resolved_capability_action_boundary.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-024",
+      "area": "Calendar",
+      "journey": "Удалить однозначное событие",
+      "invariant": "Delete создаёт preview/pending confirmation, но не удаляет до confirm",
+      "legacy_owners": [
+        "test_google_calendar_delete.py",
+        "test_natural_language_v2_integration.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-025",
+      "area": "Calendar",
+      "journey": "Удалить неоднозначное событие",
+      "invariant": "Несколько target → clarification, zero mutation",
+      "legacy_owners": [
+        "test_google_calendar_delete.py",
+        "test_presented_read_sets.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-026",
+      "area": "Calendar",
+      "journey": "Отклонить удаление",
+      "invariant": "Reject не dispatch-ит delete",
+      "legacy_owners": [
+        "test_google_calendar_delete.py",
+        "test_confirmation_write_boundary.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-027",
+      "area": "Calendar",
+      "journey": "Write grant жив, read reconnect нужен",
+      "invariant": "Create availability может быть true, Update/Delete fail closed без read target resolution",
+      "legacy_owners": [
+        "test_home_capabilities.py",
+        "test_external_connections.py",
+        "test_google_calendar_update.py",
+        "test_google_calendar_delete.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-028",
+      "area": "Commitments",
+      "journey": "Создать обычное дело без срока",
+      "invariant": "Proposal появляется, запись — только после confirm",
+      "legacy_owners": [
+        "test_chat_capability_integration.py",
+        "test_memory_intent.py",
+        "test_application_boundary.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-029",
+      "area": "Commitments",
+      "journey": "«Напомни через 2 минуты»",
+      "invariant": "Relative time детерминированно превращается в due_at",
+      "legacy_owners": [
+        "test_due_aware_reminders.py",
+        "test_temporal_grounding.py",
+        "test_application_boundary.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-030",
+      "area": "Commitments",
+      "journey": "Generic schedule → «просто напомни»",
+      "invariant": "После выбора reminder сохраняются известные date/time/subject",
+      "legacy_owners": [
+        "test_natural_language_v2_integration.py",
+        "test_dialogue_core.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-031",
+      "area": "Commitments",
+      "journey": "Подтвердить создание дела",
+      "invariant": "Commitment создаётся ровно один раз, повтор confirm idempotent",
+      "legacy_owners": [
+        "test_memory_intent.py",
+        "test_confirmation_write_boundary.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-032",
+      "area": "Commitments",
+      "journey": "Отклонить создание дела",
+      "invariant": "Reject оставляет repository без новой записи",
+      "legacy_owners": [
+        "test_chat_capability_integration.py",
+        "test_application_boundary.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-033",
+      "area": "Commitments",
+      "journey": "«Билеты купил» для существующего дела",
+      "invariant": "Reference resolution находит реальное дело, completion всё равно требует confirm",
+      "legacy_owners": [
+        "test_chat_capability_integration.py",
+        "test_commitment_completion.py",
+        "test_human_reference_resolution.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-034",
+      "area": "Commitments",
+      "journey": "Неоднозначное завершение дела",
+      "invariant": "Home просит уточнить и не меняет ни одно дело",
+      "legacy_owners": [
+        "test_commitment_completion.py",
+        "test_chat_capability_integration.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-035",
+      "area": "Commitments",
+      "journey": "Проекция дел по сроку",
+      "invariant": "Exact-now=open, future=upcoming, past=overdue; completed скрыты из active view",
+      "legacy_owners": [
+        "test_application_boundary.py",
+        "test_temporal_runtime.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-036",
+      "area": "Commitments",
+      "journey": "Наступил срок напоминания",
+      "invariant": "После opt-in/confirm proactive reminder доставляется один раз и acknowledge убирает его",
+      "legacy_owners": [
+        "test_due_aware_reminders.py",
+        "test_proactive_interaction.py",
+        "test_application_boundary.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-037",
+      "area": "Mail",
+      "journey": "Прочитать почту",
+      "invariant": "Mail read возвращает application-owned read-only evidence",
+      "legacy_owners": [
+        "test_yandex_mail.py",
+        "test_natural_language_v2_integration.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-038",
+      "area": "Mail",
+      "journey": "Сослаться на показанное письмо «это/второе»",
+      "invariant": "Semantic reference не становится provider ID; target разрешается presented registry",
+      "legacy_owners": [
+        "test_yandex_mail.py",
+        "test_presented_read_sets.py",
+        "test_turn_context.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-039",
+      "area": "Mail",
+      "journey": "Ответ по содержимому письма",
+      "invariant": "Provider/message IDs и credential metadata не попадают в модельный evidence/output",
+      "legacy_owners": [
+        "test_yandex_mail.py",
+        "test_turn_context.py",
+        "test_application_boundary.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-040",
+      "area": "Mail",
+      "journey": "Удалить письмо",
+      "invariant": "Delete только готовит pending confirmation, без IMAP mutation",
+      "legacy_owners": [
+        "test_yandex_mail_mutations.py",
+        "test_natural_language_v2_integration.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-041",
+      "area": "Mail",
+      "journey": "Отклонить удаление письма",
+      "invariant": "Reject завершается rejected без dispatch",
+      "legacy_owners": [
+        "test_yandex_mail_mutations.py",
+        "test_natural_language_v2_integration.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-042",
+      "area": "Mail",
+      "journey": "Подтвердить удаление письма",
+      "invariant": "Confirm делает один atomic IMAP MOVE",
+      "legacy_owners": [
+        "test_yandex_mail_mutations.py",
+        "test_confirmation_write_boundary.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-043",
+      "area": "Mail",
+      "journey": "Provider не подтвердил destination сразу",
+      "invariant": "Receipt честно остаётся moved_unverified, fake verified запрещён",
+      "legacy_owners": [
+        "test_yandex_mail_mutations.py",
+        "test_resolved_capability_action_boundary.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-044",
+      "area": "Mail",
+      "journey": "Проверить moved_unverified по Message-ID fallback",
+      "invariant": "Bounded verification доводит тот же operation до verified без второго MOVE",
+      "legacy_owners": [
+        "test_yandex_mail_mutations.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-045",
+      "area": "Mail",
+      "journey": "Архивировать/переместить письмо",
+      "invariant": "Move имеет собственный preview/confirm и не маскируется под read/delete",
+      "legacy_owners": [
+        "test_yandex_mail_mutations.py",
+        "test_natural_language_v2_integration.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-046",
+      "area": "Mail",
+      "journey": "Несколько похожих писем",
+      "invariant": "Ambiguous mail target требует application clarification/selection",
+      "legacy_owners": [
+        "test_yandex_mail.py",
+        "test_human_reference_resolution.py",
+        "test_presented_read_sets.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-047",
+      "area": "Files",
+      "journey": "Показать/прочитать Google Drive",
+      "invariant": "Drive read идёт через adopted handoff и bounded read result",
+      "legacy_owners": [
+        "test_google_drive.py",
+        "test_natural_language_v2_integration.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-048",
+      "area": "Files",
+      "journey": "«Прочитай второй файл» после списка",
+      "invariant": "Ordinal reference разрешает Home/application, не semantic model",
+      "legacy_owners": [
+        "test_google_drive.py",
+        "test_presented_read_sets.py",
+        "test_resolved_capability_action_boundary.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-049",
+      "area": "Files",
+      "journey": "Ответ по PDF из Drive",
+      "invariant": "В модель попадает bounded document evidence без provider file ID",
+      "legacy_owners": [
+        "test_resolved_capability_action_boundary.py",
+        "test_document_read.py",
+        "test_google_drive.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-050",
+      "area": "Files",
+      "journey": "Прочитать файл на Яндекс Диске",
+      "invariant": "Yandex Disk read проходит через тот же read contract",
+      "legacy_owners": [
+        "test_yandex_disk.py",
+        "test_natural_language_v2_integration.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-051",
+      "area": "Files",
+      "journey": "Локальный PDF выбран пользователем",
+      "invariant": "Только явно выбранный local input читается для текущего turn",
+      "legacy_owners": [
+        "test_local_document_input.py",
+        "test_document_read.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-052",
+      "area": "Files",
+      "journey": "Документ содержит инструкции/prompt injection",
+      "invariant": "Document text — untrusted evidence и не меняет Identity/Memory/permissions/action",
+      "legacy_owners": [
+        "test_document_read.py",
+        "test_context_compiler.py",
+        "test_application_boundary.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-053",
+      "area": "Files",
+      "journey": "Создать документ в Google Drive",
+      "invariant": "Preview/pending появляется без provider write до confirmation",
+      "legacy_owners": [
+        "test_google_drive_document_create.py",
+        "test_natural_language_v2_integration.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-054",
+      "area": "Files",
+      "journey": "Подтвердить создание документа",
+      "invariant": "Truth отражает verified либо created_unverified receipt, без fake success",
+      "legacy_owners": [
+        "test_google_drive_document_create.py",
+        "test_confirmation_write_boundary.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-055",
+      "area": "Files",
+      "journey": "Повторная проверка created_unverified документа",
+      "invariant": "Recovery verification не создаёт второй документ",
+      "legacy_owners": [
+        "test_google_drive_document_create.py",
+        "test_application_boundary.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-056",
+      "area": "Files",
+      "journey": "Пользователь просто говорит «Гугл Диск»",
+      "invariant": "Bare provider mention не даёт action authority и остаётся conversation",
+      "legacy_owners": [
+        "test_interpretation_v2.py",
+        "test_misha_natural_language_benchmark.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-057",
+      "area": "Memory",
+      "journey": "«Запомни, что…»",
+      "invariant": "Memory create — proposal only; no write before confirmation",
+      "legacy_owners": [
+        "test_chat_capability_integration.py",
+        "test_memory_intent.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-058",
+      "area": "Memory",
+      "journey": "Подтвердить запоминание",
+      "invariant": "Fact сохраняется один раз и response принадлежит application",
+      "legacy_owners": [
+        "test_confirmation_write_boundary.py",
+        "test_chat_capability_integration.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-059",
+      "area": "Memory",
+      "journey": "«Забудь …»",
+      "invariant": "Forget требует confirm и скрывает запись вместо physical delete",
+      "legacy_owners": [
+        "test_memory_forgetting.py",
+        "test_memory_management.py",
+        "test_chat_capability_integration.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-060",
+      "area": "Memory",
+      "journey": "Посмотреть активную память",
+      "invariant": "Inspect/recall — read-only, hidden records не возвращаются как active",
+      "legacy_owners": [
+        "test_human_information.py",
+        "test_memory_management.py",
+        "test_application_boundary.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-061",
+      "area": "Memory",
+      "journey": "Спросить «что помнишь про напитки»",
+      "invariant": "Scoped recall несёт естественную тему и не отдаёт внутренние IDs",
+      "legacy_owners": [
+        "test_capability_router.py",
+        "test_human_information.py",
+        "test_query_aware_retrieval.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-062",
+      "area": "Memory",
+      "journey": "Forgotten memory рядом по смыслу",
+      "invariant": "Hidden/Forgotten record не попадает в ordinary semantic TurnContext",
+      "legacy_owners": [
+        "test_turn_context.py",
+        "test_human_information.py",
+        "test_query_aware_retrieval.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-063",
+      "area": "Continuity",
+      "journey": "Сохранить общий момент",
+      "invariant": "Shared moment создаётся только после explicit confirmation",
+      "legacy_owners": [
+        "test_chat_capability_integration.py",
+        "test_shared_continuity.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-064",
+      "area": "Continuity",
+      "journey": "Открыть тему «вернуться потом»",
+      "invariant": "Конкретная тема создаёт continuity proposal; голое «эту тему» требует clarification",
+      "legacy_owners": [
+        "test_shared_continuity.py",
+        "test_application_boundary.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-065",
+      "area": "Continuity",
+      "journey": "«К чему мы хотели вернуться?»",
+      "invariant": "Read-only view показывает реальные открытые нити, newest first",
+      "legacy_owners": [
+        "test_shared_continuity.py",
+        "test_application_boundary.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-066",
+      "area": "Continuity",
+      "journey": "Закрыть однозначную нить",
+      "invariant": "Resolve требует confirmation и меняет только выбранную нить",
+      "legacy_owners": [
+        "test_application_boundary.py",
+        "test_shared_continuity.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-067",
+      "area": "Continuity",
+      "journey": "Закрыть «нить про мяу» при двух совпадениях",
+      "invariant": "Ambiguous match остаётся open и просит уточнить",
+      "legacy_owners": [
+        "test_application_boundary.py",
+        "test_human_reference_resolution.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-068",
+      "area": "Continuity",
+      "journey": "Продолжить выбранную нить и сказать «с этой темой закончили»",
+      "invariant": "Active continuity context удерживает deictic follow-up на исходной нити",
+      "legacy_owners": [
+        "test_application_boundary.py",
+        "test_turn_context.py",
+        "test_contextual_follow_up.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-069",
+      "area": "Web",
+      "journey": "Явно попросить поиск в интернете",
+      "invariant": "Web Search идёт через adopted semantic/dialogue handoff",
+      "legacy_owners": [
+        "test_external_observation.py",
+        "test_natural_language_v2_integration.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-070",
+      "area": "Web",
+      "journey": "Уточнить web-вопрос в продолжение контекста",
+      "invariant": "Bounded context помогает сформировать query, но не даёт authority из старого сообщения",
+      "legacy_owners": [
+        "test_contextual_external_observation.py",
+        "test_turn_context.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-071",
+      "area": "Web",
+      "journey": "Search завершён",
+      "invariant": "Source observation сохраняется и связывается с application truth",
+      "legacy_owners": [
+        "test_external_observation.py",
+        "test_web_fetch.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-072",
+      "area": "Web",
+      "journey": "Модель выдумала URL",
+      "invariant": "В output остаются только ссылки из application evidence",
+      "legacy_owners": [
+        "test_web_fetch.py",
+        "test_conversation_service.py",
+        "test_application_boundary.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-073",
+      "area": "Web",
+      "journey": "Открыть S-reference/найденный источник",
+      "invariant": "web.fetch разрешает ссылку только через conversation provenance",
+      "legacy_owners": [
+        "test_web_fetch.py",
+        "test_presented_read_sets.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-074",
+      "area": "Web",
+      "journey": "Страница содержит команды для агента",
+      "invariant": "Fetched page — untrusted evidence и не меняет Home state/permissions",
+      "legacy_owners": [
+        "test_web_fetch.py",
+        "test_context_compiler.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-075",
+      "area": "Web",
+      "journey": "Provider timeout/error",
+      "invariant": "Failure controlled/fail-closed: нет fabricated page/read receipt",
+      "legacy_owners": [
+        "test_external_observation.py",
+        "test_web_fetch.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-076",
+      "area": "Web",
+      "journey": "Обычный semantic turn при наличии web capability",
+      "invariant": "Valid ordinary не проваливается в legacy explicit Web gate",
+      "legacy_owners": [
+        "test_natural_language_v2_integration.py",
+        "test_conversation_service.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-077",
+      "area": "Authority",
+      "journey": "Модель утверждает «я сохранила/удалила», но receipt нет",
+      "invariant": "Unreceipted mutation claim блокируется response contract",
+      "legacy_owners": [
+        "test_application_boundary.py",
+        "test_response_presentation.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-078",
+      "area": "Authority",
+      "journey": "Adapter сообщает waiting_confirmation",
+      "invariant": "waiting_confirmation допустим только при durable operation evidence",
+      "legacy_owners": [
+        "test_resolved_capability_action_boundary.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-079",
+      "area": "Authority",
+      "journey": "Domain вернул NO_ACTION",
+      "invariant": "NO_ACTION не может выглядеть как pending success",
+      "legacy_owners": [
+        "test_resolved_capability_action_boundary.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-080",
+      "area": "Authority",
+      "journey": "В conversation есть pending proposal",
+      "invariant": "Durable operation выбирает ровно одного confirmation owner",
+      "legacy_owners": [
+        "test_conversation_service.py",
+        "test_confirmation_write_boundary.py",
+        "test_natural_language_v2_integration.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-081",
+      "area": "Authority",
+      "journey": "Pending proposal с неизвестной operation",
+      "invariant": "Unknown operation остаётся pending и fail-closed без mutation",
+      "legacy_owners": [
+        "test_conversation_service.py",
+        "test_confirmation_write_boundary.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-082",
+      "area": "Authority",
+      "journey": "Special Evening + личная фраза со словами «дела закончились»",
+      "invariant": "Special/personal conversation не открывает action plane и не мутирует домены",
+      "legacy_owners": [
+        "test_application_boundary.py",
+        "test_special_evening_scene_continuity.py",
+        "test_capability_router.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-083",
+      "area": "Authority",
+      "journey": "Meaning полностью разрешён",
+      "invariant": "ResolvedCapabilityHandoff содержит смысл, но не permission/confirmed/executor",
+      "legacy_owners": [
+        "test_resolution_coordinator.py",
+        "test_clarification.py",
+        "test_resolved_capability_action_boundary.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-084",
+      "area": "Authority",
+      "journey": "TurnContext собирается перед semantic resolver",
+      "invariant": "Envelope bounded/read-only и не содержит provider/record IDs, credentials или hidden memory",
+      "legacy_owners": [
+        "test_turn_context.py",
+        "test_semantic_resolver.py",
+        "test_human_information.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-085",
+      "area": "Runtime",
+      "journey": "Daemon probe возвращает unknown",
+      "invariant": "Home стартует degraded, а не делает ложный healthy claim",
+      "legacy_owners": [
+        "test_application_boundary.py",
+        "test_runtime_health.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-086",
+      "area": "Runtime",
+      "journey": "Background daemon уже запущен",
+      "invariant": "Живой daemon не мешает открыть Home session",
+      "legacy_owners": [
+        "test_application_boundary.py",
+        "test_proactive_daemon.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-087",
+      "area": "Presentation",
+      "journey": "Открыть Home snapshot/session",
+      "invariant": "Presentation/read projections не мутируют long-term domain state",
+      "legacy_owners": [
+        "test_application_boundary.py",
+        "test_presentation_runtime.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-088",
+      "area": "Presentation",
+      "journey": "Переключить модель во время Home session",
+      "invariant": "Меняется execution overlay/profile, а Identity/Memory/conversation domain state сохраняются",
+      "legacy_owners": [
+        "test_application_boundary.py",
+        "test_model_profiles.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-089",
+      "area": "Special Evening",
+      "journey": "Поставить boundary pause",
+      "invariant": "Pause session-only, proximity уходит в WIDE и не сбрасывается обычным user turn",
+      "legacy_owners": [
+        "test_application_boundary.py",
+        "test_special_evening_scene_continuity.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-090",
+      "area": "Special Evening",
+      "journey": "Model proximity hint closer/farther",
+      "invariant": "Hint меняет Home proximity только на один шаг и не обходит boundary pause",
+      "legacy_owners": [
+        "test_application_boundary.py",
+        "test_special_evening_scene_continuity.py",
+        "test_presentation_runtime.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-091",
+      "area": "Recovery",
+      "journey": "Создать Whole Home backup",
+      "invariant": "Backup включает канонические данные, исключает secrets/staging/random и проходит verify",
+      "legacy_owners": [
+        "test_whole_home_backup.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-092",
+      "area": "Recovery",
+      "journey": "Backup повреждён/неверный пароль",
+      "invariant": "Verification fail-closed; финальный bundle публикуется только после успешной проверки",
+      "legacy_owners": [
+        "test_whole_home_backup.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-093",
+      "area": "Recovery",
+      "journey": "Restore Whole Home",
+      "invariant": "Recovery держит Home в hold, suppress-ит proactive и release оставляет валидный Home",
+      "legacy_owners": [
+        "test_whole_home_recovery.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-094",
+      "area": "Recovery",
+      "journey": "Restore прерван или checkpoint/rollback ломается",
+      "invariant": "Дом либо откатывается, либо enters BLOCKED; passphrase не попадает в journal",
+      "legacy_owners": [
+        "test_whole_home_recovery.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-095",
+      "area": "Workbench",
+      "journey": "Переключение/установка capability tooling",
+      "invariant": "Failed model switch keeps previous profile; skill install проходит preview→confirm→restart",
+      "legacy_owners": [
+        "test_application_boundary.py",
+        "test_model_profiles.py",
+        "test_skill_installer.py"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "REL-096",
+      "area": "Safety",
+      "journey": "Emergency stop / permissions / visual identity integrity",
+      "invariant": "Safety блокирует автономию; UI-safe projection не раскрывает внутренности; tampered canonical visual asset fail-closed",
+      "legacy_owners": [
+        "test_permissions_control.py",
+        "test_application_boundary.py",
+        "test_identity_kernel.py"
+      ],
+      "status": "planned"
+    }
+  ]
+}

@@ -130,7 +130,7 @@ def test_local_resolver_uses_configured_role_and_strict_structured_request(tmp_p
     assert provider.last_request.required_capabilities.structured_output is True
     assert provider.last_request.required_capabilities.tools is False
     assert provider.last_request.private_context == {}
-    assert provider.last_request.execution_model_id == "qwen3.5:4b"
+    assert provider.last_request.execution_model_id == roles.profile_for(ModelRole.SEMANTIC_RESOLVER).model_id
     assert provider.last_request.timeout_seconds == 15.0
     assert provider.last_request.identity_context.persona_id == "semantic-resolver"
     assert "qwen3.5" not in provider.last_request.messages[0].content
@@ -311,25 +311,6 @@ def test_home_materializes_omitted_deictic_target_only_from_one_presented_family
     assert validator.last_trace.slots[-1].reason == "single_presented_entity_grounded"
 
 
-def test_near_literal_grounding_allows_one_non_authority_typo_but_not_changed_predicate(
-    tmp_path,
-):
-    _, _, validator, _, _ = _boundaries(tmp_path)
-
-    assert validator._action_evidence_is_grounded(
-        "Прочитай в моей посте новое письмо",
-        "Прочитай в моей почте новое письмо",
-    )
-    assert validator._slot_evidence_is_grounded(
-        "Удали встречу команды завтра",
-        "встреча команды",
-    )
-    assert not validator._action_evidence_is_grounded(
-        "Я создал документ",
-        "создай документ",
-    )
-
-
 def test_presented_deictic_target_stays_unresolved_when_context_is_ambiguous(tmp_path):
     _, _, validator, _, _ = _boundaries(tmp_path)
     proposal = parse_semantic_interpretation({
@@ -450,37 +431,6 @@ def test_turn_context_cannot_invent_an_action_absent_from_current_utterance(tmp_
     assert hybrid.last_rejection == "invented_action_request_evidence"
 
 
-def test_incomplete_selection_and_unknown_slot_do_not_erase_valid_action(tmp_path):
-    _, _, validator, _, _ = _boundaries(tmp_path)
-    proposal = parse_semantic_interpretation({
-        "kind": "supported_action",
-        "candidate_operation_ids": ["yandex_mail.read"],
-        "nearby_operation_ids": [],
-        "extracted_slots": [{"name": "period", "evidence_text": "почту"}],
-        "unresolved_referents": [],
-        "ambiguity_hint": "none",
-        "action_request_evidence": {"evidence_text": "проверь почту"},
-        "operation_selection_evidence": {
-            "operation_id": "yandex_mail.read",
-            "evidence_text": None,
-        },
-    })
-
-    frame = validator.validate("Маша, проверь почту", proposal)
-
-    assert frame.resolution_state is InterpretationResolutionState.RESOLVED
-    assert [item.operation_id for item in frame.candidates] == ["yandex_mail.read"]
-    assert [(item.name, item.value) for item in frame.slots] == [
-        ("view", "unread")
-    ]
-    assert validator.last_trace.action_request.accepted is True
-    assert validator.last_trace.operation_selection.accepted is False
-    assert validator.last_trace.operation_selection.reason == (
-        "incomplete_operation_selection_evidence"
-    )
-    assert validator.last_trace.slots[0].reason == "unknown_slot"
-
-
 def test_follow_up_resolver_receives_only_bounded_pending_context(tmp_path):
     provider, resolver, validator, _, _ = _boundaries(tmp_path)
     provider.response_text = json.dumps({
@@ -571,26 +521,6 @@ def test_follow_up_operation_selection_evidence_must_be_grounded(tmp_path):
     )
 
 
-def test_hybrid_understands_wrapped_schedule_and_home_derives_ambiguity(tmp_path):
-    provider, _, _, hybrid, _ = _boundaries(tmp_path)
-    provider.response_text = json.dumps(_schedule_proposal(), ensure_ascii=False)
-
-    frame = hybrid.interpret(
-        "Доброе утро, Маша! Запиши занятие завтра в 11"
-    )
-
-    assert frame.resolution_state is InterpretationResolutionState.CLARIFICATION_REQUIRED
-    assert [item.operation_id for item in frame.candidates] == [
-        "google_calendar.event.create",
-        "home.timed_commitments",
-    ]
-    assert {item.name: item.value for item in frame.slots} == {
-        "subject": "занятие",
-        "date": "2026-08-29",
-        "time": "11:00",
-    }
-
-
 def test_word_time_is_validated_against_current_utterance(tmp_path):
     _, _, validator, _, _ = _boundaries(tmp_path)
     proposal = parse_semantic_interpretation(
@@ -622,37 +552,6 @@ def test_validator_rejects_an_unknown_operation_but_keeps_no_partial_authority(t
 
     with pytest.raises(SemanticValidationError, match="unknown_operation"):
         validator.validate("Запиши занятие завтра в 11", proposal)
-
-
-def test_validator_keeps_grounded_fields_when_one_model_slot_is_rejected(tmp_path):
-    _, _, validator, _, _ = _boundaries(tmp_path)
-    proposal = parse_semantic_interpretation({
-        **_schedule_proposal(
-            candidates=["home.timed_commitments"],
-            action_evidence="Напомни",
-        ),
-        "extracted_slots": [
-            {"name": "subject", "evidence_text": "занятие"},
-            {"name": "date", "evidence_text": "завтра"},
-            {"name": "time", "evidence_text": "11"},
-            {"name": "provider_id", "evidence_text": "secret"},
-        ],
-        "ambiguity_hint": "slot",
-        "operation_selection_evidence": {
-            "operation_id": "home.timed_commitments",
-            "evidence_text": "Напомни",
-        },
-    })
-
-    frame = validator.validate("Напомни про занятие завтра в 11", proposal)
-
-    assert frame.resolution_state is InterpretationResolutionState.RESOLVED
-    assert {item.name for item in frame.slots} == {"subject", "date", "time"}
-    assert validator.last_trace is not None
-    assert any(
-        item.name == "provider_id" and not item.accepted and item.reason == "unknown_slot"
-        for item in validator.last_trace.slots
-    )
 
 
 def test_model_cannot_invent_subject_or_resolved_referent(tmp_path):
@@ -810,29 +709,6 @@ def test_semantic_ordinary_conversation_remains_ordinary(tmp_path):
     frame = hybrid.interpret("Как ты сегодня?")
 
     assert frame.resolution_state is InterpretationResolutionState.ORDINARY_CONVERSATION
-
-
-def test_semantic_knowledge_is_broader_than_dialogue_execution_adoption(tmp_path):
-    provider, _, validator, hybrid, _ = _boundaries(tmp_path)
-    provider.response_text = json.dumps({
-        "kind": "supported_action",
-        "candidate_operation_ids": ["home.proactive_reminders"],
-        "nearby_operation_ids": [],
-        "extracted_slots": [],
-        "unresolved_referents": [],
-        "ambiguity_hint": "none",
-        "action_request_evidence": {"evidence_text": "можешь показать"},
-        "operation_selection_evidence": {"operation_id": None, "evidence_text": None},
-    })
-
-    frame = hybrid.interpret("Маш, можешь показать мои активные напоминания?")
-
-    assert frame.resolution_state is InterpretationResolutionState.RESOLVED
-    assert [item.operation_id for item in frame.candidates] == ["home.proactive_reminders"]
-    assert "home.proactive_reminders" in {
-        item.operation_id for item in validator.vocabulary()
-    }
-    assert V2LiveAdoptionPolicy().supports_frame(frame) is False
 
 
 def test_clear_update_language_corrects_calendar_create_to_update_kind(tmp_path):
@@ -1014,45 +890,6 @@ def test_untrusted_semantics_cannot_erase_explicit_calendar_destination(tmp_path
     assert hybrid.last_rejection == "semantic_conflicts_with_structural_owner"
 
 
-def test_unsupported_without_adopted_evidence_does_not_steal_legacy_route(tmp_path):
-    provider, _, _, hybrid, _ = _boundaries(tmp_path)
-    provider.response_text = json.dumps({
-        "kind": "unsupported_action",
-        "candidate_operation_ids": [],
-        "nearby_operation_ids": [],
-        "extracted_slots": [],
-        "unresolved_referents": [],
-        "ambiguity_hint": "none",
-        "action_request_evidence": {"evidence_text": "Обнови"},
-        "operation_selection_evidence": {"operation_id": None, "evidence_text": None},
-    })
-
-    frame = hybrid.interpret("Обнови память о выбранной модели")
-
-    assert frame.resolution_state is InterpretationResolutionState.ORDINARY_CONVERSATION
-    assert hybrid.last_rejection == "unsupported_action_preserves_legacy_owner"
-
-
-def test_untrusted_unsupported_proposal_cannot_steal_connector_read_owner(tmp_path):
-    provider, _, _, hybrid, _ = _boundaries(tmp_path)
-    provider.response_text = json.dumps({
-        "kind": "unsupported_action",
-        "candidate_operation_ids": [],
-        "nearby_operation_ids": [],
-        "extracted_slots": [],
-        "unresolved_referents": [],
-        "ambiguity_hint": "none",
-        "action_request_evidence": {"evidence_text": "Посмотри"},
-        "operation_selection_evidence": {"operation_id": None, "evidence_text": None},
-    })
-
-    frame = hybrid.interpret("Посмотри мою почту")
-
-    assert [item.operation_id for item in frame.candidates] == ["yandex_mail.read"]
-    assert len(provider.requests) == 1
-    assert hybrid.last_rejection == "unsupported_action_preserves_legacy_owner"
-
-
 def test_docs_content_stays_structural_but_external_information_reaches_semantics(tmp_path):
     class ExplodingResolver:
         def resolve(self, *_args, **_kwargs):
@@ -1112,6 +949,6 @@ def test_model_role_can_switch_profile_without_router_code_change(tmp_path):
 
     selected = roles.assign(ModelRole.SEMANTIC_RESOLVER, "fast")
 
-    assert selected.model_id == "qwen3.5:4b"
+    assert selected.model_id == roles.profiles.get_profile("fast").model_id
     restarted = ModelRoleProfileStore(roles.path, profiles=roles.profiles)
     assert restarted.profile_for(ModelRole.SEMANTIC_RESOLVER).profile_id == "fast"

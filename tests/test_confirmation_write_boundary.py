@@ -21,7 +21,7 @@ from backend.memory.shared_continuity import SharedContinuityService
 from backend.memory.sqlite_repository import MemorySqliteRepository
 from backend.temporal.temporal_engine import FixedClock, TemporalEngine
 from backend.temporal.temporal_runtime import TemporalRuntime
-from tests.test_application_boundary import LocalProfileProvider, _isolated_root
+from tests.test_support import LocalProfileProvider, _isolated_root
 
 
 PROJECT_ID = "project_masha_home"
