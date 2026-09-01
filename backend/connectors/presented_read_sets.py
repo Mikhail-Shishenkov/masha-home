@@ -8,6 +8,11 @@ import re
 from typing import Callable
 
 from backend.conversation.capability_router import normalize_utterance
+from backend.conversation.human_reference import (
+    HumanEntityKind,
+    PresentedEntityRef,
+    PresentedEntitySet,
+)
 
 
 class PresentedEntityReferenceKind(str, Enum):
@@ -72,6 +77,22 @@ class PresentedReadSetRegistry:
             presentation_kind=presentation_kind,
         )
 
+    def present_home_entities(self, presented: PresentedEntitySet) -> None:
+        """Make a Home-owned list the newest cross-capability reference set."""
+
+        self._rows[presented.conversation_id] = PresentedEntityContext(
+            conversation_id=presented.conversation_id,
+            owner="home_information",
+            entity_kind="mixed",
+            items=presented.items,
+            presentation_kind=presented.source_kind,
+        )
+
+    def discard(self, conversation_id: str, *, owner: str | None = None) -> None:
+        current = self._rows.get(conversation_id)
+        if current is not None and (owner is None or current.owner == owner):
+            self._rows.pop(conversation_id, None)
+
     def current_context(self, conversation_id: str) -> PresentedEntityContext | None:
         return self._rows.get(conversation_id)
 
@@ -85,35 +106,49 @@ class PresentedReadSetRegistry:
         context = self.current_context(conversation_id)
         if context is None:
             return ()
-        operation_id = {
+        context_operation_id = {
             "google_drive": "google_drive.read",
             "yandex_disk": "yandex_disk.read",
             "yandex_mail": "yandex_mail.read",
         }.get(context.owner)
-        if operation_id is None:
+        if context_operation_id is None and context.owner != "home_information":
             return ()
         rows = []
         for position, item in enumerate(context.items[:10], start=1):
-            label = next((
-                str(value).strip()
-                for name in ("subject", "name", "title")
-                if (value := getattr(item, name, None)) is not None
-                and str(value).strip()
-            ), "")
+            if isinstance(item, PresentedEntityRef):
+                operation_id = {
+                    HumanEntityKind.MEMORY: "home.memory.inspect",
+                    HumanEntityKind.HISTORY: "home.continuity.read",
+                    HumanEntityKind.TASK: "home.commitments",
+                    HumanEntityKind.THREAD: "home.continuity.read",
+                }[item.entity_kind]
+                label = item.human_label.strip()
+                kind = item.entity_kind.value
+                time_value = None
+            else:
+                operation_id = context_operation_id
+                label = next((
+                    str(value).strip()
+                    for name in ("subject", "name", "title")
+                    if (value := getattr(item, name, None)) is not None
+                    and str(value).strip()
+                ), "")
+                kind = context.entity_kind
+                time_value = next((
+                    value
+                    for name in (
+                        "received_at", "modified_time", "modified_at",
+                        "created_at", "start",
+                    )
+                    if (value := getattr(item, name, None)) is not None
+                ), None)
             if not label:
                 continue
-            time_value = next((
-                value
-                for name in (
-                    "received_at", "modified_time", "modified_at",
-                    "created_at", "start",
-                )
-                if (value := getattr(item, name, None)) is not None
-            ), None)
+            assert operation_id is not None
             rows.append({
                 "position": position,
                 "owner_operation_id": operation_id,
-                "kind": context.entity_kind,
+                "kind": kind,
                 "human_label": label[:500],
                 "time_text": None if time_value is None else str(time_value)[:120],
             })

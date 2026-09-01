@@ -394,6 +394,7 @@ class MemoryIntentHandler:
         human_information=None,
         on_commitment_terminal=None,
         on_timed_commitment_changed=None,
+        presented_context_registry=None,
     ):
         self.proposal_store = proposal_store
         self.confirmed_memory = confirmed_memory
@@ -404,6 +405,7 @@ class MemoryIntentHandler:
         self.human_information = human_information
         self._on_commitment_terminal = on_commitment_terminal
         self._on_timed_commitment_changed = on_timed_commitment_changed
+        self._presented_context_registry = presented_context_registry
         self._continuity_clarifications: dict[str, ContinuityResolveClarification] = {}
         self._human_entity_clarifications: dict[str, HumanEntityClarification] = {}
         self._presented_entity_sets: dict[str, PresentedEntitySet] = {}
@@ -801,12 +803,12 @@ class MemoryIntentHandler:
             ))
         if len(visible) > 6:
             lines.append(f"И ещё {len(visible) - 6}. Могу сузить вопрос.")
-        self._presented_entity_sets[conversation_id] = PresentedEntitySet(
+        self._remember_presented_entity_set(PresentedEntitySet(
             conversation_id=conversation_id,
             source_kind="confirmed_memory",
             created_at=self._now(),
             items=tuple(refs),
-        )
+        ))
         return MemoryIntentResult(handled=True, response="\n".join(lines))
 
     def _human_recall(
@@ -817,6 +819,7 @@ class MemoryIntentHandler:
         conversation_id: str,
     ) -> MemoryIntentResult:
         """Render bounded confirmed recall as a portrait, not an admin list."""
+        query = self._normalized_personal_recall_query(query)
         if self.human_information is None:
             return self._show_memory(query, project_id, conversation_id=conversation_id)
         result = self.human_information.search_for_conversation(
@@ -857,11 +860,22 @@ class MemoryIntentHandler:
             conversation_id=conversation_id,
         )
         if presented is not None:
-            self._presented_entity_sets[conversation_id] = presented
+            self._remember_presented_entity_set(presented)
         return MemoryIntentResult(
             handled=True,
             response="\n".join([heading, *(f"{index}. {point}" for index, point in enumerate(points, 1))]),
         )
+
+    @staticmethod
+    def _normalized_personal_recall_query(query: str | None) -> str | None:
+        if query is None:
+            return None
+        tokens = set(normalize_utterance(query).split())
+        personal_scope = {
+            "обо", "об", "мне", "про", "меня", "мое", "мои", "моя",
+            "вообще", "все", "всё", "что", "есть",
+        }
+        return None if tokens and tokens.issubset(personal_scope) else query
 
     def recall_from_resolved_intent(
         self,
@@ -1184,7 +1198,7 @@ class MemoryIntentHandler:
             conversation_id=conversation_id,
         )
         assert presented is not None
-        self._presented_entity_sets[conversation_id] = presented
+        self._remember_presented_entity_set(presented)
         return MemoryIntentResult(handled=True, response="\n".join(lines))
 
     def _propose_restore_reference(
@@ -1196,7 +1210,7 @@ class MemoryIntentHandler:
     ) -> MemoryIntentResult:
         if self.human_information is None:
             return MemoryIntentResult(handled=True, response="Восстановление памяти сейчас недоступно.")
-        presented = self._presented_entity_sets.get(conversation_id)
+        presented = self._current_presented_entity_set(conversation_id)
         selected = None
         ordinal = self._ordinal_from_text(query)
         if presented is not None:
@@ -1266,7 +1280,7 @@ class MemoryIntentHandler:
         *,
         conversation_id: str,
     ) -> MemoryIntentResult:
-        presented = self._presented_entity_sets.get(conversation_id)
+        presented = self._current_presented_entity_set(conversation_id)
         ordinal = self._ordinal_from_text(query)
         if presented is None or ordinal is None:
             return MemoryIntentResult(
@@ -1324,11 +1338,31 @@ class MemoryIntentHandler:
 
     def remember_presented_entity_set(self, presented: PresentedEntitySet) -> None:
         """Reuse the v0.3 ordinal truth for typed application search results."""
-        self._presented_entity_sets[presented.conversation_id] = presented
+        self._remember_presented_entity_set(presented)
 
     def discard_presented_entity_set(self, conversation_id: str) -> None:
         """Invalidate ordinal truth before an unowned model presentation."""
         self._presented_entity_sets.pop(conversation_id, None)
+        if self._presented_context_registry is not None:
+            self._presented_context_registry.discard(
+                conversation_id,
+                owner="home_information",
+            )
+
+    def _remember_presented_entity_set(self, presented: PresentedEntitySet) -> None:
+        self._presented_entity_sets[presented.conversation_id] = presented
+        if self._presented_context_registry is not None:
+            self._presented_context_registry.present_home_entities(presented)
+
+    def _current_presented_entity_set(
+        self,
+        conversation_id: str,
+    ) -> PresentedEntitySet | None:
+        if self._presented_context_registry is not None:
+            current = self._presented_context_registry.current_context(conversation_id)
+            if current is None or current.owner != "home_information":
+                return None
+        return self._presented_entity_sets.get(conversation_id)
 
     @staticmethod
     def _human_remove_query(message: str) -> str | None:
@@ -1375,7 +1409,7 @@ class MemoryIntentHandler:
     ) -> MemoryIntentResult:
         ordinal = self._ordinal_from_text(query)
         if ordinal is not None:
-            presented = self._presented_entity_sets.get(conversation_id)
+            presented = self._current_presented_entity_set(conversation_id)
             if presented is None:
                 return MemoryIntentResult(
                     handled=True,
@@ -1413,7 +1447,7 @@ class MemoryIntentHandler:
                 response="Уточни, какое именно воспоминание или открытую тему убрать. Я не буду выбирать всё сразу.",
             )
         if not normalized or normalized in _DEICTIC_ONLY:
-            presented = self._presented_entity_sets.get(conversation_id)
+            presented = self._current_presented_entity_set(conversation_id)
             if presented is not None and len(presented.items) == 1:
                 selected = presented.items[0]
                 ref = HumanEntityRef(
@@ -1617,12 +1651,12 @@ class MemoryIntentHandler:
                 allowed_actions=ref.allowed_actions,
             ))
         lines.append("Что именно убрать?")
-        self._presented_entity_sets[conversation_id] = PresentedEntitySet(
+        self._remember_presented_entity_set(PresentedEntitySet(
             conversation_id=conversation_id,
             source_kind="remove_clarification",
             created_at=self._now(),
             items=tuple(presented),
-        )
+        ))
         return MemoryIntentResult(handled=True, response="\n".join(lines))
 
     def _list_continuity(
@@ -1668,12 +1702,12 @@ class MemoryIntentHandler:
                 human_label=item.summary,
                 allowed_actions=(HumanEntityAction.RESOLVE_CONTINUITY,),
             ))
-        self._presented_entity_sets[conversation_id] = PresentedEntitySet(
+        self._remember_presented_entity_set(PresentedEntitySet(
             conversation_id=conversation_id,
             source_kind="shared_history",
             created_at=self._now(),
             items=tuple(refs),
-        )
+        ))
         return MemoryIntentResult(handled=True, response="\n".join(lines))
 
     def _propose_commitment(

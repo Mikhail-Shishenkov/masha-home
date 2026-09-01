@@ -197,3 +197,15 @@ def test_builder_projects_real_home_types_without_storage_identity():
     assert "internal-message-id" not in serialized
     assert "internal-conversation-id" not in serialized
     assert "must-not-cross-boundary" not in serialized
+
+
+def test_previous_application_result_is_bounded_context_not_authority():
+    envelope = TurnContextEnvelopeBuilder().build(
+        temporal_context=temporal_context(),
+        last_application_result=("home.memory.recall", "completed_read"),
+    )
+
+    assert envelope.last_application_result is not None
+    assert envelope.last_application_result.operation_id == "home.memory.recall"
+    assert envelope.last_application_result.projection_state == "completed_read"
+    assert "receipt" not in envelope.model_dump_json()

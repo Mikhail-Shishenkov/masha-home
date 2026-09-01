@@ -259,6 +259,27 @@ def test_auto_policy_allows_current_turn_observation_but_not_timeless_guess(tmp_
     assert len(provider.requests) == 1
 
 
+def test_freshness_need_is_case_normalized_before_auto_policy(tmp_path):
+    provider = FakeWebSearchProvider((_evidence(),))
+    service, _, _ = _service(
+        tmp_path,
+        provider,
+        policy=InternetAccessPolicy(mode=InternetAccessMode.AUTO),
+    )
+
+    result = service.observe_resolved_search(
+        "Сейчас какая последняя версия Ollama?",
+        query_hint="последняя версия Ollama",
+        origin_message_id="message-current-capitalized",
+    )
+
+    assert result is not None
+    assert result.status is ObservationStatus.COMPLETED
+    assert result.request.authority is InvocationAuthority.ASSISTANT_AUTO
+    assert result.request.freshness is FreshnessRequirement.CURRENT
+    assert len(provider.requests) == 1
+
+
 def test_auto_policy_still_allows_explicit_user_search(tmp_path):
     provider = FakeWebSearchProvider((_evidence(),))
     service, _, _ = _service(

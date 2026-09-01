@@ -547,6 +547,7 @@ def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
                 reminder_trace.record("commitment_due_changed"),
                 request_proactive_wakeup(root, trace=reminder_trace),
             ),
+            presented_context_registry=presented_read_sets,
         ),
         model_profiles=profiles,
         proactive_interactions=interactions,

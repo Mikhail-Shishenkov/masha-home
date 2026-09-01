@@ -25,6 +25,12 @@ from backend.conversation.interpretation_v2 import (
     InterpretationSlot,
     InterpretationValueOrigin,
 )
+from backend.conversation.semantic_resolver import (
+    SemanticProposalValidator,
+    SemanticResolverFailure,
+    SemanticFollowUpResult,
+)
+from backend.temporal.temporal_engine import FixedClock, TemporalEngine
 
 
 NOW = datetime(2026, 8, 27, 12, 0, tzinfo=timezone.utc)
@@ -137,3 +143,43 @@ def test_clarification_models_and_engine_expose_no_execution_authority():
     assert not hasattr(pending, "confirmation")
     assert not hasattr(FollowUpResolutionEngine, "execute")
     assert not hasattr(FollowUpResolutionEngine, "authorize")
+
+
+def test_direct_text_answer_survives_semantic_follow_up_failure():
+    class UnavailableSemanticResolver:
+        def resolve_follow_up(self, *_args, **_kwargs):
+            return SemanticFollowUpResult(
+                failure=SemanticResolverFailure.PROVIDER_UNAVAILABLE,
+                latency_ms=0,
+            )
+
+    catalog = _catalog()
+    discovery = CapabilityCandidateDiscovery(catalog=catalog)
+    validator = SemanticProposalValidator(
+        catalog=catalog,
+        specifications=discovery.specifications,
+        known_operation_ids=frozenset(discovery.specifications.operation_ids),
+    )
+    _, pending = DeterministicClarificationBuilder(
+        catalog=catalog,
+        clock=lambda: NOW,
+        resolution_id_factory=lambda: RESOLUTION_ID,
+    ).build(
+        discovery.interpret("Поставь в календарь завтра в 10"),
+        conversation_id="conversation-1",
+    )
+    engine = FollowUpResolutionEngine(
+        semantic_resolver=UnavailableSemanticResolver(),
+        semantic_validator=validator,
+        temporal_engine=TemporalEngine(clock=FixedClock(NOW)),
+    )
+
+    result = engine.resolve(
+        pending,
+        "Чтобы я посмотрел заявку от Timepad",
+    )
+
+    assert result.outcome is FollowUpOutcome.RESOLVED
+    assert _slots(result.interpretation)["subject"] == (
+        "Чтобы я посмотрел заявку от Timepad"
+    )

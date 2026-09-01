@@ -479,6 +479,9 @@ class ConversationService:
                     if self.presented_context_provider is None
                     else self.presented_context_provider(conversation.id)
                 ),
+                last_application_result=self._dialogue_projection_by_conversation.get(
+                    conversation.id,
+                ),
             )
             self.dialogue_core.bind_temporal_engine(self.temporal_engine)
             coordination = self.dialogue_core.coordinate(

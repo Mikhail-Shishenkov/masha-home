@@ -19,6 +19,7 @@ from .clarification import (
     FollowUpOutcome,
     FollowUpResolutionResult,
     FollowUpResolutionEngine,
+    cancelled_follow_up_remainder,
 )
 from .interpretation_v2 import (
     CapabilityCandidateDiscovery,
@@ -297,6 +298,20 @@ class DialogueCore:
         )
         try:
             active = self.store.active_for_conversation(conversation_id)
+            cancelled_before_new_turn = False
+            replacement = (
+                None
+                if active is None
+                else cancelled_follow_up_remainder(utterance)
+            )
+            if active is not None and replacement is not None:
+                self.store.cancel(
+                    active.resolution_id,
+                    reason="cancelled_before_new_turn",
+                )
+                active = None
+                utterance = replacement
+                cancelled_before_new_turn = True
             frame = None
             if active is not None:
                 follow_up = self.engine.resolve(
@@ -347,7 +362,11 @@ class DialogueCore:
                             conversation_id=conversation_id,
                             resolution_id=None,
                         ),
-                        pending_outcome="semantic_resolved",
+                        pending_outcome=(
+                            "cancelled_then_resolved"
+                            if cancelled_before_new_turn
+                            else "semantic_resolved"
+                        ),
                     )
                 if (
                     frame.resolution_state
@@ -363,6 +382,11 @@ class DialogueCore:
                         CoordinationStatus.CLARIFICATION,
                         frame,
                         clarification=request,
+                        pending_outcome=(
+                            "cancelled_then_clarification"
+                            if cancelled_before_new_turn
+                            else None
+                        ),
                     )
                 if self._has_strict_legacy_owner(frame):
                     return self._pass(frame, pending_outcome="strict_legacy_owner")

@@ -261,7 +261,11 @@ def default_interpretation_specifications() -> tuple[InterpretationSpecification
         InterpretationSpecification(
             operation_id="web.search",
             required_slots=("query",),
-            purpose="find publicly available information on the web",
+            purpose=(
+                "obtain current or recently changed public information when "
+                "the answer depends on external freshness; not for timeless "
+                "knowledge, Home memory, or connected private services"
+            ),
             operation_kind="read",
             slots=(InterpretationSlotSpecification(name="query", meaning="what to search for", normalizer="text"),),
         ),

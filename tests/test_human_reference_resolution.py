@@ -1,6 +1,7 @@
 """Acceptance coverage for application-owned human reference resolution."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -8,6 +9,7 @@ from backend.conversation.conversation_service import ConversationService
 from backend.conversation.conversation_store import ConversationStore
 from backend.conversation.human_reference import HumanEntityKind
 from backend.conversation.memory_intent import MemoryIntentHandler, MemoryProposalStore
+from backend.connectors.presented_read_sets import PresentedReadSetRegistry
 from backend.conversation.response_contract import (
     UNRECEIPTED_MUTATION_RESPONSE,
     render_model_response,
@@ -28,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PROJECT = "project_masha_home"
 
 
-def _service(tmp_path, memory_path):
+def _service(tmp_path, memory_path, *, presented_registry=None):
     repository = MemorySqliteRepository(tmp_path / "memory.sqlite3")
     repository.import_json(memory_path)
     provider = FakeProvider(
@@ -40,6 +42,7 @@ def _service(tmp_path, memory_path):
         confirmed_memory=ConfirmedMemoryService(repository),
         memory_management=MemoryManagementService(repository),
         shared_continuity=SharedContinuityService(repository),
+        presented_context_registry=presented_registry,
     )
     service = ConversationService(
         identity_kernel=IdentityKernel(IdentityStore(ROOT / "identity" / "masha.identity.json")),
@@ -50,6 +53,57 @@ def _service(tmp_path, memory_path):
         memory_intent_handler=handler,
     )
     return service, repository, provider
+
+
+def test_ordinal_never_uses_an_older_home_list_after_another_owner_presented(
+    tmp_path,
+    memory_path,
+):
+    registry = PresentedReadSetRegistry()
+    service, _, provider = _service(
+        tmp_path,
+        memory_path,
+        presented_registry=registry,
+    )
+    conversation_id = _save_relationship(service, "Миша любит чай")
+    _, _ = _send(service, "что есть в нашей истории?", conversation_id)
+    assert registry.current_context(conversation_id).owner == "home_information"
+
+    registry.present(
+        conversation_id,
+        "yandex_mail",
+        (SimpleNamespace(subject="Новое письмо"),),
+        entity_kind="письмо",
+    )
+    _, response = _send(service, "удали первый пункт", conversation_id)
+
+    assert "Сначала попроси показать" in response
+    assert service.memory_intent_handler.proposal_store.current_for_conversation(
+        conversation_id
+    ) is None
+    assert provider.last_request is None
+
+
+def test_personal_pronoun_is_broad_recall_scope_not_literal_search(
+    tmp_path,
+    memory_path,
+):
+    service, _, _ = _service(tmp_path, memory_path)
+    conversation_id = _save_relationship(service, "Миша любит чай")
+
+    result = service.memory_intent_handler.recall_from_resolved_intent(
+        query="обо мне",
+        project_id=PROJECT,
+        conversation_id=conversation_id,
+    )
+
+    broad = service.memory_intent_handler.recall_from_resolved_intent(
+        query=None,
+        project_id=PROJECT,
+        conversation_id=conversation_id,
+    )
+    assert result.handled is True
+    assert result.response == broad.response
 
 
 def _send(service, message, conversation_id=None):

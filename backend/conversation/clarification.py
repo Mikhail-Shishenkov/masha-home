@@ -53,7 +53,13 @@ from .turn_context import TurnContextEnvelope
 
 DEFAULT_CLARIFICATION_TTL = timedelta(minutes=30)
 
-_CANCEL = re.compile(r"^(?:не надо|отмена|забудь|ладно не делай)$")
+_CANCEL = re.compile(r"^(?:не надо|отмена|забудь|забыли|ладно не делай)$")
+_CANCEL_THEN_CONTINUE = re.compile(
+    r"^\s*(?:(?:ладно|хорошо)\s*[,\u2014-]?\s*)?"
+    r"(?:забыли|забудь|отмена|не\s+надо|не\s+делай)"
+    r"\s*[.!?;,:\n\u2014-]+\s*(?P<rest>\S.+)$",
+    re.IGNORECASE | re.DOTALL,
+)
 _CALENDAR_CHOICE = re.compile(r"^(?:в календарь|календарь|поставь в календарь)$")
 _REMINDER_CHOICE = re.compile(r"^(?:просто напомни|напоминание|только напомни)$")
 _INDEPENDENT_QUESTION = re.compile(
@@ -68,7 +74,11 @@ _EXPLICIT_MATERIAL = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _DATE_VALUE = re.compile(r"^(?:сегодня|завтра)$")
-_TIME_VALUE = re.compile(r"^(?:в\s*)?(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?$")
+_TIME_VALUE = re.compile(
+    r"^(?:в\s*)?(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?"
+    r"(?:\s+час(?:а|ов)?)?"
+    r"(?:\s+(?P<period>утра|дня|вечера|ночи))?$",
+)
 _CLOCK_HOUR_PHRASE = re.compile(
     r"\b(?P<hour>\d{1,2})\s+час(?:а|ов)?\s+(?:дня|утра|вечера|ночи)\b"
 )
@@ -80,6 +90,16 @@ _HUMAN_CHOICE_LABELS = {
     "google_drive.document.create": "Google Drive",
     "yandex_disk.document.create": "Яндекс Диск",
 }
+
+
+def cancelled_follow_up_remainder(value: str) -> str | None:
+    """Return a new utterance only after an explicit delimited cancellation."""
+
+    match = _CANCEL_THEN_CONTINUE.fullmatch(value)
+    if match is None:
+        return None
+    remainder = match.group("rest").strip()
+    return remainder or None
 
 
 class ClarificationRequest(StrictResolutionModel):
@@ -464,6 +484,25 @@ class FollowUpResolutionEngine:
         )
         if semantic is not None:
             return semantic
+        if (
+            pending.clarification_kind is ClarificationKind.SLOT
+            and pending.requested_slot in {"subject", "title"}
+            and text not in _UNRESOLVED_ANSWERS
+            and text not in {"да", "нет", "подтверждаю"}
+            and not self._is_independent(text)
+        ):
+            # The active application question provides the slot semantics.
+            # If the optional semantic helper is unavailable, retain a
+            # bounded direct human answer instead of asking the identical
+            # question forever.  New commands/questions still pass through.
+            slot = self._slot_from_follow_up(
+                pending.requested_slot,
+                original,
+                text,
+                date_resolver=self.date_resolver,
+            )
+            if slot is not None:
+                return self._fill_slot(pending, slot)
         if pending.clarification_kind in {
             ClarificationKind.CAPABILITY,
             ClarificationKind.PROVIDER_SCOPE,
@@ -722,11 +761,24 @@ class FollowUpResolutionEngine:
             return None
         value: str | None
         if slot_name == "time":
-            match = _TIME_VALUE.fullmatch(text)
+            # ``normalize_utterance`` intentionally removes punctuation for
+            # intent comparison, but a clock separator is semantic data.  A
+            # reply such as ``18:00`` must therefore be parsed from the
+            # original bounded answer rather than from ``18 00``.
+            clock_text = original.casefold().replace("ё", "е").strip(" \t\r\n.,!?")
+            match = _TIME_VALUE.fullmatch(clock_text)
             if match is None:
                 return None
             hour = int(match.group("hour"))
             minute = int(match.group("minute") or 0)
+            period = match.group("period")
+            if period in {"дня", "вечера"} and 1 <= hour <= 11:
+                hour += 12
+            elif period == "ночи":
+                if hour == 12:
+                    hour = 0
+                elif 6 <= hour <= 11:
+                    hour += 12
             if hour > 23 or minute > 59:
                 return None
             value = f"{hour:02d}:{minute:02d}"

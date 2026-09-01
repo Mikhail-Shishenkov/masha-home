@@ -173,15 +173,16 @@ def classify_information_space(message: str) -> InformationSpace:
 
 
 def infer_freshness(value: str) -> FreshnessRequirement:
-    if re.search(r"\b(?:срочно|прямо\s+сейчас|breaking|свежие\s+новости|последние\s+новости)\b", value):
+    normalized = normalize_external_utterance(value)
+    if re.search(r"\b(?:срочно|прямо\s+сейчас|breaking|свежие\s+новости|последние\s+новости)\b", normalized):
         return FreshnessRequirement.BREAKING
     if re.search(
         r"\b(?:сейчас|актуальн|текущ|последн\w*\s+верси|уже|исправили|"
         r"вышл\w*|обновил\w*|нового|новост\w*)\b",
-        value,
+        normalized,
     ):
         return FreshnessRequirement.CURRENT
-    if re.search(r"\b(?:недавн|за\s+(?:неделю|месяц)|свеж\w*)\b", value):
+    if re.search(r"\b(?:недавн|за\s+(?:неделю|месяц)|свеж\w*)\b", normalized):
         return FreshnessRequirement.RECENT
     return FreshnessRequirement.TIMELESS
 

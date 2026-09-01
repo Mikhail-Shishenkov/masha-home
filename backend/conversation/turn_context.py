@@ -34,6 +34,7 @@ class TurnContextSource(str, Enum):
     ACTIVE_MEMORY = "active_memory"
     PRESENTED_ENTITY = "presented_entity"
     CAPABILITY_CATALOG = "capability_catalog"
+    APPLICATION_RESULT = "application_result"
 
 
 class TurnTemporalContext(StrictTurnContextModel):
@@ -128,6 +129,19 @@ class TurnCapabilityHint(StrictTurnContextModel):
     ]
 
 
+class TurnApplicationResultHint(StrictTurnContextModel):
+    """Previous application projection, without receipt or provider identity."""
+
+    source: Literal[TurnContextSource.APPLICATION_RESULT] = (
+        TurnContextSource.APPLICATION_RESULT
+    )
+    operation_id: str = Field(pattern=_OPERATION_ID, max_length=100)
+    projection_state: Literal[
+        "clarification", "waiting_confirmation", "completed_read",
+        "failed", "unsupported",
+    ]
+
+
 class TurnContextEnvelope(StrictTurnContextModel):
     """All bounded context Home may offer to semantic understanding for one turn."""
 
@@ -140,6 +154,7 @@ class TurnContextEnvelope(StrictTurnContextModel):
         default=(), max_length=10,
     )
     capabilities: tuple[TurnCapabilityHint, ...] = Field(default=(), max_length=32)
+    last_application_result: TurnApplicationResultHint | None = None
 
     @model_validator(mode="after")
     def references_and_capabilities_are_unique(self):
@@ -176,6 +191,7 @@ class TurnContextEnvelopeBuilder:
         memory_context: tuple[dict, ...] = (),
         capability_snapshot: Any | None = None,
         presented_context: tuple[dict, ...] = (),
+        last_application_result: tuple[str | None, str] | None = None,
     ) -> TurnContextEnvelope:
         turns = tuple(
             TurnConversationHint(
@@ -234,6 +250,17 @@ class TurnContextEnvelopeBuilder:
             )
             for index, item in enumerate(presented_context[:10], start=1)
         )
+        application_result = None
+        if last_application_result is not None:
+            operation_id, projection_state = last_application_result
+            if operation_id is not None and projection_state in {
+                "clarification", "waiting_confirmation", "completed_read",
+                "failed", "unsupported",
+            }:
+                application_result = TurnApplicationResultHint(
+                    operation_id=operation_id,
+                    projection_state=projection_state,
+                )
         return TurnContextEnvelope(
             temporal=TurnTemporalContext.from_temporal_context(temporal_context),
             recent_turns=turns,
@@ -241,6 +268,7 @@ class TurnContextEnvelopeBuilder:
             memory_hints=tuple(memories),
             presented_entities=presented_entities,
             capabilities=capabilities,
+            last_application_result=application_result,
         )
 
     @staticmethod
