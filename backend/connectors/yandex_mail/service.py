@@ -77,6 +77,13 @@ class YandexMailConversationService:
     ) -> MailOutcome:
         """Execute validated semantic meaning without re-routing the action."""
 
+        # A resolved mailbox view is a listing, not a reference into a prior
+        # list. Do not let stale presented context turn it into a single read.
+        canonical_view = self._canonical_view(view)
+        if canonical_view is not None and sender is None and topic is None:
+            return self._search_and_present(
+                canonical_view, None, conversation_id=conversation_id,
+            )
         contextual = self._contextual_read(
             " ".join(
                 part for part in (original_utterance, target) if part
@@ -95,7 +102,6 @@ class YandexMailConversationService:
             return self._search_and_present(
                 "topic", topic, conversation_id=conversation_id,
             )
-        canonical_view = self._canonical_view(view)
         if canonical_view is None:
             return MailOutcome("clarification_required")
         return self._search_and_present(

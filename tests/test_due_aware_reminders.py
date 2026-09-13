@@ -1,5 +1,6 @@
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock
 
 from backend.application.proactive import ProactiveApplicationService
 from backend.memory.sqlite_repository import MemorySqliteRepository
@@ -10,6 +11,67 @@ from backend.temporal.proactive_interaction import ProactiveInteractionStore
 from backend.temporal.temporal_engine import FixedClock
 from backend.temporal.temporal_runtime import due_aware_cycle_delay
 from backend.temporal.reminder_trace import ReminderDeliveryTrace
+
+
+def test_confirmed_reminder_delivers_once_without_model_and_survives_restart(tmp_path, canonical_memory):
+    from backend.conversation.conversation_store import ConversationStore
+    from backend.conversation.memory_intent import MemoryIntentHandler, MemoryProposalStore
+    from backend.memory.confirmed_memory_service import ConfirmedMemoryService
+    from backend.llm.model_profiles import ModelProfileStore
+    from backend.runtime.daily_runtime import DailyRuntime
+    from backend.runtime.safety import AutonomySafetyStore, AutonomySafetyService
+    from backend.temporal.temporal_engine import TemporalEngine
+
+    repository = _repository(tmp_path, canonical_memory, NOW + timedelta(days=30))
+    clock = FixedClock(NOW)
+    engine = TemporalEngine(clock)
+    handler = MemoryIntentHandler(
+        proposal_store=MemoryProposalStore(tmp_path / "proposals.json"),
+        confirmed_memory=ConfirmedMemoryService(repository), temporal_engine=engine,
+    )
+    preview = handler.propose_timed_commitment_from_resolved_intent(
+        subject="Позвонить маме", date="2026-08-25", time="09:00",
+        conversation_id="reminder", project_id="project_masha_home",
+    )
+    pending = handler.proposal_store.current_for_conversation("reminder")
+    record_id = pending.record_payload["id"]
+    assert "09:00" in preview.response
+    assert all(item.id != record_id for item in repository.read_document().commitments)
+    handler.handle("Подтверждаю", conversation_id="reminder", project_id="project_masha_home")
+    record = next(item for item in repository.read_document().commitments if item.id == record_id)
+    assert record.due_at == datetime(2026, 8, 25, 5, tzinfo=timezone.utc)
+    assert record.reminder_delivery_mode.value == "explicit_user_reminder"
+    router = Mock()
+    router.generate.side_effect = AssertionError("explicit reminder must not call a model")
+    policy = ProactivePolicy(enabled=True, proactive_level=1, allow_commitment_reminders=True)
+    safety = AutonomySafetyStore(tmp_path / "safety.json")
+    safety_control = AutonomySafetyService(store=safety, clock=clock.now_utc)
+    def runtime():
+        return DailyRuntime(
+            history=ConversationStore(tmp_path / "history.json"), temporal_engine=engine,
+            repository=repository, identity_kernel=Mock(), router=router,
+            model_profiles=ModelProfileStore(tmp_path / "profiles.json"),
+            safety_store=safety,
+        )
+    clock.set(record.due_at - timedelta(seconds=1))
+    runtime().run_cycle(policy)
+    assert not ProactiveInteractionStore(repository).list()
+    clock.set(record.due_at + timedelta(seconds=1))
+    safety_control.engage()
+    assert runtime().run_cycle(policy).halted_reason == "emergency_stop_engaged"
+    assert not ProactiveInteractionStore(repository).list()
+    safety_control.release()
+    runtime().run_cycle(policy)
+    first = ProactiveInteractionStore(repository).list()
+    assert len(first) == 1 and first[0]["state"] == "delivered"
+    assert first[0]["message_text"] == "Напоминаю: Позвонить маме"
+    runtime().run_cycle(policy)
+    assert ProactiveInteractionStore(repository).list() == first
+    store = ProactiveInteractionStore(repository)
+    store.acknowledge(first[0]["event_id"], clock.now_utc())
+    runtime().run_cycle(policy)
+    assert store.list()[0]["state"] == "acknowledged"
+    router.generate.assert_not_called()
 
 
 NOW = datetime(2026, 8, 24, 12, 0, tzinfo=timezone.utc)

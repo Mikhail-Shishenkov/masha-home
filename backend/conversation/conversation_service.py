@@ -1027,6 +1027,13 @@ class ConversationService:
             grounded_response,
             application_receipts=(),
             grounded_completed_items=grounded_completed_items,
+            observed_calendar_titles=tuple(
+                event["title"]
+                for row in external_information
+                if row.get("kind") == "google_calendar"
+                for event in row.get("events", [])
+                if isinstance(event.get("title"), str)
+            ),
         )
         assistant_history_message = self.history.append(
             conversation.id,

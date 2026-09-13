@@ -2759,14 +2759,13 @@ class MemoryIntentHandler:
         }
         return models[proposal.record_type].model_validate(proposal.record_payload)
 
-    @staticmethod
-    def _proposal_text(proposal: MemoryProposal, record: ConfirmedRecord) -> str:
+    def _proposal_text(self, proposal: MemoryProposal, record: ConfirmedRecord) -> str:
         if isinstance(record, Fact):
             description = f"Могу сохранить это как факт: {record.subject}.{record.key} = {record.value!r}."
         elif isinstance(record, Decision):
             description = f"Могу сохранить это как решение: {record.decision}."
         elif isinstance(record, Commitment):
-            deadline = " без срока" if record.due_at is None else f" со сроком {record.due_at.astimezone().strftime('%d.%m.%Y %H:%M')}"
+            deadline = " без срока" if record.due_at is None else f" со сроком {record.due_at.astimezone(self.temporal_engine.home_timezone.tzinfo).strftime('%d.%m.%Y %H:%M')}"
             description = f"Могу сохранить это как обязательство: {record.text}{deadline}."
         elif isinstance(record, Episode):
             description = f"Могу сохранить это как эпизод: {record.summary}."

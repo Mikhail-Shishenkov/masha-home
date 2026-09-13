@@ -1,4 +1,6 @@
 import json
+from unittest.mock import Mock
+import pytest
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -94,6 +96,32 @@ def _service(tmp_path: Path, transport=None):
 
 def _event_patches(transport):
     return [call for call in transport.calls if call[1] == "PATCH"]
+
+
+@pytest.mark.parametrize("count, old_time, expected", [
+    (1, "14:00", "resolved"), (1, "12:00", "not_found"),
+    (2, "14:00", "ambiguous"),
+])
+def test_reference_resolution_keeps_real_candidates_time_and_confirmation(tmp_path, count, old_time, expected):
+    from backend.connectors.google_calendar.update import CalendarUpdateIntent
+    title = "чтобы я позвонил маме"
+    events = [_event(str(i), title, "2026-08-26T10:00:00Z", "2026-08-26T11:00:00Z") for i in range(count)]
+    _, updater, transport, _ = _service(tmp_path, _Transport(events))
+    matcher = Mock(return_value=(title,))
+    updater.reference_matcher = matcher
+    status, target = updater.resolve_target(CalendarUpdateIntent(
+        lookup_title="звонок маме", date=NOW.replace(day=26, hour=0),
+        old_start_time=old_time, desired_start_time="13:00",
+    ))
+    assert status == expected
+    assert _event_patches(transport) == []
+    if expected == "resolved":
+        assert target.provider_event_id == "0"
+        assert target.before.title == title
+    if old_time == "12:00":
+        matcher.assert_not_called()
+    else:
+        matcher.assert_called_once_with("звонок маме", tuple([title] * count))
 
 
 def _recovery_state(phase: RecoveryPhase) -> RecoveryState:

@@ -301,6 +301,7 @@ def build_masha_application(
         resolver=semantic_resolver,
         validator=semantic_validator,
     )
+    calendar_updater.reference_matcher = semantic_resolver.match_references
     core.conversation.dialogue_core = DialogueCore(
         discovery=semantic_discovery,
         builder=DeterministicClarificationBuilder(

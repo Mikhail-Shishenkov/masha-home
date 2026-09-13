@@ -1,5 +1,60 @@
 # Masha Home — Living Language Core Plan
 
+### Reminder delivery checkpoint — 2026-09-13
+
+- User reports Calendar Update manual acceptance successful after previous patch.
+- Removed model formulation from confirmed explicit-reminder delivery. The
+  application projects the stored reminder text; local model failure can no
+  longer delay that delivery or invent its content. Ordinary proactive check-ins
+  and policy-controlled suggestions still use their existing model path.
+- One integration test covers proposal/no early write, confirmation, Saratov
+  deadline, no early delivery, Emergency Stop, delivery with zero model calls,
+  repeated runtime construction, duplicate protection, and acknowledgement.
+  It uses isolated SQLite and an injected clock, not real notifications.
+- 53 focused/affected Python tests passed; renderer reminder-route Node test
+  passed; compileall/diff check passed. Full pytest deliberately not repeated
+  after the prior stage gate. No commit/push.
+- Remaining manual acceptance: a near-future confirmed reminder while Home is
+  open must produce one sound and visible toast without opening Home Attention.
+  Automated renderer check is not proof that the physical audio cue was heard.
+  Existing policy enabled/level/reminders switches and Emergency Stop remain
+  authoritative. No Windows Scheduler or background mechanism was added.
+
+### Live follow-up checkpoint — 2026-09-13
+
+- Preview commitment now formats the persisted deadline in the configured Home
+  timezone, not the OS timezone. The live 05:00Z deadline was already correct:
+  09:00 Saratov; only the preview showed 08:00 Moscow.
+- Resolved Mail listing views precede contextual single-item resolution. A
+  previous presented list or redundant target cannot turn an unread listing
+  into a request to select one letter. Unresolved single-item reads still ask.
+- Response guard receives titles from current Calendar read evidence. Passive
+  descriptions of those scheduled events are permitted; execution claims are
+  not. All regex matches are checked so one grounded sentence cannot mask a
+  later ungrounded claim. This reproduces a guard defect, not the unavailable
+  raw model output of the historical live turn.
+- Validation: 84 focused/affected tests + 34 human-reference/truth tests passed;
+  compileall and diff check passed. No full-suite or live provider run in this
+  checkpoint; no commit/push.
+- Follow-up: Calendar target resolution now tries the existing local semantic
+  role only when literal title matching found nothing. It supplies at most 20
+  real titles already constrained by date/old time, never provider IDs. Exact
+  returned-label membership is validated; multiple candidates or unavailable
+  matching require clarification. The chosen event is freshly fetched and its
+  title/date rechecked before preview. Confirmation/PATCH ownership is unchanged.
+- Real FAST probe: "Завтрашний звонок маме перенеси на 12:00" produced Update,
+  date 2026-09-14, time 12:00 with all slots accepted. Separate real FAST reference
+  probe matched "звонок маме" to "чтобы я позвонил маме", not "встреча с врачом".
+  Neither probe invoked Google or mutated data. No full model benchmark run.
+- Missing-date follow-up contract proves "на завтра же" preserves subject and
+  known 12:00. Historical repeated questions are not reproduced by these checks;
+  do not claim all model extraction variability fixed or add speculative routes.
+- Latest validation: 72 focused passed; one full pytest: 642 passed, 2 skipped
+  (Windows symlink availability), 52.14s. Compileall/diff check passed.
+- Next manual gate after restart: existing event paraphrase -> correct Update
+  preview -> human confirmation -> fresh verified receipt. If a question repeats,
+  inspect that exact live semantic/validation trace; no new phrase grammar.
+
 Статус: прежние Gate 1–6 вошли в ветку. Ручная приёмка выявила дефект
 отмены с новой просьбой после уже завершённого процесса; текущие исправления
 остаются локальными, без commit/push.

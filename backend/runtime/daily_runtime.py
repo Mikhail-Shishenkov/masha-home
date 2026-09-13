@@ -208,7 +208,15 @@ class DailyRuntime:
                 items.append(DailyCycleItem(kind="reminder", event_id=event.event_id, decision="suppress", state="suppressed", reason="emergency_stop_engaged"))
                 break
             try:
-                interaction = self.controlled.interactions.formulate(candidate)
+                if explicit_user_reminder:
+                    # The confirmed reminder already contains the message.
+                    # Delivery must not wait for model availability or wording.
+                    self.controlled.interaction_store.ensure_candidate(candidate)
+                    interaction = self.controlled.interaction_store.mark_delivered(
+                        event.event_id, f"Напоминаю: {commitment.text}", started_at,
+                    )
+                else:
+                    interaction = self.controlled.interactions.formulate(candidate)
                 state = interaction["state"]
                 if state == "delivered":
                     reminders_sent += 1

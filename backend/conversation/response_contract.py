@@ -154,6 +154,7 @@ def render_model_response(
     *,
     application_receipts: tuple[str, ...] = (),
     grounded_completed_items: tuple[str, ...] = (),
+    observed_calendar_titles: tuple[str, ...] = (),
 ) -> str:
     """Return mutation-success wording only when the application issued a receipt.
 
@@ -163,22 +164,32 @@ def render_model_response(
     if application_receipts:
         return text
     for rule, pattern in _GUARD_PATTERNS:
-        match = pattern.search(text)
-        if (
-            match
-            and not _is_grounded_completed_readout(
+        for match in pattern.finditer(text):
+            # A passive schedule description is supported by a current read,
+            # not by a mutation receipt. First-person execution stays guarded.
+            sentence = _sentence_for_match(text, match)
+            observed_schedule = (
+                rule in {"result_state_claim", "execution_mutation_form"}
+                and re.search(r"\bзапланирован[ао]?\b", match.group(), re.IGNORECASE) is not None
+                and any(
+                    (tokens := set(meaningful_tokens(title)))
+                    and tokens <= set(meaningful_tokens(sentence))
+                    for title in observed_calendar_titles
+                )
+            )
+            if observed_schedule:
+                continue
+            if not _is_grounded_completed_readout(
                 rule,
                 text,
                 match,
                 grounded_completed_items,
-            )
-            and _is_application_claim(rule, text, match)
-        ):
-            _BLOCKED_DIAGNOSTICS.append({
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "rule": rule,
-                "character_count": len(text),
-                "content_digest": hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
-            })
-            return UNRECEIPTED_MUTATION_RESPONSE
+            ) and _is_application_claim(rule, text, match):
+                _BLOCKED_DIAGNOSTICS.append({
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "rule": rule,
+                    "character_count": len(text),
+                    "content_digest": hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
+                })
+                return UNRECEIPTED_MUTATION_RESPONSE
     return text

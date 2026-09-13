@@ -74,6 +74,53 @@ def _boundaries(tmp_path, *, provider=None):
     return provider, resolver, validator, hybrid, roles
 
 
+@pytest.mark.parametrize("payload, expected", [
+    ({"matches": ["Позвонить маме"]}, ("Позвонить маме",)),
+    ({"matches": []}, ()),
+    ({"matches": ["invented-provider-id"]}, None),
+    ({"matches": "Позвонить маме"}, None),
+])
+def test_reference_matching_is_local_bounded_and_cannot_invent_entities(tmp_path, payload, expected):
+    provider, resolver, _, _, roles = _boundaries(tmp_path)
+    provider.response_text = json.dumps(payload, ensure_ascii=False)
+    assert resolver.match_references("Звонок маме", ("Позвонить маме",)) == expected
+    request = provider.last_request
+    assert request.privacy_scope.value == "local_only"
+    assert request.required_capabilities.tools is False
+    assert request.execution_model_id == roles.profile_for(ModelRole.SEMANTIC_RESOLVER).model_id
+    provider.simulate_timeout = True
+    assert resolver.match_references("Звонок маме", ("Позвонить маме",)) is None
+
+
+def test_update_date_clarification_preserves_subject_and_new_time(tmp_path):
+    from backend.conversation.clarification import FollowUpResolutionEngine
+    _, _, validator, _, _ = _boundaries(tmp_path)
+    proposal = parse_semantic_interpretation({
+        "kind": "supported_action",
+        "candidate_operation_ids": ["google_calendar.event.update"],
+        "nearby_operation_ids": [],
+        "extracted_slots": [
+            {"name": "subject", "evidence_text": "звонок маме"},
+            {"name": "time", "evidence_text": "12:00"},
+        ],
+        "unresolved_referents": [], "ambiguity_hint": "slot",
+        "action_request_evidence": {"evidence_text": "Перенеси"},
+        "operation_selection_evidence": {
+            "operation_id": "google_calendar.event.update", "evidence_text": "Перенеси",
+        },
+    })
+    frame = validator.validate("Перенеси звонок маме на 12:00", proposal)
+    builder = DeterministicClarificationBuilder(catalog=validator.catalog)
+    _, pending = builder.build(frame, conversation_id="update")
+    engine = FollowUpResolutionEngine()
+    engine.bind_temporal_engine(TemporalEngine(clock=FixedClock(datetime(2026, 8, 28, 8, tzinfo=timezone.utc))))
+    result = engine.resolve(pending, "на завтра же")
+    assert {slot.name: slot.value for slot in result.interpretation.slots} == {
+        "subject": "звонок маме", "time": "12:00", "date": "2026-08-29",
+    }
+    assert result.selected_operation_id == "google_calendar.event.update"
+
+
 def _schedule_proposal(
     *, candidates=None, subject="занятие", time="11",
     selection_evidence=None, action_evidence="Запиши",

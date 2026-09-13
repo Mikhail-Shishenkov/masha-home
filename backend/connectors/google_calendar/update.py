@@ -150,7 +150,7 @@ class GoogleCalendarUpdater:
     API_ROOT = "https://www.googleapis.com/calendar/v3"
     TOKEN_URL = "https://oauth2.googleapis.com/token"
 
-    def __init__(self, *, config_store: GoogleCalendarConfigStore, secret_store, receipt_store: CalendarUpdateReceiptStore, transport: GoogleCalendarTransport | None = None, policy_store=None, safety_store=None, recovery_journal: RecoveryJournal | None = None, clock=None):
+    def __init__(self, *, config_store: GoogleCalendarConfigStore, secret_store, receipt_store: CalendarUpdateReceiptStore, transport: GoogleCalendarTransport | None = None, policy_store=None, safety_store=None, recovery_journal: RecoveryJournal | None = None, clock=None, reference_matcher=None):
         self.config_store = config_store
         self.secret_store = secret_store
         self.receipt_store = receipt_store
@@ -159,6 +159,7 @@ class GoogleCalendarUpdater:
         self.safety_store = safety_store
         self.recovery_journal = recovery_journal
         self.clock = clock or (lambda: datetime.now(timezone.utc))
+        self.reference_matcher = reference_matcher
 
     def resolve(self, intent: CalendarUpdateIntent) -> tuple[str, CalendarUpdateOperation | None]:
         """Bind exactly one current primary-calendar event before a proposal."""
@@ -220,12 +221,22 @@ class GoogleCalendarUpdater:
         candidates = [
             row for row in candidates
             if row is not None
-            and self._title_score(row[1].title, intent.lookup_title) >= 0.82
+            and row[1].start.date() == start.date()
             and (
                 intent.old_start_time is None
                 or row[1].start.strftime("%H:%M") == intent.old_start_time
             )
         ]
+        literal_candidates = [
+            row for row in candidates if self._title_matches(row[1].title, intent.lookup_title)
+        ]
+        if not literal_candidates and candidates and self.reference_matcher is not None:
+            labels = self.reference_matcher(intent.lookup_title, tuple(row[1].title for row in candidates))
+            if labels is None:
+                return "ambiguous", None
+            candidates = [row for row in candidates if row[1].title in labels]
+        else:
+            candidates = literal_candidates
         if not candidates:
             if any(
                 isinstance(item.get("summary"), str)
@@ -237,7 +248,7 @@ class GoogleCalendarUpdater:
             return "not_found", None
         if len(candidates) != 1:
             return "ambiguous", None
-        event_id, _, _ = candidates[0]
+        event_id, listed_state, _ = candidates[0]
         # The list response only narrows ownership.  Bind the preview to a
         # freshly read single event, including its current optimistic-lock tag.
         try:
@@ -246,7 +257,7 @@ class GoogleCalendarUpdater:
             return ("not_found" if error.status_code == 404 else "unavailable"), None
         except (GoogleCalendarUnavailable, GoogleCalendarReconnectRequired, GoogleCalendarNetworkBlocked):
             return "unavailable", None
-        if not self._title_matches(before.title, intent.lookup_title) or (
+        if before.title != listed_state.title or before.start.date() != start.date() or (
             intent.old_start_time is not None and before.start.strftime("%H:%M") != intent.old_start_time
         ):
             return "not_found", None
