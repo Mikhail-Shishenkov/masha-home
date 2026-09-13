@@ -73,7 +73,8 @@ def test_clock_answer_resolves_the_same_pending_flow(tmp_path, clock_answer, exp
     assert core.snapshot("clock-follow-up").active_flow_id is None
 
 
-def test_explicit_cancel_then_new_request_replaces_pending_owner(tmp_path):
+@pytest.mark.parametrize("has_pending", (False, True))
+def test_explicit_cancel_then_new_request_replaces_pending_owner(tmp_path, has_pending):
     clock = FixedClock(NOW)
     catalog = default_home_capability_catalog()
     store = PendingResolutionStore(
@@ -87,7 +88,8 @@ def test_explicit_cancel_then_new_request_replaces_pending_owner(tmp_path):
         store=store,
     )
 
-    core.coordinate("Запиши занятие завтра в 10", conversation_id="replace")
+    if has_pending:
+        core.coordinate("Запиши занятие завтра в 10", conversation_id="replace")
     before = store.active_for_conversation("replace")
     outcome = core.coordinate(
         "Ладно, забыли. Запиши тренировку завтра в 12",
@@ -95,9 +97,36 @@ def test_explicit_cancel_then_new_request_replaces_pending_owner(tmp_path):
     )
     after = store.active_for_conversation("replace")
 
-    assert before is not None and after is not None
-    assert before.resolution_id != after.resolution_id
-    assert store.get(before.resolution_id).status is PendingResolutionStatus.CANCELLED
+    assert after is not None
+    if has_pending:
+        assert before is not None
+        assert before.resolution_id != after.resolution_id
+        assert store.get(before.resolution_id).status is PendingResolutionStatus.CANCELLED
     assert after.interpretation.original_utterance == "Запиши тренировку завтра в 12"
     assert outcome.status is CoordinationStatus.CLARIFICATION
     assert outcome.diagnostic.pending_outcome == "cancelled_then_clarification"
+
+
+@pytest.mark.parametrize("when", ("вечером", "утром", "днём", "сегодня", "завтра"))
+def test_incomplete_reminder_after_closed_flow_stays_application_owned(tmp_path, when):
+    clock = FixedClock(NOW)
+    catalog = default_home_capability_catalog()
+    store = PendingResolutionStore(tmp_path / "pending.json", clock=clock.now_utc)
+    core = DialogueCore(
+        discovery=CapabilityCandidateDiscovery(catalog=catalog),
+        builder=DeterministicClarificationBuilder(catalog=catalog, clock=clock.now_utc),
+        engine=FollowUpResolutionEngine(),
+        store=store,
+    )
+    result = core.coordinate(
+        f"ладно забыли, Напомни {when} позвонить маме",
+        conversation_id="reminder",
+    )
+    assert result.status is CoordinationStatus.CLARIFICATION
+    pending = store.active_for_conversation("reminder")
+    assert pending is not None
+    assert tuple(c.operation_id for c in pending.interpretation.candidates) == (
+        "home.timed_commitments",
+    )
+    assert "time" in pending.interpretation.missing_slots
+    assert result.handoff is None

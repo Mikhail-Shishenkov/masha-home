@@ -299,16 +299,13 @@ class DialogueCore:
         try:
             active = self.store.active_for_conversation(conversation_id)
             cancelled_before_new_turn = False
-            replacement = (
-                None
-                if active is None
-                else cancelled_follow_up_remainder(utterance)
-            )
-            if active is not None and replacement is not None:
-                self.store.cancel(
-                    active.resolution_id,
-                    reason="cancelled_before_new_turn",
-                )
+            replacement = cancelled_follow_up_remainder(utterance)
+            if replacement is not None:
+                if active is not None:
+                    self.store.cancel(
+                        active.resolution_id,
+                        reason="cancelled_before_new_turn",
+                    )
                 active = None
                 utterance = replacement
                 cancelled_before_new_turn = True

@@ -1,7 +1,32 @@
 # Masha Home — Living Language Core Plan
 
-Статус: Gate 1–6 реализованы в незакоммиченном tree; остались ручной live
-acceptance и оформление изменений.
+Статус: прежние Gate 1–6 вошли в ветку. Ручная приёмка выявила дефект
+отмены с новой просьбой после уже завершённого процесса; текущие исправления
+остаются локальными, без commit/push.
+
+### Текущий проход — 2026-09-13
+
+- Согласовано: Home timezone `Europe/Saratov`. Утром/днём/вечером не задают
+  точный час. Сегодня/завтра без времени требуют уточнения; известные поля
+  сохраняются, повторно их спрашивать не нужно.
+- Google: Calendar read/write, Drive read и Docs write переподключены через
+  существующие OAuth CLI. Все четыре credentials прошли refresh и контрольный
+  GET. Записи провайдеров не менялись. Consent остаётся действием пользователя;
+  токены хранятся в Windows Credential Manager.
+- Исправлено: явная отмена с отделённой новой просьбой разбирается независимо
+  от наличия активного PendingResolution. Старый процесс, если есть, отменяется.
+- Удалено устаревшее исключение `unsupported_action_preserves_legacy_owner`:
+  валидное unsupported action без alternatives не теряется в старом разборе.
+  Protected document content и infrastructure fallback остаются необходимыми.
+- Focused dialogue/semantic: 65 passed; affected confirmation/Calendar/reference/
+  context: 75 passed. Два реальных FAST turn дали clarification без ошибок:
+  «ладно забыли, Напомни вечером позвонить маме» и «Напомни завтра позвонить маме».
+- Финальный общий gate: 626 passed, 2 skipped (Windows symlinks), 51.48 s.
+  `compileall` и `git diff --check` проходят. Frontend не затронут.
+- Следующая ручная приёмка после перезапуска Home: отмена → напоминание →
+  уточнение дня/времени → preview → подтверждение; проверить фактическую доставку.
+  Почта → письмо → напоминание и Calendar Update также требуют ручного результата.
+  Наличие Google grants/успешный GET не доказывают успешную будущую mutation.
 
 Текущий runtime/stage-gate профиль: `fast`. Диагностика и acceptance не должны
 молча подменять его `primary`; сравнительный прогон другого профиля возможен

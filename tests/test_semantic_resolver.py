@@ -837,15 +837,13 @@ def test_vocabulary_describes_slots_and_home_defaults_without_authorization(tmp_
     assert duration.default_value == "60"
 
 
-def test_semantic_explicit_unsupported_action_stays_distinct_from_conversation(tmp_path):
-    _, _, validator, _, _ = _boundaries(tmp_path)
+@pytest.mark.parametrize("nearby", ((), ("google_calendar.event.create", "home.timed_commitments")))
+def test_semantic_explicit_unsupported_action_stays_distinct_from_conversation(tmp_path, nearby):
+    provider, _, validator, hybrid, _ = _boundaries(tmp_path)
     proposal = UnsupportedActionProposal(
         kind="unsupported_action",
         candidate_operation_ids=(),
-        nearby_operation_ids=(
-            "google_calendar.event.create",
-            "home.timed_commitments",
-        ),
+        nearby_operation_ids=nearby,
         extracted_slots=(),
         unresolved_referents=(),
         ambiguity_hint="none",
@@ -864,6 +862,9 @@ def test_semantic_explicit_unsupported_action_stays_distinct_from_conversation(t
     assert frame.resolution_state is InterpretationResolutionState.UNSUPPORTED_ACTION
     assert frame.candidates == ()
     assert frame.slots == ()
+    provider.response_text = proposal.model_dump_json()
+    hybrid_frame = hybrid.interpret("Запиши меня на внешнее занятие завтра в 9")
+    assert hybrid_frame.resolution_state is InterpretationResolutionState.UNSUPPORTED_ACTION
 
 
 def test_untrusted_semantics_cannot_erase_explicit_calendar_destination(tmp_path):

@@ -1941,18 +1941,6 @@ class HybridCapabilityCandidateDiscovery:
                 result.proposal,
                 turn_context=turn_context,
             )
-            if (
-                semantic.resolution_state
-                is InterpretationResolutionState.UNSUPPORTED_ACTION
-                and not result.proposal.nearby_operation_ids
-            ):
-                # The current Catalog does not yet describe every mature V1
-                # Memory/Reflection/read route.  Surface unsupported only when
-                # Dialogue Core already has grounded candidate evidence for
-                # the adopted scheduling space; otherwise preserve the legacy
-                # compatibility route instead of stealing its raw utterance.
-                self.last_rejection = "unsupported_action_preserves_legacy_owner"
-                return self.validator.materialize_defaults(deterministic)
             if self._strict_structural_conflict(deterministic, semantic):
                 self.last_rejection = "semantic_conflicts_with_structural_owner"
                 return self.validator.materialize_defaults(deterministic)
