@@ -25,6 +25,11 @@ _ADDRESS = frozenset(("маш", "маша", "машенька"))
 _OBVIOUS_COMMAND_TYPOS = {"послледние": "последние", "файы": "файлы"}
 
 
+def is_listing_command(value: str) -> bool:
+    """Recognize command vocabulary, not a provider or an execution authority."""
+    return value.casefold().strip() in _LISTING_COMMANDS
+
+
 @dataclass(frozen=True)
 class ProviderLanguage:
     provider_id: str | None

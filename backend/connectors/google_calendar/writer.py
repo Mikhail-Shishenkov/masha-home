@@ -118,6 +118,8 @@ class GoogleCalendarWriter:
                 return "failed", existing
             if existing.status == "verified":
                 return "verified", existing
+            if existing.status == "rejected":
+                return "rejected", existing
             if existing.status in {"created_unverified", "executing"}:
                 return self._reconcile_uncertain(existing)
         if self._blocked():

@@ -146,15 +146,18 @@ class MashaApplication:
 
         return self._conversation.dialogue_diagnostics(conversation_id)
 
-    def latest_conversation(self, *, limit: int | None = None) -> ConversationView | None:
+    def latest_conversation(self, *, limit: int | None = None, space: str = "ordinary") -> ConversationView | None:
         """Read the transcript with the latest actual interaction, if one exists."""
-        return self._conversation.latest_conversation(limit=limit)
+        return self._conversation.latest_conversation(limit=limit, space=space)
+
+    def delete_conversation(self, conversation_id: str) -> None:
+        self._conversation.delete_conversation(conversation_id)
 
     def recent_conversations(self, *, limit: int | None = None) -> tuple[ConversationSummaryView, ...]:
         return self._conversation.recent_conversations(limit=limit)
 
-    def conversation_page(self, *, offset: int = 0, limit: int = 10, query: str | None = None) -> ConversationPageView:
-        return self._conversation.conversation_page(offset=offset, limit=limit, query=query)
+    def conversation_page(self, *, offset: int = 0, limit: int = 10, query: str | None = None, space: str | None = None) -> ConversationPageView:
+        return self._conversation.conversation_page(offset=offset, limit=limit, query=query, space=space)
 
     def commitments(self, *, limit: int | None = 10, offset: int = 0) -> CommitmentListView:
         return self._commitments.list(limit=limit, offset=offset)

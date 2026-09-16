@@ -58,7 +58,7 @@ class TemporalRuntime:
         self.engine = engine
         self.context_limit = context_limit
 
-    def recover(self) -> TemporalEventContext:
+    def recover(self, *, excluded_event_ids: frozenset[str] = frozenset()) -> TemporalEventContext:
         """Return deterministic overdue events, idempotently persisting detection."""
         document = self.repository.read_document()
         now = self.engine.clock.now_utc().astimezone(timezone.utc)
@@ -71,6 +71,9 @@ class TemporalRuntime:
             if self.engine.commitment_status(commitment) == "overdue"
         ]
         events = [self._recover_commitment(commitment, now, document.identity_version) for commitment in eligible]
+        # Delivery callers exclude finished occurrences before the bounded
+        # projection. The default context/history projection remains unchanged.
+        events = [event for event in events if event.event_id not in excluded_event_ids]
         events.sort(key=lambda event: (event.due_at, event.event_id))
         return TemporalEventContext(generated_at=now, events=tuple(events[: self.context_limit]))
 

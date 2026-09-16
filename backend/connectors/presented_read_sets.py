@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime
 from enum import Enum
 import re
 from typing import Callable
@@ -31,6 +32,7 @@ class PresentedEntityContext:
     entity_kind: str
     items: tuple[object, ...]
     presentation_kind: str | None = None
+    focused_position: int | None = None
 
 
 @dataclass(frozen=True)
@@ -96,6 +98,15 @@ class PresentedReadSetRegistry:
     def current_context(self, conversation_id: str) -> PresentedEntityContext | None:
         return self._rows.get(conversation_id)
 
+    def focus_read_item(self, conversation_id: str, owner: str, item: object) -> None:
+        """Remember a successful read without replacing the numbered list."""
+        current = self.current_context(conversation_id)
+        if current is None or current.owner != owner:
+            return
+        positions = [index for index, row in enumerate(current.items, 1) if row == item]
+        if len(positions) == 1:
+            self._rows[conversation_id] = replace(current, focused_position=positions[0])
+
     def items_for(self, conversation_id: str, owner: str) -> tuple[object, ...] | None:
         row = self.current_context(conversation_id)
         return None if row is None or row.owner != owner else row.items
@@ -110,6 +121,7 @@ class PresentedReadSetRegistry:
             "google_drive": "google_drive.read",
             "yandex_disk": "yandex_disk.read",
             "yandex_mail": "yandex_mail.read",
+            "google_calendar": "google_calendar.read",
         }.get(context.owner)
         if context_operation_id is None and context.owner != "home_information":
             return ()
@@ -150,7 +162,13 @@ class PresentedReadSetRegistry:
                 "owner_operation_id": operation_id,
                 "kind": kind,
                 "human_label": label[:500],
+                "focused": position == context.focused_position,
                 "time_text": None if time_value is None else str(time_value)[:120],
+                "starts_at": (
+                    item.start.isoformat()
+                    if isinstance(getattr(item, "start", None), datetime)
+                    and item.start.utcoffset() is not None else None
+                ),
             })
         return tuple(rows)
 

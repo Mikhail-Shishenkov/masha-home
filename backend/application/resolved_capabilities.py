@@ -248,6 +248,24 @@ class TimedCommitmentHandoffAdapter:
         )
 
 
+class TimedCommitmentUpdateHandoffAdapter:
+    operation_id = "home.timed_commitments.update"
+
+    def __init__(self, handler):
+        self.handler = handler
+
+    def resolve(self, handoff: ResolvedCapabilityHandoff, context: DomainProposalContext) -> DomainProposalResult:
+        preparation = self.handler.prepare_timed_commitment_update_from_resolved_intent(
+            subject=handoff.slot("subject").value, time=handoff.slot("time").value,
+            date=_optional_slot(handoff, "date"), old_time=_optional_slot(handoff, "old_time"),
+            conversation_id=handoff.conversation_id, project_id=context.project_id,
+        )
+        proposal = _pending_proposal(self.handler, handoff.conversation_id, operation="edit")
+        if proposal is not None and proposal.record_type != "commitment":
+            raise ResolvedCapabilityAdapterError(self.operation_id)
+        return _project(preparation, pending_operation=None if proposal is None else "commitment_update")
+
+
 class CalendarReadHandoffAdapter:
     operation_id = "google_calendar.read"
 
@@ -263,6 +281,7 @@ class CalendarReadHandoffAdapter:
             outcome = self.service.observe_period(
                 handoff.slot("period").value,
                 now_local=context.now_local,
+                conversation_id=handoff.conversation_id,
             )
         except (KeyError, TypeError, ValueError) as error:
             raise ResolvedCapabilityAdapterError(self.operation_id) from error
@@ -694,6 +713,7 @@ class WebSearchHandoffAdapter:
             recent_messages=context.recent_messages,
             project_id=context.project_id,
             active_continuity_thread_id=context.active_continuity_thread_id,
+            conversation_message_ids=context.conversation_message_ids,
         )
         if observation is None:
             return DomainReadResult(

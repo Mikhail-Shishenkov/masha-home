@@ -277,9 +277,11 @@ class GoogleCalendarDeleteConversationService:
         *,
         proposal_store: MemoryProposalStore,
         deleter: GoogleCalendarDeleter,
+        presented_read_sets=None,
     ):
         self.proposal_store = proposal_store
         self.deleter = deleter
+        self.presented_read_sets = presented_read_sets
 
     def prepare_from_resolved_intent(
         self,
@@ -392,8 +394,12 @@ class GoogleCalendarDeleteConversationService:
             self.deleter.reject(operation)
             return "Хорошо, событие оставляю в календаре."
         status, _ = self.deleter.delete_and_verify(operation)
+        if status in {"deleted_unverified", "conflict"} and self.presented_read_sets is not None:
+            self.presented_read_sets.discard(conversation_id, owner="google_calendar")
         if status == "verified":
             self.proposal_store.set_status(proposal.id, ProposalStatus.CONFIRMED)
+            if self.presented_read_sets is not None:
+                self.presented_read_sets.discard(conversation_id, owner="google_calendar")
             return f"Готово: «{operation.before.title}» удалено из Основного календаря."
         if status == "deleted_unverified":
             return (

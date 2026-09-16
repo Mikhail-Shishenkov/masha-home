@@ -122,6 +122,7 @@ class V2RoutingDiagnostic(StrictCoordinatorModel):
     ) = None
     semantic_command_status: Literal["accepted", "rejected"] | None = None
     semantic_rejection: str | None = Field(default=None, max_length=120)
+    semantic_speech_act: str | None = Field(default=None, max_length=20)
     information_space: str | None = Field(default=None, max_length=80)
     semantic_validation: SemanticValidationTrace | None = None
     merged_slots: tuple[InterpretationSlot, ...] = Field(default=(), max_length=24)
@@ -231,6 +232,7 @@ class V2LiveAdoptionPolicy:
             "google_calendar.event.delete",
             "google_calendar.read",
             "home.timed_commitments",
+            "home.timed_commitments.update",
             "home.commitments",
             "home.commitments.create",
             "home.commitments.complete",
@@ -731,7 +733,9 @@ class DialogueCore:
         rejection = getattr(self.discovery, "last_rejection", None)
         information_space = getattr(self.discovery, "last_information_space", None)
         validation = getattr(getattr(self.discovery, "validator", None), "last_trace", None)
+        speech_act = getattr(result, "speech_act", None)
         base = {
+            "semantic_speech_act": None if speech_act is None else speech_act.value,
             "information_space": (
                 None if information_space is None else getattr(information_space, "value", str(information_space))
             ),

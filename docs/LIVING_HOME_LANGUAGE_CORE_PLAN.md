@@ -1,5 +1,212 @@
 # Masha Home — Living Language Core Plan
 
+> Current work follows [AGENT_COHERENCE_PLAN.md](AGENT_COHERENCE_PLAN.md).
+> The live dialogue failed despite the green gates below. These checkpoints
+> record implemented contracts, not acceptance of overall conversational quality.
+
+### Time / memory / Web integration and accumulated stage gate — 2026-09-15
+
+- Found and reproduced a real ownership gap: WebSearchHandoffAdapter did not
+  forward conversation message IDs. The semantic search path could not inherit
+  the last completed public topic, while the legacy explicit path could.
+- Both now use one _search_context implementation. A referential continuation
+  inherits only a completed search belonging to this conversation, including
+  beyond the short model-history window. Unrelated/other-evening IDs do not
+  inherit it. Neither IDs nor local memory are passed to the search provider.
+  No new authority, network policy, relevance threshold or model prompt changes.
+- Extended an existing integrated test in ordinary and evening modes: Saratov
+  midnight is the next day while UTC is not; a relevant remembered note keeps
+  its original date and stays separate from external evidence; Web-assisted
+  turns create no passive memory. Initial fixture note was not sufficiently
+  query-relevant, so the fixture was corrected, not retrieval scoring.
+- 186 affected tests passed. One final accumulated deterministic gate:
+  696 passed, 2 skipped (Windows symlink unavailable); 23 frontend/scene tests
+  passed. compileall, node --check and git diff --check passed. No live external
+  network or mutation in this checkpoint. No commit/push.
+- Cleanup is intentionally evidence-based: removed the duplicate Web topic
+  resolution branch, not still-used degraded capability routes. Broader legacy
+  removal and Docs proposal revision are NOT claimed complete.
+- Next human acceptance: mail -> "напомни об этом" -> correction -> confirmation;
+  Calendar draft -> correction -> confirmation; successful Web topic -> a
+  referential fresh follow-up. Verify evening/ordinary history remains separate.
+  Further changes should follow a concrete failed trace, not another broad rewrite.
+
+### Calendar proposal revision — 2026-09-15
+
+- The same semantic draft validator now handles Calendar Create/Update. No
+  extra phrase grammar, dialogue state or automatic confirmation. Exact existing
+  owner decision forms still run first, so Yes/No never needs a model.
+- Calendar revisions require an exact pristine proposed receipt, with no
+  confirmation/verification timestamp. Existing Update target ID, before state
+  and etag stay application-owned; changing its subject cannot retarget it.
+  Date/time/duration change only the desired state. Already executing/uncertain
+  operations must use recovery, never this revision path.
+- A new unconfirmed operation receipt is persisted before atomically replacing
+  the preview. Old preview is cancelled; old receipt is retired as rejected.
+  Rejected writers now fail closed. A crash before preview publication leaves
+  the old preview valid; an orphan proposed receipt has no confirmation authority.
+  Failed audit retirement after publication cannot reactivate the cancelled
+  preview. No cross-file transaction or second recovery framework was added.
+- Restart, stale buttons, provider conflict, receipt/preview write failure and
+  failed retirement are tested with fake Google transports. Real configured
+  masha-fast:4b understood "Давай всё-таки на 11 утра" for both create and update:
+  new pending preview, correct Saratov time, zero additional Google transport
+  calls. 180 affected tests passed; compileall and git diff --check passed.
+  No real Calendar mutation or full-suite repetition.
+- Next: integrated time/memory/fresh-Web checks, then remove only proven
+  superseded paths and run the single final gate. Docs draft revision is not
+  included; its body/recovery contract remains untouched. No commit/push.
+
+### Pending reminder draft revision — 2026-09-15
+
+- Closed the next boundary for Home reminders: after a preview, a natural
+  correction uses the SAME semantic follow-up wire and field validator against
+  the application's unconfirmed draft. No second PendingResolution, no reopened
+  terminal dialogue and no phrase-specific correction router.
+- Only the reminder owner changes subject/date/time after grounding. The store
+  atomically cancels the obsolete preview and publishes one revised pending
+  preview, preserving the future commitment ID. A stale confirmation ID cannot
+  save the new version. No memory write or reminder scheduling before fresh Yes.
+- Invalid evidence, ambiguous evening time, operation switching, timeout and
+  persistence failure leave the original preview intact. An ordinary interruption
+  does not revise it. Latest pending projection and restart recovery are covered.
+- 159 affected tests passed. Configured local masha-fast:4b probe:
+  09:00 draft -> "Нет, лучше в 10 утра" -> pending 10:00 Saratov,
+  unchanged subject/date; zero memory/provider mutations. No full-suite rerun.
+- Scope intentionally limited to unconfirmed Home reminders. Calendar/Docs
+  proposals carry durable external-operation receipts; do not apply this local
+  replacement blindly to them. Their revision needs the existing operation
+  owners. Next: extend only where the receipt lifecycle permits, then the
+  planned time/memory/fresh-Web integration gate and proven legacy cleanup.
+- No commit/push. All previous local edits preserved.
+
+### Compound clarification continuity — 2026-09-15
+
+- Reproduced: while asking for date, the deterministic date normalizer consumed
+  a whole reply, silently dropping a time correction or treating an ordinary
+  sentence mentioning tomorrow as a date answer. In production, only a short
+  date answer keeps the fast path; compound answers use the existing semantic
+  follow-up owner. Failure preserves pending state without applying a fragment.
+- Real configured FAST probes also exposed inconsistent follow-up JSON. The
+  request now supplies only pending-candidate vocabulary and a direct-union
+  constrained schema: all fields explicit, ordinary replies carry no updates,
+  selection/evidence paired, and add/correct modes reflect known slot state.
+  Temporal values cannot use text-enrichment mode. Pydantic/grounding remain
+  authoritative; no model response is repaired into execution authority.
+- A rejected correction of an already known field blocks progression instead
+  of using the OLD value merely because another accepted field fills the last
+  missing requirement. No new pending owner or confirmation mechanism.
+- 114 focused semantic/dialogue/grounding/reminder/Calendar tests passed.
+  Real FAST: date question -> "Нет, лучше послезавтра в 10 утра" preserves
+  subject, produces date + 10:00; ordinary "Я завтра хочу поговорить о книгах"
+  yields NOT_A_FOLLOW_UP with original state intact. Fixed test clock, no real
+  provider actions. compileall/diff check passed. No full-suite repetition.
+- Next distinct boundary: revising an ALREADY SHOWN proposal before approval.
+  This checkpoint covers clarification BEFORE handoff, not proposal revision.
+  Keep application ownership and explicit confirmation; do not reopen a
+  terminal DialogueResolution or let a model mutate a pending operation.
+  No commit/push.
+
+### Mail selection / private conversation lifecycle — 2026-09-14
+
+- User manually accepted the delete-history control and the hidden evening
+  entry in Corner. No commit/push. Existing reminder/memory edits preserved.
+- Real FAST interpretation exposed two application filter defects: generic
+  mailbox evidence was not a supported view, and the memory tokenizer dropped
+  "сегодня" from temporal mail filters. Mail view normalization now retains
+  temporal words. An action-only optional view uses the shared listing-command
+  vocabulary and existing unread default AFTER validated read handoff; no new
+  routing authority. Explicit subject overrides a stale/default unread view.
+- Named reading searches real mailbox subjects, reads exactly one match, lists
+  multiple matches and never invents a provider ID. Legacy read-name delegates
+  to this same owner. Empty results replace stale lists; a bare ordinal after
+  an empty mail list cannot trigger unrelated ordinary-model prose.
+- Conversation space is durable (ordinary/special_evening). Mode changes use
+  separate histories/pending IDs. Ordinary startup/shelf/check-in history excludes
+  evening conversations. Passive memory detection is disabled for evening;
+  explicit memory requests still use existing confirmation. Scene assets,
+  proximity/continuity and pause boundaries are preserved. Fixed one missing
+  separator in existing evening instructions; no attempt to remove model safety.
+- Cross + explicit dialog deletes the selected transcript and clarification
+  state, cancels unconfirmed proposals and rejects pending passive candidates.
+  Confirmed memories, real tasks/events, action audit/receipts and old backups
+  remain. New evening chats are separate; OLD unlabelled chats are not guessed
+  or bulk-migrated. User can delete them deliberately.
+- Validation: one full gate 668 passed / 2 Windows-symlink skips; final affected
+  gate 123 passed after action-only-view normalization. All Node/static/scene
+  tests, compileall and diff check passed. Local FAST-only probes used fake mail,
+  never real mailbox/provider writes. Subject read -> topic search + one read;
+  today -> today; generic check -> unread via corrected application normalization.
+- Remaining manual acceptance: general mailbox check, today's list, read by
+  title (even if unread list empty), ordinal from the newly shown real list.
+  Autonomous extraction of promises from message bodies remains out of scope.
+
+### Read-letter reminder continuity — 2026-09-14
+
+- Successful mail reads mark one item focused in the existing presented set;
+  list numbering stays intact. Model hints contain its human label, not private
+  provider references or mail body. A new list resets focus.
+- The existing slot normalizer metadata opts reminder subject into referenced
+  text. Home resolves grounded deictic evidence to exactly one focused label;
+  zero/multiple focus cannot supply a subject. Fresh/follow-up validation share
+  this rule; no new routing grammar, state owner or mutation authority.
+- Integrated component test: read first letter -> "Напомни завтра об этом" ->
+  "Во сколько?" -> "9 утра" -> existing confirmation -> stored Saratov deadline.
+  No record is written before confirmation. Real configured FAST resolver probe
+  also kept the exact letter title and requested only the missing time.
+- 114 focused/affected tests passed after correcting one strict hint-shape
+  expectation. The single full gate had 654 passed, 2 skipped, 1 failed (that
+  stale expectation for the added focused flag); full gate not repeated.
+  All frontend Node tests, compileall and diff check passed.
+- Manual Home acceptance remains: restart, read a letter, request a reminder
+  about it, supply time, inspect preview, confirm. This binds the letter TITLE,
+  not arbitrary obligations/dates inferred from its body. No commit/push.
+
+### Memory context lifecycle — 2026-09-14
+
+- User accepted the repeated custom reminder sound in live Home.
+- Reproduced an active-memory projection defect: TurnContextEnvelopeBuilder
+  ignored the recalled record state, relabelled historical records active, and
+  took the six-item limit before filtering. A later current record was omitted.
+- Language-context hints now accept only current/open/available states and apply
+  the six-item bound after selection. Stored memory, historical recall for the
+  conversational answer, lens selection and confirmation ownership are unchanged.
+  Original temporal provenance remains attached to accepted hints.
+- 71 focused/affected memory/context/semantic/dialogue tests passed; compileall
+  and diff check passed. No full-suite repeat, live model call or commit/push.
+- Next integrated acceptance target: read a letter -> refer to that content in
+  a reminder request -> one clarification flow -> confirmed reminder. Check
+  context continuity, not a new vocabulary of command phrases.
+
+### Reminder sound — 2026-09-14
+
+- User confirms live toast/audio delivery, requests a distinctive repeated cue.
+- Desktop now uses an original two-note 1.8-second PCM chime via available Qt
+  Multimedia, synthesized locally into an auto-removed temporary WAV. No new
+  dependency/download. System beep remains the controlled audio fallback.
+- One receipt starts three pulses at 0/4/8 seconds. Duplicate projections do
+  not restart it; a newer reminder replaces the old series without overlapping.
+  Successful acknowledge/dismiss, Emergency Stop and window close stop repeats.
+- 15 focused Python tests and one renderer-route test passed; compileall/diff
+  check passed. Actual loudness/pleasantness needs listening after Home restart.
+  No commit/push; earlier local delivery-backlog changes preserved.
+
+### Delivery backlog checkpoint — 2026-09-14
+
+- Base HEAD observed: `40af080`, clean working tree before this pass.
+- Reproduced a delivery starvation defect: six older delivered occurrences
+  occupied the bounded temporal context forever, so the seventh never reached
+  delivery. DailyRuntime now excludes delivered/terminal interaction IDs before
+  the six-event projection. History/default temporal context stays unchanged;
+  no memory records are deleted and policy checks remain in place.
+- Delivered reminders still suppress unsolicited check-ins while awaiting user
+  response, even though they no longer occupy delivery slots.
+- Regression covers delivered/acknowledged/dismissed backlog, subsequent cycle
+  after runtime reconstruction, no duplicate delivery, and retained context bound.
+- Validation: 46 focused/affected Python tests, one renderer reminder-route test;
+  compileall/diff check passed. No full pytest repeat, no live notifications,
+  no commit/push. Physical toast/sound acceptance remains a manual check.
+
 ### Reminder delivery checkpoint — 2026-09-13
 
 - User reports Calendar Update manual acceptance successful after previous patch.

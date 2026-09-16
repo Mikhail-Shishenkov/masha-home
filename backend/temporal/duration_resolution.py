@@ -52,17 +52,19 @@ class DurationResolution:
 class HomeDurationResolver:
     """Normalize duration only; this helper never decides capability intent."""
 
-    def resolve(self, expression: str) -> DurationResolution | None:
+    def resolve(self, expression: str, *, allow_embedded: bool = True) -> DurationResolution | None:
         text = normalize_search_text(expression.casefold().replace("ё", "е"))
         if not text:
             return None
-        if "полчаса" in text or "пол часа" in text:
+        if text in {"полчаса", "пол часа"} or (allow_embedded and ("полчаса" in text or "пол часа" in text)):
             return DurationResolution(minutes=30, amount=30)
         # Embedded duration evidence needs its structural ``на`` marker.
         # A standalone answer ("час", "12 минут") is also valid relative to
         # an already-owned duration question.  This deliberately does not
         # reinterpret clock phrases such as "в 12 часов дня" as duration.
-        match = _DURATION.fullmatch(text) or _EMBEDDED_DURATION.search(text)
+        match = _DURATION.fullmatch(text)
+        if match is None and allow_embedded:
+            match = _EMBEDDED_DURATION.search(text)
         if match is not None:
             amount = self._amount(match.group("count") or "один")
             minutes = amount if match.group("unit").startswith("минут") else amount * 60

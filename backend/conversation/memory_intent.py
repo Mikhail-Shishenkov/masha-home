@@ -281,6 +281,26 @@ class MemoryProposalStore:
     def get(self, proposal_id: str) -> MemoryProposal | None:
         return self._proposals.get(proposal_id)
 
+    def replace_pending(self, expected: MemoryProposal, replacement: MemoryProposal) -> None:
+        """Atomically invalidate the old preview and publish its revised draft."""
+        if (
+            expected.status is not ProposalStatus.PENDING
+            or self._proposals.get(expected.id) != expected
+            or replacement.status is not ProposalStatus.PENDING
+            or replacement.id in self._proposals
+            or (replacement.conversation_id, replacement.operation, replacement.record_type)
+            != (expected.conversation_id, expected.operation, expected.record_type)
+            or self.pending_for_conversation(expected.conversation_id) != (expected,)
+        ):
+            raise PendingProposalConflict("pending draft changed")
+        proposals = {
+            **self._proposals,
+            expected.id: expected.model_copy(update={"status": ProposalStatus.CANCELLED}),
+            replacement.id: replacement,
+        }
+        self._save(proposals)
+        self._proposals = proposals
+
     def pending_for_conversation(self, conversation_id: str) -> tuple[MemoryProposal, ...]:
         return tuple(
             proposal
@@ -1773,6 +1793,88 @@ class MemoryIntentHandler:
             conversation_id=conversation_id,
             project_id=project_id,
             explicit_reminder=True,
+        )
+
+    def prepare_timed_commitment_update_from_resolved_intent(
+        self, *, subject: str, time: str, date: str | None,
+        old_time: str | None, conversation_id: str, project_id: str,
+    ) -> ProposalPreparation:
+        """Resolve real saved reminders, then reuse the existing due-edit owner."""
+        def no_action(text):
+            return ProposalPreparation(response=text, status=ProposalPreparationStatus.NO_ACTION)
+
+        if self.proposal_store.current_for_conversation(conversation_id) is not None:
+            return no_action("Сначала завершим текущее подтверждение. Пока ничего не меняю.")
+        if self.memory_management is None:
+            return no_action("Сейчас не удалось прочитать сохранённые напоминания.")
+        candidates = [
+            view for view in self.memory_management.list(
+                record_type="commitment", project_id=project_id, include_hidden=False,
+            )
+            if view.payload.get("status") == "open"
+            and view.payload.get("reminder_delivery_mode") == "explicit_user_reminder"
+            and view.payload.get("due_at") is not None
+        ]
+        zone = self.temporal_engine.home_timezone.tzinfo
+        if old_time is not None:
+            candidates = [view for view in candidates if
+                Commitment.model_validate(view.payload).due_at.astimezone(zone).strftime("%H:%M") == old_time
+            ]
+        matches = self._rank_records(candidates, subject, lambda view: view.payload["text"])
+        if not matches:
+            return no_action("Не нашла такое активное напоминание. Новое вместо него не создаю.")
+        if len(matches) != 1:
+            return no_action("Нашла несколько похожих напоминаний. Уточни, какое нужно изменить.")
+        record = Commitment.model_validate(matches[0].payload)
+        date_value = date or record.due_at.astimezone(zone).date().isoformat()
+        due = self.temporal_engine.parse_due(f"{date_value}T{time}")
+        if due.ambiguity is not None or due.resolved_utc is None:
+            return no_action("Уточни новое время напоминания — пока ничего не меняю.")
+        if due.resolved_utc <= self.temporal_engine.clock.now_utc():
+            return no_action("Это время уже прошло. На какой день перенести напоминание?")
+        if due.resolved_utc == record.due_at:
+            return no_action("У этого напоминания уже такое время. Ничего не меняю.")
+        result = self.propose_due_change_by_id(record.id, conversation_id, due.resolved_utc)
+        return ProposalPreparation(
+            response=result.response,
+            status=ProposalPreparationStatus.PENDING_CONFIRMATION,
+            application_operation="commitment_update",
+        )
+
+    @staticmethod
+    def is_proposal_decision(message: str) -> bool:
+        return bool(_CONFIRM.fullmatch(message) or _REJECT.fullmatch(message))
+
+    def revise_timed_commitment_proposal(
+        self, proposal: MemoryProposal, *, subject: str, date: str, time: str,
+    ) -> str:
+        """Revise only an unconfirmed reminder, never a saved commitment."""
+        from backend.memory.memory_models import ReminderDeliveryMode
+
+        record = Commitment.model_validate(proposal.record_payload)
+        if (
+            proposal.operation != "create" or proposal.record_type != "commitment"
+            or record.reminder_delivery_mode is not ReminderDeliveryMode.EXPLICIT_USER_REMINDER
+            or proposal.status is not ProposalStatus.PENDING
+        ):
+            raise ValueError("not a pending reminder")
+        due = self.temporal_engine.parse_due(f"{date}T{time}")
+        if due.ambiguity is not None or due.resolved_utc is None:
+            raise ValueError("ambiguous revised deadline")
+        revised = Commitment.model_validate({
+            **record.model_dump(mode="python"), "text": subject,
+            "due_at": due.resolved_utc, "updated_at": self._now(),
+        })
+        replacement = MemoryProposal.model_validate({
+            **proposal.model_dump(mode="python"), "id": str(uuid4()),
+            "record_payload": revised.model_dump(mode="json"), "created_at": self._now(),
+        })
+        self.proposal_store.replace_pending(proposal, replacement)
+        # New confirmation ID makes a click on the obsolete preview harmless.
+        return (
+            f"Изменила только предложение: напомнить {revised.text} — "
+            f"{revised.due_at.astimezone(self.temporal_engine.home_timezone.tzinfo):%d.%m.%Y %H:%M}. "
+            "Пока не сохранила. Подтверждаешь?"
         )
 
     def prepare_timed_commitment_from_resolved_intent(

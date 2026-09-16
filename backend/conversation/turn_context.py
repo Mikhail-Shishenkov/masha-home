@@ -16,7 +16,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validato
 
 from backend.temporal.temporal_engine import TemporalContext
 
-from .conversation_models import ConversationMessage
+from .conversation_models import ConversationMessage, ConversationMessageOrigin
 
 
 _OPERATION_ID = r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$"
@@ -76,6 +76,7 @@ class TurnConversationHint(StrictTurnContextModel):
         TurnContextSource.RECENT_CONVERSATION
     )
     role: Literal["user", "assistant"]
+    origin: ConversationMessageOrigin | None = None
     content: str = Field(min_length=1, max_length=2_000)
     occurred_at: AwareDatetime | None = None
 
@@ -89,6 +90,7 @@ class TurnMemoryHint(StrictTurnContextModel):
     content: str = Field(min_length=1, max_length=1_000)
     state: Literal["active", "current"] = "active"
     time_text: str | None = Field(default=None, max_length=120)
+
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
@@ -114,7 +116,9 @@ class TurnPresentedEntityHint(StrictTurnContextModel):
     owner_operation_id: str = Field(pattern=_OPERATION_ID, max_length=100)
     kind: str = Field(min_length=1, max_length=80)
     human_label: str = Field(min_length=1, max_length=500)
+    focused: bool = False
     time_text: str | None = Field(default=None, max_length=120)
+    starts_at: AwareDatetime | None = None
 
 
 class TurnCapabilityHint(StrictTurnContextModel):
@@ -197,6 +201,7 @@ class TurnContextEnvelopeBuilder:
             TurnConversationHint(
                 reference=f"T{index}",
                 role=message.role.value,
+                origin=message.origin,
                 content=self._bounded(message.content, 2_000),
                 occurred_at=message.created_at,
             )
@@ -204,7 +209,11 @@ class TurnContextEnvelopeBuilder:
             if message.content.strip()
         )
         memories = []
-        for item in memory_context[:6]:
+        for item in memory_context:
+            # Recall may intentionally contain historical items for the answer.
+            # They must not be relabelled ACTIVE_MEMORY for action understanding.
+            if item.get("state") not in {"актуально", "открыто", "доступно", "active", "current", "open"}:
+                continue
             content = str(item.get("content") or "").strip()
             if not content:
                 continue
@@ -222,6 +231,8 @@ class TurnContextEnvelopeBuilder:
                     float(confidence) if isinstance(confidence, (int, float)) else None
                 ),
             ))
+            if len(memories) == 6:
+                break
         continuity = self._continuity(active_continuity)
         capability_rows = (
             ()
@@ -235,21 +246,7 @@ class TurnContextEnvelopeBuilder:
             )
             for item in capability_rows[:32]
         )
-        presented_entities = tuple(
-            TurnPresentedEntityHint(
-                reference=f"P{index}",
-                position=int(item["position"]),
-                owner_operation_id=str(item["owner_operation_id"]),
-                kind=self._bounded(str(item["kind"]), 80),
-                human_label=self._bounded(str(item["human_label"]), 500),
-                time_text=(
-                    None
-                    if item.get("time_text") is None
-                    else self._bounded(str(item["time_text"]), 120)
-                ),
-            )
-            for index, item in enumerate(presented_context[:10], start=1)
-        )
+        presented_entities = self.project_presented_entities(presented_context)
         application_result = None
         if last_application_result is not None:
             operation_id, projection_state = last_application_result
@@ -269,6 +266,28 @@ class TurnContextEnvelopeBuilder:
             presented_entities=presented_entities,
             capabilities=capabilities,
             last_application_result=application_result,
+        )
+
+    def project_presented_entities(
+        self, presented_context: tuple[dict, ...],
+    ) -> tuple[TurnPresentedEntityHint, ...]:
+        """One allow-list for understanding and response; no second entity store."""
+        return tuple(
+            TurnPresentedEntityHint(
+                reference=f"P{index}",
+                position=int(item["position"]),
+                owner_operation_id=str(item["owner_operation_id"]),
+                kind=self._bounded(str(item["kind"]), 80),
+                human_label=self._bounded(str(item["human_label"]), 500),
+                focused=item.get("focused") is True,
+                starts_at=item.get("starts_at"),
+                time_text=(
+                    None
+                    if item.get("time_text") is None
+                    else self._bounded(str(item["time_text"]), 120)
+                ),
+            )
+            for index, item in enumerate(presented_context[:10], start=1)
         )
 
     @staticmethod

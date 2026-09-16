@@ -137,20 +137,10 @@ class ExternalObservationService:
         decision = self.gate.detect(message, recent_messages=recent_messages)
         if not decision.explicit:
             return None
-        prior = None
-        if requires_local_context_resolution(decision.query_hint) and conversation_message_ids:
-            prior = self.store.latest_completed_web_search_for_origin_messages(conversation_message_ids)
-        inherited_query = None if prior is None else prior.request.query
-        resolution = (
-            ExternalContextResolution()
-            if inherited_query is not None
-            else self._resolve_local_context(
-                decision.query_hint,
-                current_message=message,
-                project_id=project_id,
-                recent_messages=recent_messages,
-                active_continuity_thread_id=active_continuity_thread_id,
-            )
+        hint, resolution = self._search_context(
+            decision.query_hint, conversation_message_ids=conversation_message_ids,
+            current_message=message, project_id=project_id, recent_messages=recent_messages,
+            active_continuity_thread_id=active_continuity_thread_id,
         )
         query = "нужна конкретная тема"
         if resolution.clarification_required:
@@ -170,7 +160,7 @@ class ExternalObservationService:
             # A completed prior Web observation is an application-owned,
             # conversation-scoped public subject.  It is safer and more exact
             # than re-resolving a pronoun against an arbitrary recent message.
-            query_hint=inherited_query or decision.query_hint,
+            query_hint=hint,
             recent_messages=recent_messages,
             memory_hints=memory_hints,
             context_hints=resolution.hints,
@@ -203,6 +193,7 @@ class ExternalObservationService:
         recent_messages: tuple[str, ...] = (),
         project_id: str | None = None,
         active_continuity_thread_id: str | None = None,
+        conversation_message_ids: tuple[str, ...] = (),
     ) -> ExternalObservation | None:
         """Execute one Home-validated semantic need under explicit/AUTO policy."""
 
@@ -216,8 +207,9 @@ class ExternalObservationService:
             else InvocationAuthority.ASSISTANT_AUTO
         )
         hint = explicit.query_hint or query_hint.strip() or None
-        resolution = self._resolve_local_context(
+        hint, resolution = self._search_context(
             hint,
+            conversation_message_ids=conversation_message_ids,
             current_message=message,
             project_id=project_id,
             recent_messages=recent_messages,
@@ -258,6 +250,14 @@ class ExternalObservationService:
             )
         request = request.model_copy(update={"query": plan.query})
         return self._execute_search(request, plan.query)
+
+    def _search_context(self, hint, *, conversation_message_ids, **local_context):
+        """One topic owner for explicit and semantic search, before local Recall."""
+        if requires_local_context_resolution(hint) and conversation_message_ids:
+            prior = self.store.latest_completed_web_search_for_origin_messages(conversation_message_ids)
+            if prior is not None:
+                return prior.request.query, ExternalContextResolution()
+        return hint, self._resolve_local_context(hint, **local_context)
 
     def observe_fetch_request(
         self,

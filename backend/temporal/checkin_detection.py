@@ -23,7 +23,7 @@ class CheckInDetector:
         self.events = events
 
     def detect(self, policy: ProactivePolicy) -> ProactiveEvent | None:
-        anchor = self.history.latest_message()
+        anchor = self.history.latest_message(space="ordinary")
         if anchor is None:
             return None
         context = self.engine.context(anchor.created_at)

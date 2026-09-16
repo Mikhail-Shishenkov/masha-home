@@ -97,14 +97,44 @@ class ConversationApplicationService:
             conversation_id=conversation.id,
             created_at=conversation.created_at,
             messages=tuple(self._message(item) for item in messages),
+            space=conversation.space,
         )
 
-    def latest_conversation(self, *, limit: int | None = None) -> ConversationView | None:
+    def latest_conversation(self, *, limit: int | None = None, space: str = "ordinary") -> ConversationView | None:
         """Return the conversation owning the latest actual message, if any."""
-        latest_message = self._conversation.history.latest_message()
+        latest_message = self._conversation.history.latest_message(space=space)
         if latest_message is None:
             return None
         return self.conversation(latest_message.conversation_id, limit=limit)
+
+    def delete_conversation(self, conversation_id: str) -> None:
+        """Explicit UI deletion; never executes/reverses an application action."""
+        self._conversation.history.get(conversation_id)
+        handler = self._conversation.memory_intent_handler
+        if handler is not None:
+            from backend.conversation.memory_intent import ProposalStatus
+            for proposal in handler.proposal_store.pending_for_conversation(conversation_id):
+                handler.proposal_store.set_status(proposal.id, ProposalStatus.CANCELLED)
+            handler.discard_presented_entity_set(conversation_id)
+        core = self._conversation.dialogue_core
+        if core is not None:
+            core.store.forget_conversation(conversation_id)
+        candidates = self._conversation.passive_memory_service
+        if candidates is not None:
+            for candidate in candidates.list_pending():
+                if candidate.proposed_payload.get("conversation_id") == conversation_id:
+                    candidates.reject(candidate.id)
+        for name in ("yandex_mail_service", "google_drive_service", "yandex_disk_service"):
+            service = getattr(self._conversation, name, None)
+            registry = getattr(service, "presented_read_sets", None)
+            if registry is not None:
+                registry.discard(conversation_id)
+            presented = getattr(service, "_presented", None)
+            if isinstance(presented, dict):
+                presented.pop(conversation_id, None)
+        self._active_continuity_by_conversation.pop(conversation_id, None)
+        self._last_application_action_by_conversation.pop(conversation_id, None)
+        self._conversation.history.delete(conversation_id)
 
     def dialogue_diagnostics(self, conversation_id: str):
         """Read-only bounded Dialogue Core snapshot for tests and local diagnostics."""
@@ -129,6 +159,7 @@ class ConversationApplicationService:
                     created_at=conversation.created_at,
                     last_interaction_at=last_interaction_at,
                     preview=preview,
+                    space=conversation.space,
                 )
             )
         return tuple(summaries)
@@ -139,11 +170,16 @@ class ConversationApplicationService:
         offset: int = 0,
         limit: int = 10,
         query: str | None = None,
+        space: str | None = None,
     ) -> ConversationPageView:
         """Bounded summary page; `query` reserves the future search boundary."""
         if offset < 0 or limit < 1:
             raise ValueError("invalid conversation page")
         rows = self.recent_conversations()
+        if space not in {None, "ordinary", "special_evening"}:
+            raise ValueError("invalid conversation space")
+        if space is not None:
+            rows = tuple(row for row in rows if row.space == space)
         # Search is intentionally not implemented in this stabilization pass.
         if query not in {None, ""}:
             raise ValueError("conversation search is not available")
@@ -341,6 +377,16 @@ class ConversationApplicationService:
         if proposal.operation == "restore":
             return "memory_restore", "Вернуть запись в обычную память?", ConversationApplicationService._proposal_subject(proposal)
         if proposal.record_type == "commitment":
+            if proposal.operation == "edit" and payload.get("status") == "open":
+                due = payload.get("due_at")
+                when = "без срока" if due is None else datetime.fromisoformat(due).astimezone(
+                    self._conversation.temporal_engine.home_timezone.tzinfo
+                ).strftime("%d.%m.%Y в %H:%M")
+                return (
+                    "commitment_clear_due" if due is None else "commitment_reschedule",
+                    "Изменить срок напоминания?",
+                    f"{payload.get('text', 'Напоминание')} · {when}",
+                )
             completion = proposal.operation != "create"
             return (
                 "commitment_complete" if completion else "commitment_create",
@@ -458,6 +504,10 @@ class ConversationApplicationService:
         document_receipt: DocumentReadReceipt | None = None,
     ) -> ConversationTurnResult:
         active_profile_id = self._models.current().profile_id
+        space = "special_evening" if home_moment == "special_evening" else "ordinary"
+        if conversation_id is not None and self._conversation.history.get(conversation_id).space != space:
+            conversation_id = None
+            active_continuity_thread_id = None
         resolved_id = conversation_id
         action_follow_up = None if document_receipt is not None else self._action_follow_up(
             content,

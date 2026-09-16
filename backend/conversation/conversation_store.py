@@ -28,8 +28,8 @@ class ConversationStore:
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._data = self._load()
 
-    def create(self) -> Conversation:
-        conversation = Conversation(id=str(uuid4()), created_at=self._now())
+    def create(self, *, space: str = "ordinary") -> Conversation:
+        conversation = Conversation(id=str(uuid4()), created_at=self._now(), space=space)
         self._data["conversations"].append(conversation.model_dump(mode="json"))
         self._save()
         return conversation
@@ -40,18 +40,36 @@ class ConversationStore:
                 return Conversation.model_validate(raw)
         raise KeyError(f"unknown conversation: {conversation_id}")
 
+    def delete(self, conversation_id: str) -> None:
+        """Delete only this transcript; durable memories/operations are separate."""
+        self.get(conversation_id)
+        updated = {
+            "conversations": [row for row in self._data["conversations"] if row["id"] != conversation_id],
+            "messages": [row for row in self._data["messages"] if row["conversation_id"] != conversation_id],
+        }
+        previous = self._data
+        self._data = updated
+        try:
+            self._save()
+        except Exception:
+            self._data = previous
+            raise
+
     def latest(self) -> Conversation | None:
         """Return the most recently created conversation, if this history has one."""
         if not self._data["conversations"]:
             return None
         return Conversation.model_validate(self._data["conversations"][-1])
 
-    def latest_message(self) -> ConversationMessage | None:
+    def latest_message(self, *, space: str | None = None) -> ConversationMessage | None:
         """Return the globally newest persisted message, independent of creation order."""
-        if not self._data["messages"]:
+        allowed = {row["id"] for row in self._data["conversations"]
+                   if space is None or row.get("space", "ordinary") == space}
+        rows = [raw for raw in self._data["messages"] if raw["conversation_id"] in allowed]
+        if not rows:
             return None
         return max(
-            (ConversationMessage.model_validate(raw) for raw in self._data["messages"]),
+            (ConversationMessage.model_validate(raw) for raw in rows),
             key=lambda message: (message.created_at, message.id),
         )
 

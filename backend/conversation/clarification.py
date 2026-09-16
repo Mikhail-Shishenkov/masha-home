@@ -16,6 +16,7 @@ from backend.application.capability_catalog import (
 )
 from backend.temporal.date_resolution import HomeCalendarDateResolver
 from backend.temporal.duration_resolution import HomeDurationResolver
+from backend.temporal.clock_evidence import resolve_clock_evidence
 from backend.temporal.temporal_engine import TemporalEngine
 
 from .capability_router import normalize_utterance
@@ -74,11 +75,6 @@ _EXPLICIT_MATERIAL = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _DATE_VALUE = re.compile(r"^(?:сегодня|завтра)$")
-_TIME_VALUE = re.compile(
-    r"^(?:в\s*)?(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?"
-    r"(?:\s+час(?:а|ов)?)?"
-    r"(?:\s+(?P<period>утра|дня|вечера|ночи))?$",
-)
 _CLOCK_HOUR_PHRASE = re.compile(
     r"\b(?P<hour>\d{1,2})\s+час(?:а|ов)?\s+(?:дня|утра|вечера|ночи)\b"
 )
@@ -435,6 +431,17 @@ class FollowUpResolutionEngine:
             if operation_id is not None:
                 return self._select_candidate(pending, operation_id)
         if pending.clarification_kind is ClarificationKind.SLOT:
+            # The date normalizer searches within text; it is not a speech-act
+            # classifier. A compound reply can correct other fields or be an
+            # ordinary interruption. Let the existing semantic owner validate
+            # the whole reply before changing any saved field.
+            if (
+                pending.requested_slot == "date"
+                and self.semantic_resolver is not None
+                and not _DATE_VALUE.fullmatch(text)
+            ):
+                semantic = self._semantic_follow_up(pending, original, turn_context=turn_context)
+                return semantic or self._unchanged(pending, FollowUpOutcome.STILL_UNRESOLVED)
             # Dates and times have a small Home-owned deterministic grammar.
             # Free-form subjects do not: in production they cross the bounded
             # semantic follow-up contract so ordinary conversation cannot be
@@ -612,6 +619,7 @@ class FollowUpResolutionEngine:
                 follow_up,
                 result.proposal,
                 date_resolver=self.date_resolver,
+                turn_context=turn_context,
             )
         except (SemanticValidationError, ValueError) as error:
             self.last_semantic_rejection = str(error)
@@ -626,6 +634,11 @@ class FollowUpResolutionEngine:
             )
         ):
             self.last_semantic_rejection = "field_validation_rejected"
+            known = {slot.name for slot in pending.interpretation.slots}
+            if any(not item.accepted and item.name in known for item in validation.slots):
+                # A rejected correction must not silently execute the OLD value
+                # just because another valid field completed the requirements.
+                return self._unchanged(pending, FollowUpOutcome.STILL_UNRESOLVED)
         if validated.relation is SemanticFollowUpRelation.NOT_A_FOLLOW_UP:
             return self._unchanged(
                 pending,
@@ -765,23 +778,9 @@ class FollowUpResolutionEngine:
             # intent comparison, but a clock separator is semantic data.  A
             # reply such as ``18:00`` must therefore be parsed from the
             # original bounded answer rather than from ``18 00``.
-            clock_text = original.casefold().replace("ё", "е").strip(" \t\r\n.,!?")
-            match = _TIME_VALUE.fullmatch(clock_text)
-            if match is None:
+            value = resolve_clock_evidence(original, original)
+            if value is None:
                 return None
-            hour = int(match.group("hour"))
-            minute = int(match.group("minute") or 0)
-            period = match.group("period")
-            if period in {"дня", "вечера"} and 1 <= hour <= 11:
-                hour += 12
-            elif period == "ночи":
-                if hour == 12:
-                    hour = 0
-                elif 6 <= hour <= 11:
-                    hour += 12
-            if hour > 23 or minute > 59:
-                return None
-            value = f"{hour:02d}:{minute:02d}"
         elif slot_name == "date":
             resolved = None if date_resolver is None else date_resolver.resolve(original)
             if resolved is not None:

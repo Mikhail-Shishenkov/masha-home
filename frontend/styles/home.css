@@ -115,6 +115,16 @@ html[data-home-attention="active"] .conversation-surface.is-surface-concealed { 
 .recent-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; width: 100%; min-height: 58px; gap: 12px; padding: 12px 13px 15px; color: rgba(248,237,224,.8); border: 0; border-bottom: 1px solid rgba(226,188,126,.24); background: linear-gradient(165deg, rgba(255,255,255,.035), transparent); text-align: left; font: 400 13px/1.35 system-ui, sans-serif; cursor: pointer; transform: translateY(0); transition: color 220ms ease, transform 220ms var(--ease-home), background 220ms ease; }
 .recent-item:hover:not(:disabled), .recent-item.is-active { background: linear-gradient(165deg, rgba(133,87,38,.17), transparent); color: #f8ede0; transform: translateY(-2px); }
 .recent-item:disabled { cursor: not-allowed; }
+.conversation-entry { display: flex; align-items: center; min-width: 0; }
+.conversation-entry .recent-item { flex: 1; min-width: 0; }
+.conversation-remove { border: 0; background: transparent; color: #c6b69e; cursor: pointer; font-size: 24px; padding: 8px; }
+.delete-conversation-dialog { max-width: 420px; color: #f8ede0; background: #241c15; border: 1px solid #847054; padding: 24px; }
+.delete-conversation-dialog::backdrop { background: #0009; }
+.delete-conversation-dialog form { display: flex; justify-content: flex-end; gap: 16px; }
+.delete-conversation-dialog button, #conversation-space { color: #f8ede0; background: #35291e; border: 1px solid #847054; padding: 8px 12px; }
+.masha-evening-entry { position: absolute; left: 12%; top: 18%; width: 28%; height: 64%; z-index: 3; background: transparent; border: 0; cursor: pointer; }
+.masha-evening-entry:focus-visible { outline: 1px solid #d9b783; border-radius: 45%; }
+.masha-evening-entry[hidden] { display: none; }
 .recent-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recent-time { color: rgba(248,237,224,.45); white-space: nowrap; font-size: 11px; }
 .recent-empty { padding: 10px 7px; color: rgba(248,237,224,.53); font: 400 13px/1.4 system-ui, sans-serif; }

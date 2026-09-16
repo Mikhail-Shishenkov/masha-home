@@ -112,6 +112,7 @@ class ConversationView(UiContract):
     conversation_id: str
     created_at: datetime
     messages: tuple[MessageView, ...]
+    space: Literal["ordinary", "special_evening"] = "ordinary"
 
 
 class ConversationSummaryView(UiContract):
@@ -119,6 +120,7 @@ class ConversationSummaryView(UiContract):
     created_at: datetime
     last_interaction_at: datetime
     preview: str = Field(min_length=1, max_length=160)
+    space: Literal["ordinary", "special_evening"] = "ordinary"
 
 
 class ConversationPageView(UiContract):

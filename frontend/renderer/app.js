@@ -15,6 +15,10 @@ const localDocumentChip = document.getElementById("local-document-chip");
 const localDocumentLabel = document.getElementById("local-document-label");
 const newConversationButton = document.getElementById("new-conversation");
 const specialEveningToggle = document.getElementById("special-evening-toggle");
+const mashaEveningEntry = document.getElementById("masha-evening-entry");
+const deleteConversationDialog = document.getElementById("delete-conversation-dialog");
+const conversationSpace = document.getElementById("conversation-space");
+let conversationToDelete = null;
 const specialProximityToggle =
   document.getElementById("special-proximity-toggle");
 const recentToggle = document.getElementById("recent-conversations-toggle");
@@ -377,6 +381,7 @@ function setCornerSceneActive(active) {
   if (cornerSceneActive === nextActive) return;
 
   cornerSceneActive = nextActive;
+  updateEveningEntry();
   if (lastPresentation) applyScene(lastPresentation);
 }
 
@@ -1912,6 +1917,20 @@ function renderRecent(page, activeId = activeConversationId, { append = false } 
       bridge.openConversation(item.conversation_id);
     });
     entry.append(button);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "conversation-remove";
+    remove.textContent = "×";
+    remove.disabled = inFlight;
+    remove.setAttribute("aria-label", "Удалить разговор");
+    remove.addEventListener("click", () => {
+      if (!ready || inFlight || !deleteConversationDialog) return;
+      conversationToDelete = item.conversation_id;
+      deleteConversationDialog.returnValue = "cancel";
+      deleteConversationDialog.showModal();
+    });
+    entry.append(remove);
+    entry.className = "conversation-entry";
     recentList.append(entry);
   }
   loadMoreConversations.hidden = !page?.has_more;
@@ -1963,8 +1982,9 @@ const homeProximity =
 document.documentElement.dataset.homeProximity =
   homeProximity;
 
-specialEveningToggle.hidden =
-  !specialEveningAvailable;
+specialEveningToggle.hidden = !specialEveningActive;
+if (mashaEveningEntry) mashaEveningEntry.dataset.available = String(specialEveningAvailable);
+updateEveningEntry();
 
 specialProximityToggle.hidden =
   !specialEveningActive;
@@ -2004,6 +2024,13 @@ specialEveningToggle.textContent =
 function showLocalFailure(text) {
   surfaceStatus.textContent = text;
   surfaceStatus.classList.add("is-error");
+}
+
+function updateEveningEntry() {
+  if (!mashaEveningEntry) return;
+  mashaEveningEntry.hidden = !cornerSceneActive
+    || mashaEveningEntry.dataset.available !== "true"
+    || document.documentElement.dataset.homeMoment === "special_evening";
 }
 
 function clearLocalFailure() {
@@ -2304,6 +2331,7 @@ function handleBridgeEvent(encoded) {
     return;
   }
   if (payload.kind === "conversation_started") {
+    if (conversationSpace) conversationSpace.value = "ordinary";
     resetHumanSearchUi();
     applySnapshot(payload.snapshot);
     renderConversation(null);
@@ -2322,6 +2350,24 @@ function handleBridgeEvent(encoded) {
     interactionSafety.preserveComposer(input, document, () => {
       renderRecent(payload.recent, payload.active_conversation_id, { append: Boolean(payload.append) });
     });
+    return;
+  }
+  if (payload.kind === "conversation_deleted") {
+    if (payload.snapshot) applySnapshot(payload.snapshot);
+    if (activeConversationId === payload.deleted_id) {
+      activeConversationId = null;
+      pendingConfirmation = null;
+      hideOperationSurface();
+      renderConversation(null);
+      renderActiveContinuityThread(null);
+      resetHumanSearchUi();
+    }
+    renderRecent(payload.recent, payload.active_conversation_id);
+    clearLocalFailure();
+    return;
+  }
+  if (payload.kind === "conversation_delete_failed") {
+    showLocalFailure("Не удалось удалить разговор. Попробуй ещё раз.");
     return;
   }
   if (payload.kind === "home_time") {
@@ -2477,6 +2523,19 @@ function handleBridgeEvent(encoded) {
   if (payload.kind === "special_evening_changed") {
     clearLocalFailure();
     applySnapshot(payload.snapshot);
+    if (payload.conversation_switched) {
+      activeConversationId = payload.conversation?.conversation_id || null;
+      pendingConfirmation = null;
+      hideOperationSurface();
+      resetHumanSearchUi();
+      renderConversation(payload.conversation);
+      renderActiveContinuityThread(null);
+      renderRecent(payload.recent, activeConversationId);
+      renderPendingConfirmation(payload.pending_confirmation);
+      if (conversationSpace) conversationSpace.value = payload.space;
+      recentPanel.hidden = true;
+      surface.classList.remove("is-shelf-open");
+    }
     return;
   }
 
@@ -2525,7 +2584,7 @@ newConversationButton.addEventListener("click", () => {
   bridge.startNewConversation();
 });
 
-specialEveningToggle.addEventListener("click", () => {
+function toggleSpecialEvening() {
   if (!ready || inFlight || pendingConfirmation) {
     return;
   }
@@ -2535,6 +2594,20 @@ specialEveningToggle.addEventListener("click", () => {
     === "special_evening";
 
   bridge.setSpecialEvening(!active);
+}
+specialEveningToggle.addEventListener("click", toggleSpecialEvening);
+mashaEveningEntry?.addEventListener("click", () => {
+  if (!mashaEveningEntry.hidden) toggleSpecialEvening();
+});
+conversationSpace?.addEventListener("change", () => {
+  if (ready && !inFlight) bridge.setConversationSpace(conversationSpace.value);
+});
+deleteConversationDialog?.addEventListener("close", () => {
+  const id = conversationToDelete;
+  conversationToDelete = null;
+  if (deleteConversationDialog.returnValue === "delete" && id && ready && !inFlight) {
+    bridge.deleteConversation(id);
+  }
 });
 
 specialProximityToggle.addEventListener("click", () => {

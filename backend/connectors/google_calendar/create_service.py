@@ -14,6 +14,7 @@ from backend.runtime.action_contracts import (
 
 from .intent import calendar_create_from_resolved_slots, calendar_create_intent
 from .writer import CalendarCreateOperation, CalendarCreateReceipt, GoogleCalendarWriter
+from .service import present_verified_event
 
 
 _CONFIRM = re.compile(r"^\s*(?:да|подтверждаю|создавай|создай)(?:\s+(?P<id>[0-9a-f-]{36}))?\s*[.!]?\s*$", re.IGNORECASE)
@@ -23,9 +24,10 @@ _REJECT = re.compile(r"^\s*(?:нет|не надо|не сейчас|отмен�
 class GoogleCalendarCreateConversationService:
     """Owns calendar action parsing and execution, never the memory handler."""
 
-    def __init__(self, *, proposal_store: MemoryProposalStore, writer: GoogleCalendarWriter):
+    def __init__(self, *, proposal_store: MemoryProposalStore, writer: GoogleCalendarWriter, presented_read_sets=None):
         self.proposal_store = proposal_store
         self.writer = writer
+        self.presented_read_sets = presented_read_sets
 
     def propose(self, message: str, *, conversation_id: str, now_local: datetime):
         intent = calendar_create_intent(message, now_local)
@@ -137,9 +139,13 @@ class GoogleCalendarCreateConversationService:
             self.writer.reject(operation)
             self.proposal_store.set_status(proposal.id, ProposalStatus.CANCELLED)
             return "Хорошо, ничего в календаре не меняю."
-        status, _ = self.writer.create_and_verify(operation)
+        status, receipt = self.writer.create_and_verify(operation)
         if status == "verified":
             self.proposal_store.set_status(proposal.id, ProposalStatus.CONFIRMED)
+            present_verified_event(
+                self.presented_read_sets, conversation_id, receipt=receipt,
+                event_id=receipt.provider_event_id, state=receipt.operation,
+            )
             return f"Готово: «{operation.title}» поставила в Основной календарь на {operation.start:%d.%m в %H:%M}."
         if status == "created_unverified":
             self.proposal_store.set_status(proposal.id, ProposalStatus.CONFIRMED)

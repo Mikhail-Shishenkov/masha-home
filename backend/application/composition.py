@@ -128,6 +128,7 @@ from .resolved_capabilities import (
     HomeMemoryRecallHandoffAdapter,
     HomeMemoryRememberHandoffAdapter,
     TimedCommitmentHandoffAdapter,
+    TimedCommitmentUpdateHandoffAdapter,
     YandexMailReadHandoffAdapter,
     YandexMailDeleteHandoffAdapter,
     YandexMailMoveHandoffAdapter,
@@ -212,6 +213,7 @@ def build_masha_application(
     core.conversation.home_capability_provider = capabilities.snapshot
     core.conversation.home_capability_catalog_provider = capabilities.catalog_snapshot
     core.conversation.google_calendar_create_service = GoogleCalendarCreateConversationService(
+        presented_read_sets=core.conversation.yandex_mail_service.presented_read_sets,
         proposal_store=core.conversation.memory_intent_handler.proposal_store,
         writer=GoogleCalendarWriter(
             config_store=connector_config_stores["google-calendar"],
@@ -233,10 +235,12 @@ def build_masha_application(
         clock=core.conversation.temporal_engine.clock.now_utc,
     )
     core.conversation.google_calendar_update_service = GoogleCalendarUpdateConversationService(
+        presented_read_sets=core.conversation.yandex_mail_service.presented_read_sets,
         proposal_store=core.conversation.memory_intent_handler.proposal_store,
         updater=calendar_updater,
     )
     core.conversation.google_calendar_delete_service = GoogleCalendarDeleteConversationService(
+        presented_read_sets=core.conversation.yandex_mail_service.presented_read_sets,
         proposal_store=core.conversation.memory_intent_handler.proposal_store,
         deleter=GoogleCalendarDeleter(
             target_resolver=calendar_updater,
@@ -321,6 +325,7 @@ def build_masha_application(
         CalendarUpdateHandoffAdapter(core.conversation.google_calendar_update_service),
         CalendarDeleteHandoffAdapter(core.conversation.google_calendar_delete_service),
         TimedCommitmentHandoffAdapter(core.conversation.memory_intent_handler),
+        TimedCommitmentUpdateHandoffAdapter(core.conversation.memory_intent_handler),
         HomeCommitmentsReadHandoffAdapter(core.conversation.memory_intent_handler),
         HomeCommitmentCreateHandoffAdapter(core.conversation.memory_intent_handler),
         HomeCommitmentCompleteHandoffAdapter(core.conversation.memory_intent_handler),
@@ -560,6 +565,7 @@ def _build_core(project_root: Path, *, router: ModelRouter | None) -> _Core:
         human_information=human_information,
         presented_context_provider=presented_read_sets.model_safe_hints,
         google_calendar_service=GoogleCalendarConversationService(
+            presented_read_sets=presented_read_sets,
             reader=GoogleCalendarReader(
                 config_store=GoogleCalendarConfigStore(root / "local-data" / "config" / "google-calendar.json"),
                 secret_store=WindowsCredentialManagerSecretStore(),

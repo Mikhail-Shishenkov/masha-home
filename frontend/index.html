@@ -14,6 +14,15 @@
       <img class="scene" src="assets/presence/evening/idle.png" alt="">
     </div>
     <div class="ambient" aria-hidden="true"></div>
+    <button id="masha-evening-entry" class="masha-evening-entry" type="button" aria-label="Вдвоём с Машей" hidden></button>
+    <dialog id="delete-conversation-dialog" class="delete-conversation-dialog" aria-labelledby="delete-conversation-title">
+      <h2 id="delete-conversation-title">Удалить разговор?</h2>
+      <p>Переписка будет удалена из Дома. Сохранённые воспоминания, дела и события останутся. Ранее сделанные резервные копии не изменятся.</p>
+      <form method="dialog">
+        <button value="cancel">Оставить</button>
+        <button value="delete">Удалить</button>
+      </form>
+    </dialog>
     <button
   class="home-attention-trigger"
   id="home-attention-trigger"
@@ -192,6 +201,7 @@
       <aside class="recent-conversations" id="recent-conversations" aria-label="Недавние разговоры" hidden>
         <div class="shelf-line" aria-hidden="true"></div>
         <p class="recent-heading">Наши разговоры</p>
+        <label>История <select id="conversation-space"><option value="ordinary">Обычные разговоры</option><option value="special_evening">Вдвоём</option></select></label>
         <ol class="recent-list" id="recent-list"></ol>
         <button class="load-more" id="load-more-conversations" type="button" hidden>Показать ещё</button>
       </aside>

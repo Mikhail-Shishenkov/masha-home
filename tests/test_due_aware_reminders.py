@@ -1,6 +1,7 @@
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
+import pytest
 
 from backend.application.proactive import ProactiveApplicationService
 from backend.memory.sqlite_repository import MemorySqliteRepository
@@ -95,6 +96,46 @@ def test_nearest_due_wakeup_beats_generic_five_minute_cycle(tmp_path, canonical_
     delay = due_aware_cycle_delay(repository, now=NOW, cadence_seconds=300)
 
     assert delay == 121
+
+
+@pytest.mark.parametrize("old_state", ["delivered", "acknowledged", "dismissed"])
+def test_delivered_backlog_cannot_starve_later_reminders(tmp_path, canonical_memory, old_state):
+    from backend.conversation.conversation_store import ConversationStore
+    from backend.llm.model_profiles import ModelProfileStore
+    from backend.runtime.daily_runtime import DailyRuntime
+    from backend.runtime.safety import AutonomySafetyStore
+    from backend.temporal.temporal_engine import TemporalEngine
+    from backend.temporal.temporal_runtime import TemporalRuntime
+
+    repository = _repository(tmp_path, canonical_memory, NOW - timedelta(minutes=10), explicit=True)
+    data = repository.read_document().model_dump(mode="json")
+    template = data["commitments"][0]
+    data["commitments"] = [dict(template, id=template["id"] if i == 0 else f"reminder_{i}", due_at=(NOW - timedelta(minutes=10-i)).isoformat()) for i in range(7)]
+    repository.replace_document(data)
+    engine = TemporalEngine(FixedClock(NOW))
+    def runtime():
+        return DailyRuntime(
+            history=ConversationStore(tmp_path / "history.json"), temporal_engine=engine,
+            repository=repository, identity_kernel=Mock(), router=Mock(),
+            model_profiles=ModelProfileStore(tmp_path / "profiles.json"),
+            safety_store=AutonomySafetyStore(tmp_path / "safety.json"),
+        )
+    policy = ProactivePolicy(enabled=True, proactive_level=1, allow_commitment_reminders=True)
+    runtime().run_cycle(policy)
+    store = ProactiveInteractionStore(repository)
+    assert len(store.list()) == 6
+    if old_state != "delivered":
+        transition = store.acknowledge if old_state == "acknowledged" else store.dismiss
+        for row in store.list():
+            transition(row["event_id"], NOW)
+    runtime().run_cycle(policy)
+    delivered = ProactiveInteractionStore(repository).list()
+    assert len(delivered) == 7
+    assert sum(row["state"] == old_state for row in delivered) == (7 if old_state == "delivered" else 6)
+    assert any(row["state"] == "delivered" for row in delivered)
+    runtime().run_cycle(policy)
+    assert ProactiveInteractionStore(repository).list() == delivered
+    assert len(TemporalRuntime(repository, engine).recover().events) == 6
 
 
 def test_future_due_does_not_run_early_and_runs_just_after_due(tmp_path, canonical_memory):

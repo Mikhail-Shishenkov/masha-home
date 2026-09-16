@@ -126,11 +126,18 @@ def default_home_capability_catalog() -> CapabilityCatalog:
             agent_eligible=True,
         ),
         CapabilityDescriptor(
-            operation_id="home.timed_commitments", display_name="Дела со сроком",
-            family="home", kind=CapabilityOperationKind.MANAGE,
+            operation_id="home.timed_commitments", display_name="Создать напоминание",
+            family="home", kind=CapabilityOperationKind.CREATE,
             effect=CapabilityEffect.LOCAL_MUTATION,
             risk=CapabilityRisk.REVERSIBLE, verification_required=True,
             proactive_eligible=True, agent_eligible=True,
+        ),
+        CapabilityDescriptor(
+            operation_id="home.timed_commitments.update", display_name="Изменить время напоминания",
+            family="home", kind=CapabilityOperationKind.UPDATE,
+            effect=CapabilityEffect.LOCAL_MUTATION,
+            risk=CapabilityRisk.REVERSIBLE, verification_required=True,
+            agent_eligible=True,
         ),
         CapabilityDescriptor(
             operation_id="home.proactive_reminders",
@@ -296,6 +303,7 @@ class HomeCapabilityApplicationService:
             "home.commitments.create": CapabilityAvailability.AVAILABLE,
             "home.commitments.complete": CapabilityAvailability.AVAILABLE,
             "home.timed_commitments": CapabilityAvailability.AVAILABLE,
+            "home.timed_commitments.update": CapabilityAvailability.AVAILABLE,
             "home.proactive_reminders": reminder_state,
             "home.memory.recall": CapabilityAvailability.AVAILABLE,
             "home.memory.inspect": CapabilityAvailability.AVAILABLE,

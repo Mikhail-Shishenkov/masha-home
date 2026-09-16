@@ -7,6 +7,7 @@ import pytest
 
 from backend.conversation.conversation_service import ConversationService
 from backend.conversation.conversation_store import ConversationStore
+from backend.conversation.conversation_models import ConversationRole
 from backend.conversation.human_reference import HumanEntityKind
 from backend.conversation.memory_intent import MemoryIntentHandler, MemoryProposalStore
 from backend.connectors.presented_read_sets import PresentedReadSetRegistry
@@ -28,6 +29,287 @@ from backend.memory.working_memory import WorkingMemory
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT = "project_masha_home"
+
+
+@pytest.mark.parametrize("space", ["ordinary", "special_evening"])
+def test_application_clarification_preserves_topic_without_replaying_actions(tmp_path, memory_path, space):
+    import json
+    from backend.conversation.conversation_models import ConversationMessageOrigin
+
+    service, repository, provider = _service(tmp_path, memory_path)
+    cid = service.history.create(space=space).id
+    rows = [
+        (ConversationRole.USER, "Обсуждаем засолку форели.", ConversationMessageOrigin.USER),
+        (ConversationRole.ASSISTANT, "Мы обсуждаем форель.", ConversationMessageOrigin.MODEL),
+        (ConversationRole.USER, "А в интернете есть что-то про это?", ConversationMessageOrigin.USER),
+        (ConversationRole.ASSISTANT, "Уточни тему поиска.", ConversationMessageOrigin.APPLICATION),
+    ]
+    for role, text, origin in rows:
+        service.history.append(cid, role, text, origin=origin)
+    before = repository.read_document()
+    # Even if the model invents success, preserving history grants no authority.
+    provider.response_text = "Я создала событие в календаре."
+    returned, response = service.send(
+        "А о чём мы сейчас говорим?", conversation_id=cid, project_id=PROJECT,
+        home_moment=space, allow_capability_routing=False,
+    )
+    assert returned == cid
+    messages = provider.last_request.messages
+    assert any("засолку форели" in m.content for m in messages)
+    application = next(json.loads(m.content) for m in messages if '"source": "home_application_history"' in m.content)
+    assert application["text"] == "Уточни тему поиска."
+    assert application["recorded_at"]
+    assert messages[-1].content == "А о чём мы сейчас говорим?"
+    assert response == UNRECEIPTED_MUTATION_RESPONSE
+    assert repository.read_document() == before
+    assert service.memory_intent_handler.proposal_store.current_for_conversation(cid) is None
+    assert provider.last_request.required_capabilities.tools is False
+
+
+@pytest.mark.parametrize("case", ["confirm", "reject", "ambiguous", "wrong_old_time"])
+def test_saved_reminder_reschedule_reuses_record_and_requires_confirmation(tmp_path, memory_path, case):
+    from datetime import datetime, timezone
+    from backend.application.resolved_capabilities import TimedCommitmentUpdateHandoffAdapter
+    from backend.conversation.resolution_coordinator import ResolvedCapabilityHandoff, DomainProposalContext
+    from backend.conversation.interpretation_v2 import InterpretationSlot
+    from backend.temporal.temporal_engine import TemporalEngine, FixedClock
+
+    service, repository, provider = _service(tmp_path, memory_path)
+    handler = service.memory_intent_handler
+    handler.temporal_engine = TemporalEngine(clock=FixedClock(datetime(2026, 9, 15, 4, tzinfo=timezone.utc)))
+    cid = service.history.create().id
+    for _ in range(2 if case == "ambiguous" else 1):
+        handler.propose_timed_commitment_from_resolved_intent(
+            subject="позвонить маме", date="2026-09-16", time="09:00",
+            conversation_id=cid, project_id=PROJECT,
+        )
+        handler.handle("да", conversation_id=cid, project_id=PROJECT)
+    before = repository.read_document()
+    original = next(row for row in before.commitments if row.text == "позвонить маме")
+    slots = [InterpretationSlot(name=name, value=value, origin="semantic") for name, value in (
+        ("subject", "напоминание про маму"), ("time", "14:00"),
+    )]
+    if case == "wrong_old_time":
+        slots.append(InterpretationSlot(name="old_time", value="12:00", origin="semantic"))
+    handoff = ResolvedCapabilityHandoff(
+        operation_id="home.timed_commitments.update", conversation_id=cid,
+        original_utterance="Хочу, чтобы напоминание позвонить маме сработало в 14:00",
+        slots=tuple(slots),
+    )
+    result = TimedCommitmentUpdateHandoffAdapter(handler).resolve(handoff, DomainProposalContext(
+        project_id=PROJECT, now_local=handler.temporal_engine.now_local(),
+    ))
+    assert repository.read_document() == before
+    assert not provider.requests
+    proposal = handler.proposal_store.current_for_conversation(cid)
+    if case in {"ambiguous", "wrong_old_time"}:
+        assert result.projection_state == "failed" and proposal is None
+        return
+    assert result.projection_state == "waiting_confirmation"
+    assert proposal.operation == "edit" and proposal.target_record_id == original.id
+    assert "14:00" in result.response and "16.09.2026" in result.response
+    from backend.application.conversation import ConversationApplicationService
+    service.temporal_engine = handler.temporal_engine
+    kind, title, detail = ConversationApplicationService._confirmation_copy(
+        SimpleNamespace(_conversation=service), proposal,
+    )
+    assert kind == "commitment_reschedule" and "выполненным" not in title
+    assert "14:00" in detail
+    handler.handle("не сейчас" if case == "reject" else "да", conversation_id=cid, project_id=PROJECT)
+    after = repository.read_document()
+    if case == "reject":
+        assert after == before
+    else:
+        updated = next(row for row in after.commitments if row.id == original.id)
+        assert updated.due_at == datetime(2026, 9, 16, 10, tzinfo=timezone.utc)
+        assert updated.text == original.text and updated.status == original.status
+        assert updated.reminder_delivery_mode == original.reminder_delivery_mode
+        assert len(after.commitments) == len(before.commitments)
+        handler.handle("да", conversation_id=cid, project_id=PROJECT)
+        assert repository.read_document() == after
+
+
+def test_answer_uses_same_entity_projection_as_understanding_without_retaining_old_selection(tmp_path, memory_path):
+    from backend.conversation.turn_context import TurnContextEnvelopeBuilder
+
+    service, repository, provider = _service(tmp_path, memory_path)
+    current = [{
+        "position": 1, "owner_operation_id": "yandex_mail.read", "kind": "письмо",
+        "human_label": "Поездка на выходных", "focused": True,
+        "provider_id": "private-provider-id",
+    }]
+    service.presented_context_provider = lambda cid: tuple(current)
+    before = repository.read_document()
+    provider.response_text = "Я создала событие в календаре."
+    cid, response = service.send("О чём этот заголовок?", project_id=PROJECT, allow_capability_routing=False)
+    assert response == UNRECEIPTED_MUTATION_RESPONSE
+    semantic_context = TurnContextEnvelopeBuilder().build(
+        temporal_context=service.temporal_engine.context(None), presented_context=tuple(current),
+    )
+    projected = provider.last_request.private_context["presented_entities"]
+    assert projected == semantic_context.model_safe_value()["presented_entities"]
+    assert projected[0]["focused"] is True
+    assert "private-provider-id" not in str(provider.last_request)
+    assert provider.last_request.private_context["external_information"] == []
+    assert repository.read_document() == before
+    assert service.memory_intent_handler.proposal_store.current_for_conversation(cid) is None
+
+    current.clear()  # An empty/new list must not resurrect the earlier focus.
+    service.send("А сейчас?", conversation_id=cid, project_id=PROJECT, allow_capability_routing=False)
+    assert provider.last_request.private_context["presented_entities"] == []
+
+
+@pytest.mark.parametrize("case", ["correct", "invented", "ambiguous", "foreign_operation", "timeout", "save_failure", "ordinary"])
+def test_pending_reminder_revision_is_not_confirmation(tmp_path, memory_path, monkeypatch, case):
+    from datetime import datetime, timezone
+    from unittest.mock import Mock
+    from backend.application.home_capabilities import default_home_capability_catalog
+    from backend.conversation.clarification import FollowUpResolutionEngine, DeterministicClarificationBuilder
+    from backend.conversation.interpretation_v2 import CapabilityCandidateDiscovery
+    from backend.conversation.pending_resolution import PendingResolutionStore
+    from backend.conversation.resolution_coordinator import DialogueCore
+    from backend.conversation.semantic_resolver import SemanticProposalValidator, SemanticFollowUpResult
+    from backend.temporal.temporal_engine import TemporalEngine, FixedClock
+
+    service, repository, ordinary = _service(tmp_path, memory_path)
+    temporal = TemporalEngine(clock=FixedClock(datetime(2026, 9, 15, 4, tzinfo=timezone.utc)))
+    service.temporal_engine = temporal
+    handler = service.memory_intent_handler
+    handler.temporal_engine = temporal
+    conversation = service.history.create()
+    handler.propose_timed_commitment_from_resolved_intent(
+        subject="позвонить маме", date="2026-09-16", time="09:00",
+        conversation_id=conversation.id, project_id=PROJECT,
+    )
+    old = handler.proposal_store.current_for_conversation(conversation.id)
+    before = repository.read_document()
+    discovery = CapabilityCandidateDiscovery(catalog=default_home_capability_catalog())
+    validator = SemanticProposalValidator(
+        catalog=discovery.catalog, specifications=discovery.specifications,
+        known_operation_ids=frozenset(discovery.specifications.operation_ids),
+    )
+    resolver = Mock()
+    resolver.resolve_follow_up.return_value = SemanticFollowUpResult.model_validate(
+        {"failure": "timeout", "latency_ms": 0} if case == "timeout" else {"latency_ms": 0, "proposal": {
+            "relation": "not_a_follow_up" if case == "ordinary" else "follow_up",
+            "selected_operation_id": "google_calendar.event.create" if case == "foreign_operation" else None,
+            "operation_selection_evidence": "лучше" if case == "foreign_operation" else None,
+            "slot_updates": [] if case == "ordinary" else [{
+                "name": "time", "mode": "correct",
+                "evidence_text": "11 утра" if case == "invented" else "вечером" if case == "ambiguous" else "10 утра",
+            }], "referent_updates": [],
+        }}
+    )
+    service.dialogue_core = DialogueCore(
+        discovery=discovery, builder=DeterministicClarificationBuilder(catalog=discovery.catalog),
+        engine=FollowUpResolutionEngine(semantic_resolver=resolver, semantic_validator=validator),
+        store=PendingResolutionStore(tmp_path / "pending.json"),
+    )
+    if case == "save_failure":
+        monkeypatch.setattr(handler.proposal_store, "_save", Mock(side_effect=OSError("disk full")))
+    reply = "Хочу поговорить о книгах" if case == "ordinary" else "Нет, лучше вечером" if case == "ambiguous" else "Нет, лучше в 10 утра"
+    _, response = service.send(reply, conversation_id=conversation.id, project_id=PROJECT)
+    current = handler.proposal_store.current_for_conversation(conversation.id)
+    assert repository.read_document() == before
+    assert service.dialogue_core.store.active_for_conversation(conversation.id) is None
+    assert len(handler.proposal_store.pending_for_conversation(conversation.id)) == 1
+    context = resolver.resolve_follow_up.call_args.args[2].model_dump_json()
+    assert old.id not in context and old.record_payload["id"] not in context
+    if case == "ordinary":
+        assert current == old
+        return
+    assert ordinary.requests == []  # Application preview cannot be rewritten as success.
+    assert not any(word in response.lower() for word in ("готово", "сделано", "сохранила напоминание"))
+    assert service.history.messages(conversation.id)[-1].origin.value == "application"
+    if case != "correct":
+        assert current == old
+        assert "09:00" in response
+        assert MemoryProposalStore(handler.proposal_store.file_path).current_for_conversation(conversation.id) == old
+        return
+    assert current.id != old.id and current.status.value == "pending"
+    assert current.record_payload["id"] == old.record_payload["id"]
+    assert "10:00" in response and "Подтверждаешь?" in response
+    assert handler.proposal_store.get(old.id).status.value == "cancelled"
+    from backend.application.conversation import ConversationApplicationService
+    projected = ConversationApplicationService(conversation=service, models=Mock()).pending_confirmation(conversation.id)
+    assert projected.proposal_id == current.id
+    assert projected.subject == current.record_payload["text"]
+    assert projected.due_at == datetime.fromisoformat(current.record_payload["due_at"].replace("Z", "+00:00"))
+    handler.proposal_store = MemoryProposalStore(handler.proposal_store.file_path)
+    assert handler.proposal_store.current_for_conversation(conversation.id) == current
+    # An obsolete UI confirmation must not approve the revised preview.
+    service.resolve_proposal_confirmation(
+        conversation_id=conversation.id, proposal_id=old.id, confirm=True, project_id=PROJECT,
+    )
+    assert repository.read_document() == before
+    _, confirmed = service.send("Да", conversation_id=conversation.id, project_id=PROJECT)
+    assert "сохранила" in confirmed
+    saved = next(item for item in repository.read_document().commitments if item.id == current.record_payload["id"])
+    assert saved.text == "позвонить маме"
+    assert saved.due_at.astimezone(temporal.home_timezone.tzinfo).hour == 10
+    assert handler.proposal_store.current_for_conversation(conversation.id) is None
+    assert resolver.resolve_follow_up.call_count == 1
+
+
+def test_evening_is_separate_history_and_never_passively_saved(tmp_path, memory_path):
+    from unittest.mock import Mock
+    service, _, provider = _service(tmp_path, memory_path)
+    service.passive_memory_service = Mock()
+    first, _ = service.send("ORDINARY SECRET", project_id=PROJECT, allow_capability_routing=False)
+    evening, _ = service.send("EVENING PRIVATE", conversation_id=first, project_id=PROJECT, home_moment="special_evening")
+    assert evening != first
+    assert "ORDINARY SECRET" not in repr(provider.last_request)
+    service.passive_memory_service.observe_safely.assert_not_called()
+    returned, _ = service.send("DAY RETURN", conversation_id=evening, project_id=PROJECT, allow_capability_routing=False)
+    assert returned != evening
+    assert "EVENING PRIVATE" not in repr(provider.last_request)
+    assert service.history.get(evening).space == "special_evening"
+
+
+def test_empty_mail_list_ordinal_never_invokes_ordinary_model(tmp_path, memory_path):
+    from backend.connectors.yandex_mail.service import YandexMailConversationService
+    from unittest.mock import Mock
+    registry = PresentedReadSetRegistry()
+    service, _, provider = _service(tmp_path, memory_path, presented_registry=registry)
+    conversation = service.history.create()
+    registry.present(conversation.id, "yandex_mail", (), entity_kind="письмо", presentation_kind="unread")
+    service.yandex_mail_service = YandexMailConversationService(reader=Mock(), presented_read_sets=registry)
+    _, response = service.send("первое", conversation_id=conversation.id, project_id=PROJECT)
+    assert "нет писем для выбора" in response
+    assert provider.requests == []
+
+
+def test_application_delete_cancels_proposal_without_memory_mutation(tmp_path, memory_path):
+    from backend.application.conversation import ConversationApplicationService
+    from unittest.mock import Mock
+    service, repository, _ = _service(tmp_path, memory_path)
+    conversation = service.history.create()
+    service.history.append(conversation.id, ConversationRole.USER, "Disposable")
+    service.memory_intent_handler.handle("Запомни: я люблю чай", conversation_id=conversation.id, project_id=PROJECT)
+    assert service.memory_intent_handler.proposal_store.pending_for_conversation(conversation.id)
+    before = repository.read_document()
+    app = ConversationApplicationService(conversation=service, models=Mock())
+    app.delete_conversation(conversation.id)
+    assert app.recent_conversations() == ()
+    assert service.memory_intent_handler.proposal_store.pending_for_conversation(conversation.id) == ()
+    assert repository.read_document() == before
+
+
+def test_conversation_shelves_filter_before_pagination(tmp_path, memory_path):
+    from backend.application.conversation import ConversationApplicationService
+    from unittest.mock import Mock
+    service, _, _ = _service(tmp_path, memory_path)
+    ordinary = service.history.create()
+    service.history.append(ordinary.id, ConversationRole.USER, "Ordinary")
+    for _ in range(3):
+        evening = service.history.create(space="special_evening")
+        service.history.append(evening.id, ConversationRole.USER, "Private evening")
+    app = ConversationApplicationService(conversation=service, models=Mock())
+    assert app.latest_conversation().conversation_id == ordinary.id
+    page = app.conversation_page(space="ordinary", limit=1)
+    assert page.total == 1 and page.items[0].conversation_id == ordinary.id
+    assert "Private evening" not in page.model_dump_json()
+    assert app.conversation_page(space="special_evening", limit=2).has_more
 
 
 def _service(tmp_path, memory_path, *, presented_registry=None):

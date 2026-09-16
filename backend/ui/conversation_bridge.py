@@ -31,6 +31,7 @@ class LocalConversationBridge(QObject):
 
     event = Signal(str)
     reminderDelivery = Signal(str)
+    reminderQuiet = Signal(str)
 
     def __init__(self, application: MashaApplication | None, parent=None):
         super().__init__(parent)
@@ -39,6 +40,7 @@ class LocalConversationBridge(QObject):
         self._session_lock = Lock()
         self._conversation_id: str | None = None
         self._conversation_page_revision = 0
+        self._conversation_space = "ordinary"
         self._human_search_revision = 0
         self._human_search_action_refs: dict[str, str] = {}
         self._turn_in_flight = False
@@ -292,7 +294,7 @@ class LocalConversationBridge(QObject):
             self._emit({"kind": "home_unavailable"})
             return
 
-        if self._turn_in_flight:
+        if self._turn_in_flight or self._pending_confirmation() is not None:
             self._emit({
                 "kind": "special_evening_rejected",
                 "reason": "turn_in_flight",
@@ -313,9 +315,22 @@ class LocalConversationBridge(QObject):
             })
             return
 
+        self._clear_human_search_context()
+        self._application.clear_local_document()
+        self._conversation_space = "special_evening" if enabled else "ordinary"
+        conversation = self._application.latest_conversation(space=self._conversation_space)
+        self._conversation_id = None if conversation is None else conversation.conversation_id
+        pending = self._pending_confirmation()
+        if pending is not None:
+            snapshot = self._session_snapshot("confirmation_requested", title=pending.title, summary=pending.subject)
         self._emit({
             "kind": "special_evening_changed",
             "snapshot": snapshot.model_dump(mode="json"),
+            "conversation_switched": True,
+            "conversation": None if conversation is None else conversation.model_dump(mode="json"),
+            "space": self._conversation_space,
+            "recent": self._reset_conversation_page_payload(),
+            "pending_confirmation": None if pending is None else pending.model_dump(mode="json"),
         })
 
     @Slot()
@@ -454,6 +469,7 @@ class LocalConversationBridge(QObject):
             event_id=interaction_id,
             decision=decision,
         )
+        self.reminderQuiet.emit(interaction_id)
         self._emit(
             {
                 "kind": "proactive_interaction_resolved",
@@ -875,6 +891,7 @@ class LocalConversationBridge(QObject):
             self._emit({"kind": "home_unavailable"})
             return
         safety = self._application.emergency_stop()
+        self.reminderQuiet.emit("")
         if self._session is None:
             self._session = self._application.open_home_session()
         snapshot = self._session_snapshot(
@@ -915,11 +932,20 @@ class LocalConversationBridge(QObject):
         except Exception:
             self._emit({"kind": "conversation_unavailable"})
             return
+        session = self._application.open_home_session()
+        if conversation.space == "special_evening":
+            try:
+                if session.enter_special_evening() is None:
+                    self._emit({"kind": "special_evening_unavailable"})
+                    return
+            except Exception:
+                self._emit({"kind": "special_evening_unavailable"})
+                return
         self._clear_human_search_context()
         self._application.clear_local_document()
         self._conversation_id = conversation.conversation_id
         self._application.discard_presented_information(self._conversation_id)
-        self._session = self._application.open_home_session()
+        self._session = session
         pending = self._application.pending_confirmation(conversation.conversation_id)
         snapshot = self._session_snapshot("opened")
         if pending is not None:
@@ -952,12 +978,45 @@ class LocalConversationBridge(QObject):
         self._application.clear_local_document()
         self._conversation_id = None
         self._session = self._application.open_home_session()
+        self._conversation_space = "ordinary"
         self._emit(
             {
                 "kind": "conversation_started",
                 "snapshot": self._session_snapshot("opened").model_dump(mode="json"),
             }
         )
+
+    @Slot(str)
+    def setConversationSpace(self, space: str):  # noqa: N802
+        if space not in {"ordinary", "special_evening"} or self._turn_in_flight:
+            return
+        self._conversation_space = space
+        self.loadRecentConversations()
+
+    @Slot(str)
+    def deleteConversation(self, conversation_id: str):  # noqa: N802
+        """Called only by the renderer's explicit delete confirmation."""
+        if self._application is None or self._turn_in_flight:
+            return
+        try:
+            self._application.delete_conversation(conversation_id)
+        except Exception:
+            self._emit({"kind": "conversation_delete_failed"})
+            return
+        snapshot = None
+        if self._conversation_id == conversation_id:
+            self._clear_human_search_context()
+            self._application.clear_local_document()
+            self._conversation_id = None
+            evening = self._session.home_moment.value == "special_evening"
+            self._session = self._application.open_home_session()
+            snapshot = self._session_snapshot("enter_special_evening" if evening else "opened")
+        self._emit({
+            "kind": "conversation_deleted", "deleted_id": conversation_id,
+            "active_conversation_id": self._conversation_id,
+            "recent": self._reset_conversation_page_payload(),
+            "snapshot": None if snapshot is None else snapshot.model_dump(mode="json"),
+        })
 
     @Slot(str)
     def submitMessage(self, content: str):  # noqa: N802 - Qt slot name is part of the JS contract
@@ -1047,6 +1106,7 @@ class LocalConversationBridge(QObject):
             "attention": self._application.home_attention(conversation_id=self._conversation_id).model_dump(mode="json"),
             "snapshot": self._session_snapshot("proactive_resolved", event_id=interaction_id, decision=decision).model_dump(mode="json"),
         })
+        self.reminderQuiet.emit(interaction_id)
 
     @Slot(str)
     def clearLocalDocument(self, token: str):  # noqa: N802 - opaque composer token only
@@ -1705,6 +1765,7 @@ class LocalConversationBridge(QObject):
         payload = self._application.conversation_page(
             offset=max(0, offset),
             limit=OBJECT_PAGE_SIZE,
+            space=self._conversation_space,
         ).model_dump(mode="json")
         payload["revision"] = self._conversation_page_revision
         return payload

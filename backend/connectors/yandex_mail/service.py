@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 from backend.connectors.presented_read_sets import parse_presented_entity_reference
-from backend.memory.text_normalization import meaningful_tokens
+from backend.memory.text_normalization import normalize_search_text
+from backend.connectors.provider_language import is_listing_command
 
 from .intent import mail_intent
 from .models import MailOutcome
+
+
+_MAILBOX_WORDS = frozenset({
+    "письмо", "письма", "почта", "почту", "почте", "новые", "непрочитанные",
+    "последние", "все", "мою", "моя", "у", "меня", "за", "сегодня", "входящие",
+})
 
 
 class YandexMailConversationService:
@@ -62,8 +69,14 @@ class YandexMailConversationService:
         return (
             MailOutcome("clarification_required")
             if resolved.item is None
-            else self.reader.read(resolved.item)
+            else self._read(resolved.item, conversation_id)
         )
+
+    def _read(self, item, conversation_id):
+        outcome = self.reader.read(item)
+        if outcome.status == "read_completed" and self.presented_read_sets is not None:
+            self.presented_read_sets.focus_read_item(conversation_id, "yandex_mail", item)
+        return outcome
 
     def observe_resolved(
         self,
@@ -79,8 +92,21 @@ class YandexMailConversationService:
 
         # A resolved mailbox view is a listing, not a reference into a prior
         # list. Do not let stale presented context turn it into a single read.
+        # Some local models copy the action into this optional filter. It is
+        # not a filter: use the existing generic-check default, only AFTER
+        # Home has validated and handed off a mail-read request.
+        if view is not None and is_listing_command(view):
+            view = None
         canonical_view = self._canonical_view(view)
-        if canonical_view is not None and sender is None and topic is None:
+        generic_target = target is not None and set(normalize_search_text(target).split()) <= _MAILBOX_WORDS
+        if generic_target:
+            if canonical_view is None and normalize_search_text(target) == "письмо":
+                return MailOutcome("clarification_required")
+            canonical_view = canonical_view or self._canonical_view(target)
+            if canonical_view is None:
+                canonical_view = "unread"
+            target = None
+        if canonical_view is not None and sender is None and topic is None and target is None:
             return self._search_and_present(
                 canonical_view, None, conversation_id=conversation_id,
             )
@@ -93,7 +119,20 @@ class YandexMailConversationService:
         if contextual is not None:
             return contextual
         if target is not None:
-            return MailOutcome("clarification_required")
+            reference = parse_presented_entity_reference(
+                target, entity_kind="письмо", require_read_action=False,
+            )
+            if reference is not None:
+                context = self.presented_read_sets
+                if context is None:
+                    return MailOutcome("clarification_required")
+                resolved = context.resolve(
+                    conversation_id, owner="yandex_mail", entity_kind="письмо",
+                    reference=reference, label_of=lambda item: item.subject,
+                )
+                return (self._read(resolved.item, conversation_id) if resolved.item is not None
+                        else MailOutcome("clarification_required"))
+            return self._read_subject(target, conversation_id)
         if sender is not None:
             return self._search_and_present(
                 "sender", sender, conversation_id=conversation_id,
@@ -102,22 +141,29 @@ class YandexMailConversationService:
             return self._search_and_present(
                 "topic", topic, conversation_id=conversation_id,
             )
-        if canonical_view is None:
+        if view is not None and canonical_view is None:
             return MailOutcome("clarification_required")
         return self._search_and_present(
-            canonical_view,
+            canonical_view or "unread",
             None,
             conversation_id=conversation_id,
         )
 
     def _search_and_present(self, kind, query, *, conversation_id):
         outcome = self.reader.search(kind, query)
-        if outcome.status in {"search_completed", "important_completed"}:
+        if outcome.status in {"search_completed", "important_completed", "no_unread", "no_messages"}:
             self._present(
                 conversation_id,
                 outcome.messages,
                 presentation_kind=kind,
             )
+        return outcome
+
+    def _read_subject(self, subject, conversation_id):
+        """Search real mailbox metadata, never infer an ID from a title."""
+        outcome = self._search_and_present("topic", subject[:300], conversation_id=conversation_id)
+        if outcome.status == "search_completed" and len(outcome.messages) == 1:
+            return self._read(outcome.messages[0], conversation_id)
         return outcome
 
     @staticmethod
@@ -127,10 +173,12 @@ class YandexMailConversationService:
         normalized = value.casefold().replace("ё", "е").strip()
         if normalized in {"unread", "recent", "today", "important"}:
             return normalized
-        tokens = meaningful_tokens(normalized)
+        # Memory's stop-word filter deliberately drops "сегодня". A mailbox
+        # view is a temporal filter, not a memory relevance query.
+        tokens = normalize_search_text(normalized).split()
         if any(token.startswith("важн") for token in tokens):
             return "important"
-        if any(token.startswith("сегодня") for token in tokens):
+        if "сегодня" in tokens:
             return "today"
         if any(
             token.startswith(("последн", "недавн", "свеж"))
@@ -138,6 +186,8 @@ class YandexMailConversationService:
         ):
             return "recent"
         if any(token.startswith(("нов", "непрочитан")) for token in tokens):
+            return "unread"
+        if tokens and set(tokens) <= _MAILBOX_WORDS:
             return "unread"
         return None
 
@@ -156,21 +206,10 @@ class YandexMailConversationService:
             return (
                 MailOutcome("clarification_required")
                 if index < 0 or index >= len(rows)
-                else self.reader.read(rows[index])
+                else self._read(rows[index], conversation_id)
             )
         if intent.kind == "read_name":
-            rows = self._rows(conversation_id)
-            if rows is None:
-                return None
-            matches = [
-                item for item in rows
-                if item.subject.casefold() == intent.query.casefold()
-            ]
-            return (
-                self.reader.read(matches[0])
-                if len(matches) == 1
-                else MailOutcome("clarification_required")
-            )
+            return self._read_subject(intent.query, conversation_id)
         return self._search_and_present(
             intent.kind,
             intent.query,

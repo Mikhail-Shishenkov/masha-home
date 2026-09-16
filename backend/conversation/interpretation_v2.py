@@ -322,7 +322,7 @@ def default_interpretation_specifications() -> tuple[InterpretationSpecification
             selection_evidence_examples=("перенеси", "измени", "сдвинь"),
             selection_evidence_terms=("перенес", "измен", "сдвин"),
             slots=(
-                InterpretationSlotSpecification(name="subject", meaning="human description of the existing event to change, expressed as a noun or infinitive phrase", normalizer="text"),
+                InterpretationSlotSpecification(name="subject", meaning="human description or contextual reference to the existing event to change", normalizer="referenced_entity"),
                 InterpretationSlotSpecification(name="date", meaning="local day on which to look up the existing event", normalizer="date"),
                 InterpretationSlotSpecification(name="time", meaning="new local start time", normalizer="time"),
                 InterpretationSlotSpecification(name="old_time", meaning="current start time when explicitly supplied", required=False, normalizer="time"),
@@ -338,7 +338,7 @@ def default_interpretation_specifications() -> tuple[InterpretationSpecification
                 InterpretationSlotSpecification(
                     name="subject",
                     meaning="human description of the existing calendar event to delete",
-                    normalizer="text",
+                    normalizer="referenced_entity",
                 ),
                 InterpretationSlotSpecification(
                     name="date",
@@ -358,7 +358,7 @@ def default_interpretation_specifications() -> tuple[InterpretationSpecification
             required_slots=("mode",),
             purpose=(
                 "прочитать, найти, показать или вывести ограниченный список файлов "
-                "в Google Drive; сюда относится просьба о недавних файлах"
+                "в Google Drive (Гугл Диск); сюда относится просьба о недавних файлах"
             ),
             operation_kind="read",
             slots=(
@@ -390,17 +390,30 @@ def default_interpretation_specifications() -> tuple[InterpretationSpecification
             selection_evidence_examples=("напомни", "не дай забыть", "не дай мне забыть", "для Дома"),
             selection_evidence_terms=("напомн", "заб", "дом"),
             slots=(
-                InterpretationSlotSpecification(name="subject", meaning="what to remember", normalizer="text"),
+                InterpretationSlotSpecification(name="subject", meaning="what to remember; a deictic reference may point to the focused read result", normalizer="referenced_text"),
                 InterpretationSlotSpecification(name="date", meaning="local due day", normalizer="date"),
                 InterpretationSlotSpecification(name="time", meaning="local due time", normalizer="time"),
+                InterpretationSlotSpecification(name="relative_time", meaning="quoted lead time before the focused event, including relation and amount; Home computes date/time from its real start, do not invent absolute date/time", required=False, normalizer="event_lead_time"),
             ),
             operation_selection_group="personal_scheduling",
+        ),
+        InterpretationSpecification(
+            operation_id="home.timed_commitments.update",
+            required_slots=("subject", "time"),
+            purpose="change when an existing saved Home reminder fires; preserve the reminder, never create a new one",
+            operation_kind="update",
+            slots=(
+                InterpretationSlotSpecification(name="subject", meaning="existing reminder to change, by human description or focused reference", normalizer="referenced_entity"),
+                InterpretationSlotSpecification(name="time", meaning="new local reminder time", normalizer="time"),
+                InterpretationSlotSpecification(name="date", meaning="new local date only if requested; otherwise keep the saved reminder's date", required=False, normalizer="date"),
+                InterpretationSlotSpecification(name="old_time", meaning="previous reminder time if specified, used to identify the existing record", required=False, normalizer="time"),
+            ),
         ),
         InterpretationSpecification(
             operation_id="yandex_mail.read",
             purpose=(
                 "проверить или показать почту, новые/непрочитанные письма, либо "
-                "прочитать конкретное уже показанное письмо; «что пришло» означает "
+                "прочитать письмо по теме (даже ещё не показанное) или из показанного списка; «что пришло» означает "
                 "входящие сообщения, а не календарные события"
             ),
             operation_kind="read",
@@ -408,12 +421,12 @@ def default_interpretation_specifications() -> tuple[InterpretationSpecification
                 InterpretationSlotSpecification(
                     name="view",
                     meaning=(
-                        "which mailbox view was requested: unread/new, recent, "
-                        "today, or important"
+                        "optional mailbox filter: unread/new, recent, today, or important. "
+                        "Copy only the explicit filter words. Omit this slot for a general "
+                        "mailbox check: Home defaults to unread. An action verb is NOT a filter."
                     ),
                     required=False,
                     normalizer="mail_view",
-                    default_value="unread",
                 ),
                 InterpretationSlotSpecification(
                     name="sender",
@@ -429,7 +442,7 @@ def default_interpretation_specifications() -> tuple[InterpretationSpecification
                 ),
                 InterpretationSlotSpecification(
                     name="target",
-                    meaning="one explicitly referenced already presented message",
+                    meaning="one message to read: supplied subject/title or reference into the presented list; not a mailbox listing",
                     required=False,
                     normalizer="presented_reference",
                 ),

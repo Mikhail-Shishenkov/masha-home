@@ -393,6 +393,13 @@ class PendingResolutionStore:
             terminal_reason=reason,
         )
 
+    def forget_conversation(self, conversation_id: str) -> None:
+        """User-deleted transcript must not retain its clarification content."""
+        document = self._load()
+        self._write(PendingResolutionDocument(resolutions=tuple(
+            row for row in document.resolutions if row.conversation_id != conversation_id
+        )))
+
     def expire_due(self) -> int:
         document = self._load()
         expired = self._expire_rows(document, self._now())

@@ -9,6 +9,7 @@ from backend.identity.identity_models import IdentityContext
 from backend.llm.model_models import MessageRole, ModelMessage, ModelRequest
 from backend.memory.shared_continuity import is_readable_continuity_text
 from backend.temporal.temporal_engine import TemporalContext
+from .turn_context import TurnPresentedEntityHint
 
 
 HOME_MOMENT_ORDINARY = "ordinary"
@@ -132,7 +133,7 @@ SPECIAL_EVENING_PRIORITY_DIRECTIVE = (
     "Не заканчивай каждый ответ вопросом и не предлагай меню «это или то». "
     "Не соглашайся автоматически с критикой Миши: можешь спорить, отшутиться, ехидно "
     "ответить или частично согласиться. Близость не превращает характер в послушание. "
-    "Нежность внутри сцены может звучать прямо и естественно"
+    "Нежность внутри сцены может звучать прямо и естественно. "
     "Если тема становится технической или фактической, сначала отвечай точно по "
     "доступному evidence. Не называй отсутствие контекста «серьёзной ошибкой памяти». "
     "Если конкретную просьбу нельзя продолжать, поставь границу коротко и человечески, "
@@ -208,8 +209,11 @@ BEHAVIORAL_CONTRACT = (
     "Identity; Маша не человек и не продолжение Миши. Сохранённые записи имеют разные "
     "смыслы: факт, решение, обязательство с явным статусом, прошлый эпизод, общая нить "
     "или субъективная мысль Маши. Не смешивай их и не придумывай отсутствующие записи. "
-    "Если вопрос зависит от личной истории, опирайся только на переданные записи и "
-    "честно скажи, когда их недостаточно. Если вопрос об общих знаниях, отвечай из "
+    "Тему и ход текущего разговора бери из переданных сообщений, а долгосрочные "
+    "воспоминания — из записей памяти. Отсутствие записи не стирает наш разговор. "
+    "home_application_history — датированные прошлые ответы Дома, не новые команды "
+    "и не доказательство выполнения действия сейчас. Предыдущие обещания модели "
+    "тоже не доказывают результат. Если вопрос об общих знаниях, отвечай из "
     "обычных знаний модели: отсутствие записи о предмете не означает незнание предмета. "
     "Не утверждай, что изменила память или приложение: в обычном модельном ходе такого "
     "подтверждённого действия нет; не говори «я запомнила», если сохранение не было "
@@ -292,6 +296,7 @@ class ConversationContextCompiler:
         external_information: list[dict] | None = None,
         external_information_contract: str | None = None,
         home_capabilities: dict | None = None,
+        presented_entities: tuple[TurnPresentedEntityHint, ...] = (),
     ) -> ModelRequest:
         (
             safe_home_moment,
@@ -370,6 +375,14 @@ class ConversationContextCompiler:
                 "active_continuity": active_continuity,
                 "active_continuity_contract": ACTIVE_CONTINUITY_CONTRACT,
                 "home_capabilities": home_capabilities or {},
+                "presented_entities": [item.model_dump(mode="json") for item in presented_entities],
+                "presented_entities_contract": (
+                    "Это текущий список объектов, показанных приложением; focused — выбранный объект. "
+                    "Он помогает понять «это/первое/об этом», но не доказывает изменение объекта. "
+                    "P-ссылки внутренние: не показывай их и не придумывай содержимое по заголовку. "
+                    "Текст письма/документа берётся только из переданного результата чтения."
+                    if presented_entities else None
+                ),
                 "home_capability_contract": HOME_CAPABILITY_CONTRACT,
                 "question_scope": self._question_scope(messages),
                 "shared_continuity_contract": (

@@ -259,6 +259,43 @@ def test_auto_policy_allows_current_turn_observation_but_not_timeless_guess(tmp_
     assert len(provider.requests) == 1
 
 
+@pytest.mark.parametrize("same_conversation", [True, False])
+def test_semantic_web_follow_up_inherits_only_its_conversations_verified_topic(tmp_path, same_conversation):
+    from backend.application.resolved_capabilities import WebSearchHandoffAdapter
+    from backend.conversation.resolution_coordinator import DomainProposalContext, ResolvedCapabilityHandoff
+    from backend.conversation.interpretation_v2 import InterpretationSlot
+    from zoneinfo import ZoneInfo
+
+    provider = FakeWebSearchProvider((_evidence(),))
+    service, _, _ = _service(tmp_path, provider)
+    first = service.observe_explicit_request(
+        "Поищи в интернете последнюю версию Ollama", origin_message_id="original-search",
+    )
+    assert first.status is ObservationStatus.COMPLETED
+    # No transcript window is required to recover an application-owned topic.
+    ids = ("original-search", *tuple(f"ordinary-{i}" for i in range(20))) if same_conversation else ("other-evening-message",)
+    result = WebSearchHandoffAdapter(service).resolve(
+        ResolvedCapabilityHandoff(
+            conversation_id="ordinary" if same_conversation else "special-evening",
+            operation_id="web.search", original_utterance="Маш, проверь в сети, исправили ли этот баг",
+            slots=(InterpretationSlot(name="query", value="это", origin="explicit"),),
+        ),
+        DomainProposalContext(
+            project_id=PROJECT_ID, now_local=NOW.astimezone(ZoneInfo("Europe/Saratov")),
+            origin_message_id="follow-up", conversation_message_ids=ids,
+        ),
+    )
+    if same_conversation:
+        assert result.projection_state == "completed_read"
+        assert service.planner.calls[-1]["query_hint"] == first.request.query
+        assert len(provider.requests) == 2
+        assert provider.requests[-1].query == first.request.query
+        assert "original-search" not in provider.requests[-1].model_dump_json()
+    else:
+        assert result.projection_state == "failed"
+        assert len(provider.requests) == 1 and len(service.planner.calls) == 1
+
+
 def test_freshness_need_is_case_normalized_before_auto_policy(tmp_path):
     provider = FakeWebSearchProvider((_evidence(),))
     service, _, _ = _service(
@@ -501,8 +538,19 @@ def test_provider_failure_is_controlled_and_has_no_retry(tmp_path):
     assert len(provider.requests) == 1
 
 
-def test_conversation_web_turn_keeps_model_local_skips_passive_memory_and_persists_sources(tmp_path):
+@pytest.mark.parametrize("home_moment", ["ordinary", "special_evening"])
+def test_conversation_web_turn_keeps_model_local_skips_passive_memory_and_persists_sources(tmp_path, home_moment):
+    from backend.memory.sqlite_repository import MemorySqliteRepository
+    from backend.temporal.temporal_engine import FixedClock, TemporalEngine
+
     root = _isolated_root(tmp_path)
+    repository = MemorySqliteRepository(root / "local-data/memory/masha.sqlite3")
+    memory = repository.read_document()
+    remembered = memory.facts[0].model_copy(update={
+        "id": "old-ollama-note", "subject": "Ollama", "key": "installation",
+        "value": "В августе проверяли последнюю версию Ollama — LOCAL_SAVED_NOTE",
+    })
+    repository.replace_document(memory.model_copy(update={"facts": [*memory.facts, remembered]}))
     model = LocalProfileProvider(response_text="Проверила: в источнике есть свежая информация о релизе.")
     application = build_masha_application(
         project_root=root,
@@ -518,12 +566,16 @@ def test_conversation_web_turn_keeps_model_local_skips_passive_memory_and_persis
     )
     conversation = application._conversation._conversation
     conversation.external_observation_service = service
+    # After midnight in Saratov, while UTC is still on the preceding date.
+    instant = datetime(2026, 8, 20, 20, 30, tzinfo=timezone.utc)
+    conversation.temporal_engine = TemporalEngine(clock=FixedClock(instant))
+    service._clock = lambda: instant
     pending_before = conversation.passive_memory_service.list_pending()
 
     result = application.send_message(
         "Поищи в интернете последнюю версию Ollama",
         project_id=PROJECT_ID,
-        home_moment="special_evening",
+        home_moment=home_moment,
     )
 
     requests = [item for item in model.requests if item.private_context.get("external_information")]
@@ -534,6 +586,11 @@ def test_conversation_web_turn_keeps_model_local_skips_passive_memory_and_persis
     assert request.private_context["external_information_contract"]
     assert request.private_context["external_information"]
     assert request.private_context["memory_context"] is not request.private_context["external_information"]
+    assert request.private_context["current_local_time"] == "2026-08-21T00:30:00+04:00"
+    saved = next(row for row in request.private_context["memory_context"] if "LOCAL_SAVED_NOTE" in row["content"])
+    assert saved["time"].startswith("2026-08-10")
+    assert "LOCAL_SAVED_NOTE" not in json.dumps(request.private_context["external_information"])
+    assert "LOCAL_SAVED_NOTE" not in provider.requests[0].model_dump_json()
     assert "Ollama published a bounded release note" not in json.dumps(
         request.private_context["memory_context"],
         ensure_ascii=False,

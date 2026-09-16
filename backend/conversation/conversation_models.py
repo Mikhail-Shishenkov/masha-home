@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
@@ -51,3 +51,4 @@ class Conversation(BaseModel):
 
     id: NonEmptyStr
     created_at: AwareDatetime
+    space: Literal["ordinary", "special_evening"] = "ordinary"

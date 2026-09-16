@@ -36,9 +36,11 @@ def test_presented_set_projects_human_context_without_provider_identity():
     assert hints == ({
         "position": 1,
         "owner_operation_id": "yandex_mail.read",
+        "focused": False,
         "kind": "письмо",
         "human_label": "Письмо о занятии",
         "time_text": "2026-08-29 09:00:00+00:00",
+        "starts_at": None,  # Receipt time is not an event start.
     },)
     assert "provider-internal-id" not in repr(hints)
     assert "conversation-internal-id" not in repr(hints)

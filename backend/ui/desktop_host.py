@@ -20,7 +20,7 @@ if os.environ.get("MASHA_HOME_SOFTWARE_COMPOSITING") == "1":
         "--disable-gpu --disable-gpu-compositing",
     )
 
-from PySide6.QtCore import QObject, QTimer, QUrl, Slot
+from PySide6.QtCore import QObject, QTemporaryFile, QTimer, QUrl, Slot
 from PySide6.QtWebEngineCore import (
     QWebEnginePage,
     QWebEngineProfile,
@@ -44,7 +44,7 @@ REMINDER_CUE_HISTORY_LIMIT = 256
 
 
 class ReminderCuePlayer(QObject):
-    """Play one native Qt cue for each newly projected reminder receipt."""
+    """One bounded three-chime sequence per newly projected receipt."""
 
     def __init__(
         self,
@@ -54,10 +54,17 @@ class ReminderCuePlayer(QObject):
         history_limit: int = REMINDER_CUE_HISTORY_LIMIT,
     ):
         super().__init__(parent)
-        self._cue = cue or self._qt_system_cue
+        self._effect = None
+        self._audio_file = None
+        self._cue = cue or self._home_cue
         self._history_limit = max(1, history_limit)
         self._played_order: deque[str] = deque()
         self._played_ids: set[str] = set()
+        self._active_id: str | None = None
+        self._remaining = 0
+        self._repeat = QTimer(self)
+        self._repeat.setInterval(4_000)
+        self._repeat.timeout.connect(self._pulse)
 
     @Slot(str)
     def play_once(self, interaction_id: str) -> bool:
@@ -65,12 +72,58 @@ class ReminderCuePlayer(QObject):
         if not interaction_id or interaction_id in self._played_ids:
             return False
         self._remember(interaction_id)
+        self.stop()
+        self._active_id = interaction_id
+        self._remaining = 3
+        self._pulse()
+        if self._remaining:
+            self._repeat.start()
+        return True
+
+    def _pulse(self) -> None:
+        if self._remaining <= 0:
+            return
+        self._remaining -= 1
         try:
             self._cue()
         except Exception:
             # A missing/disabled audio device must not break Home delivery.
             pass
-        return True
+        if not self._remaining:
+            self._repeat.stop()
+
+    @Slot(str)
+    def stop(self, interaction_id: str = "") -> None:
+        if interaction_id and interaction_id != self._active_id:
+            return
+        self._repeat.stop()
+        self._remaining = 0
+        self._active_id = None
+        if self._effect is not None:
+            self._effect.stop()
+
+    def _home_cue(self) -> None:
+        try:
+            from PySide6.QtMultimedia import QSoundEffect
+            from .reminder_audio import home_chime_wav
+            if self._effect is None:
+                audio_file = QTemporaryFile(self)
+                if not audio_file.open():
+                    raise OSError("temporary audio unavailable")
+                audio_file.write(home_chime_wav())
+                audio_file.flush()
+                audio_file.close()
+                self._audio_file = audio_file
+                self._effect = QSoundEffect(self)
+                self._effect.setVolume(0.65)
+                self._effect.setLoopCount(1)
+                self._effect.setSource(QUrl.fromLocalFile(audio_file.fileName()))
+            if self._effect.status() == QSoundEffect.Status.Error:
+                self._qt_system_cue()
+            else:
+                self._effect.play()
+        except (ImportError, OSError, RuntimeError):
+            self._qt_system_cue()
 
     def _remember(self, interaction_id: str) -> None:
         if len(self._played_order) >= self._history_limit:
@@ -138,6 +191,7 @@ class MashaHomeWindow(QMainWindow):
         self._bridge = LocalConversationBridge(self._application, self)
         self._reminder_cue = ReminderCuePlayer(self)
         self._bridge.reminderDelivery.connect(self._reminder_cue.play_once)
+        self._bridge.reminderQuiet.connect(self._reminder_cue.stop)
         self._channel = QWebChannel(self._page)
         self._channel.registerObject("mashaHome", self._bridge)
         self._page.setWebChannel(self._channel)
@@ -175,6 +229,7 @@ class MashaHomeWindow(QMainWindow):
             return None
 
     def closeEvent(self, event):  # noqa: N802 - Qt override
+        self._reminder_cue.stop()
         self._bridge.close()
         super().closeEvent(event)
 

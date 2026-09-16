@@ -4,6 +4,8 @@ from unittest.mock import Mock
 import pytest
 
 from backend.connectors.yandex_mail.models import MailOutcome
+from backend.connectors.yandex_mail.models import MailMessageSummary, MailMessageContent
+from backend.connectors.presented_read_sets import PresentedReadSetRegistry
 from backend.connectors.yandex_mail.service import YandexMailConversationService
 from backend.conversation.memory_intent import MemoryIntentHandler, MemoryProposalStore
 from backend.temporal.temporal_engine import TemporalEngine
@@ -47,6 +49,47 @@ def test_mail_unresolved_single_target_still_requires_clarification():
     )
     assert outcome.status == "clarification_required"
     reader.search.assert_not_called()
+    reader.read.assert_not_called()
+
+
+@pytest.mark.parametrize("view, kind", [("мою почту", "unread"), ("за сегодня", "today"), ("последние письма", "recent"), ("посмотри", "unread")])
+def test_grounded_human_mailbox_view_keeps_temporal_words(view, kind):
+    reader = Mock()
+    reader.search.return_value = MailOutcome("no_messages")
+    service = YandexMailConversationService(reader=reader)
+    service.observe_resolved(conversation_id="home", original_utterance=view, view=view)
+    reader.search.assert_called_once_with(kind, None)
+
+
+def test_empty_unread_then_read_subject_searches_real_mail_not_old_list():
+    registry = PresentedReadSetRegistry()
+    letter = MailMessageSummary("yandex", "PRIVATE", "185 историй вдохновления", "Sender", None, 100, False)
+    reader = Mock()
+    reader.search.side_effect = [MailOutcome("no_unread"), MailOutcome("search_completed", (letter,))]
+    reader.read.return_value = MailOutcome("read_completed", content=MailMessageContent(letter, "Body"))
+    service = YandexMailConversationService(reader=reader, presented_read_sets=registry)
+    registry.present("home", "yandex_mail", (letter,), entity_kind="письмо")
+    assert service.observe_resolved(conversation_id="home", original_utterance="Посмотри мою почту").status == "no_unread"
+    assert registry.items_for("home", "yandex_mail") == ()
+    assert service.observe_resolved(conversation_id="home", original_utterance="первое", target="первое").status == "clarification_required"
+    result = service.observe_resolved(
+        conversation_id="home", original_utterance="Прочитай тогда пожалуйста письмо 185 историй вдохновления",
+        target=letter.subject, view="unread",
+    )
+    assert result.status == "read_completed"
+    assert reader.search.call_args_list == [(("unread", None),), (("topic", letter.subject),)]
+    reader.read.assert_called_once_with(letter)
+    assert registry.current_context("home").focused_position == 1
+
+
+@pytest.mark.parametrize("count", [0, 2])
+def test_subject_search_does_not_arbitrarily_read_multiple_or_missing_matches(count):
+    reader = Mock()
+    rows = tuple(MailMessageSummary("yandex", str(i), "Report", "Sender", None, 1, False) for i in range(count))
+    reader.search.return_value = MailOutcome("search_completed" if rows else "no_messages", rows)
+    service = YandexMailConversationService(reader=reader, presented_read_sets=PresentedReadSetRegistry())
+    result = service.observe_resolved(conversation_id="home", original_utterance="Прочитай Report", target="Report")
+    assert result.messages == rows
     reader.read.assert_not_called()
 
 

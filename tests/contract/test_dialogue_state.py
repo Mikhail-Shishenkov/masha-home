@@ -44,6 +44,26 @@ def test_dialogue_snapshot_is_bounded_read_only_state(tmp_path):
     assert not hasattr(state, "resolve")
 
 
+def test_deleted_conversation_cannot_restore_pending_content(tmp_path):
+    clock = FixedClock(NOW)
+    catalog = default_home_capability_catalog()
+    path = tmp_path / "pending.json"
+    store = PendingResolutionStore(path, clock=clock.now_utc)
+    core = DialogueCore(
+        discovery=CapabilityCandidateDiscovery(catalog=catalog),
+        builder=DeterministicClarificationBuilder(catalog=catalog, clock=clock.now_utc),
+        engine=FollowUpResolutionEngine(), store=store,
+    )
+    core.coordinate("Запиши занятие завтра", conversation_id="delete-me")
+    core.coordinate("Запиши встречу завтра", conversation_id="keep-me")
+    assert store.active_for_conversation("delete-me") is not None
+    store.forget_conversation("delete-me")
+    restored = PendingResolutionStore(path, clock=clock.now_utc)
+    assert restored.active_for_conversation("delete-me") is None
+    assert restored.active_for_conversation("keep-me") is not None
+    assert "delete-me" not in path.read_text(encoding="utf-8")
+
+
 @pytest.mark.parametrize(
     ("clock_answer", "expected"),
     (("18:00", "18:00"), ("в 6 вечера", "18:00")),

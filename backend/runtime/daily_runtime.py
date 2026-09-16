@@ -141,11 +141,21 @@ class DailyRuntime:
         items: list[DailyCycleItem] = []
         document = self.repository.read_document()
         commitments = {} if document is None else {item.id: item for item in document.commitments}
-        temporal_context = TemporalRuntime(self.repository, self.temporal_engine).recover()
+        interactions = self.controlled.interaction_store.list()
+        excluded_event_ids = frozenset(
+            item["event_id"] for item in interactions
+            if item["state"] in {"delivered", "acknowledged", "dismissed", "resolved", "expired"}
+        )
+        temporal_context = TemporalRuntime(self.repository, self.temporal_engine).recover(
+            excluded_event_ids=excluded_event_ids,
+        )
         reminders_sent, last_delivery = self.controlled.interaction_store.delivery_stats(started_at)
-        reminder_blocks_checkin = False
+        reminder_blocks_checkin = any(
+            item["state"] == "delivered" and item.get("temporal_event_id") is not None
+            for item in interactions
+        )
         cycle_contact_reserved = False
-        awaiting_response = any(item["state"] == "delivered" for item in self.controlled.interaction_store.list())
+        awaiting_response = any(item["state"] == "delivered" for item in interactions)
 
         for event in temporal_context.events:
             if self.safety_store.is_engaged():

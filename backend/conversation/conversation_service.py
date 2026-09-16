@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import json
 
 from datetime import datetime
 from backend.identity.identity_kernel import IdentityKernel
@@ -344,7 +345,11 @@ class ConversationService:
         self.last_response_projection_state = "none"
         legacy_fallback_allowed = self.dialogue_core is None
         resolved_read_result = None
-        conversation = self.history.create() if conversation_id is None else self.history.get(conversation_id)
+        space = "special_evening" if home_moment == "special_evening" else "ordinary"
+        conversation = None if conversation_id is None else self.history.get(conversation_id)
+        if conversation is None or conversation.space != space:
+            conversation = self.history.create(space=space)
+            active_continuity_thread_id = None
         last_interaction_at = self.history.last_interaction_at(conversation.id)
         temporal_context = self.temporal_engine.context(
             last_interaction_at,
@@ -436,6 +441,21 @@ class ConversationService:
                 conversation.id
             ) is not None
         )
+        # A bare ordinal after an empty real list has no possible referent.
+        # Reject this structural reference, not its imagined conversational meaning.
+        if document_receipt is None and not pending_mutation and len(user_message.split()) == 1:
+            from backend.connectors.presented_read_sets import parse_presented_entity_reference
+            registry = getattr(self.yandex_mail_service, "presented_read_sets", None)
+            presented = None if registry is None else registry.current_context(conversation.id)
+            reference = parse_presented_entity_reference(
+                user_message, entity_kind="письмо", require_read_action=False,
+            )
+            active = None if self.dialogue_core is None else self.dialogue_core.store.active_for_conversation(conversation.id)
+            if presented is not None and presented.owner == "yandex_mail" and not presented.items and reference is not None and active is None:
+                response = "В последнем списке нет писем для выбора. Могу посмотреть последние письма или поискать по теме."
+                self.history.append(conversation.id, ConversationRole.ASSISTANT, response, origin=ConversationMessageOrigin.APPLICATION)
+                self.last_response_projection_state = "clarification"
+                return conversation.id, response
         if (
             document_receipt is None
             and allow_capability_routing
@@ -650,6 +670,7 @@ class ConversationService:
         ):
             calendar_outcome = self.google_calendar_service.observe(
                 user_message, now_local=temporal_context.current_local_time,
+                conversation_id=conversation.id,
             )
             if calendar_outcome is not None and calendar_outcome.status != "completed":
                 failure = self.google_calendar_service.human_failure(calendar_outcome)
@@ -935,6 +956,12 @@ class ConversationService:
             external_information=None if not external_information else external_information,
             external_information_contract=external_information_contract,
             home_capabilities=home_capabilities,
+            # Refresh after this turn's read/focus/clear, not the pre-action
+            # semantic snapshot. Both paths use the same bounded projection.
+            presented_entities=self.turn_context_builder.project_presented_entities(
+                () if self.presented_context_provider is None
+                else self.presented_context_provider(conversation.id)
+            ),
         )
         try:
             response = self.router.generate(request)
@@ -1077,6 +1104,7 @@ class ConversationService:
             and resolved_read_result is None
             and document_receipt is None
             and allow_capability_routing
+            and conversation.space == "ordinary"
             and self.passive_memory_service is not None
         ):
             self.passive_memory_service.observe_safely(
@@ -1261,6 +1289,32 @@ class ConversationService:
         proposal = handler.proposal_store.current_for_conversation(conversation_id)
         if proposal is None:
             return None
+        if proposal.operation in {"google_calendar_create", "google_calendar_update"}:
+            # Let the existing owner recognize ALL of its decision forms first.
+            response = self._resolve_proposal_with_owner(proposal, message, project_id=project_id)
+            if response is not None:
+                return response
+            service = getattr(self, _PROPOSAL_CONFIRMATION_SERVICE_BY_OPERATION[proposal.operation])
+            if service is not None and self.dialogue_core is not None:
+                from .proposal_revision import revise_pending_calendar
+
+                response = revise_pending_calendar(
+                    service, proposal, message, engine=self.dialogue_core.engine,
+                    temporal_engine=self.temporal_engine,
+                )
+                if response is not None:
+                    self.last_response_projection_state = "waiting_confirmation"
+                return response
+            return None
+        if self.dialogue_core is not None:
+            from .proposal_revision import revise_pending_reminder
+
+            revised = revise_pending_reminder(
+                handler, proposal, message, engine=self.dialogue_core.engine,
+            )
+            if revised is not None:
+                self.last_response_projection_state = "waiting_confirmation"
+                return revised
         return self._resolve_proposal_with_owner(
             proposal,
             message,
@@ -1553,25 +1607,22 @@ class ConversationService:
 
     @staticmethod
     def _model_history_message(message) -> ModelMessage:
+        if message.origin is ConversationMessageOrigin.APPLICATION:
+            return ModelMessage(role=message.role.value, content=json.dumps({
+                "source": "home_application_history",
+                "recorded_at": message.created_at.isoformat(),
+                "text": message.content,
+            }, ensure_ascii=False))
         return ModelMessage(role=message.role.value, content=message.content)
 
     def _model_history(self, conversation_id: str) -> tuple[ModelMessage, ...]:
-        """Return prose context that cannot contradict application-owned state.
+        """Keep bounded dialogue continuity, with dated application provenance.
 
-        Application readouts intentionally remain out of the model prompt.  A
-        user command immediately preceding such a readout cannot be replayed
-        by itself: it would invite the model to invent whether the mutation
-        succeeded.  The application state injected through Recall is the sole
-        authority after an application boundary.
+        Past messages describe the conversation, not a new execution request.
+        Current proposal/receipt owners and the response guard retain authority.
         """
         messages = self.history.messages(conversation_id, limit=self.history_limit)
-        last_application = max(
-            (index for index, message in enumerate(messages)
-             if message.origin is ConversationMessageOrigin.APPLICATION),
-            default=-1,
-        )
         return tuple(
             self._model_history_message(message)
-            for message in messages[last_application + 1 :]
-            if message.origin is not ConversationMessageOrigin.APPLICATION
+            for message in messages
         )

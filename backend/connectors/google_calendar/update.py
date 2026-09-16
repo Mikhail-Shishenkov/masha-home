@@ -21,6 +21,7 @@ from backend.runtime.action_contracts import (
 )
 
 from .config import GoogleCalendarConfigStore
+from .service import present_verified_event
 from .network import GoogleCalendarNetworkBlocked, assert_google_network_allowed
 from .reader import (
     GoogleCalendarHttpFailure, GoogleCalendarReconnectRequired,
@@ -275,6 +276,8 @@ class GoogleCalendarUpdater:
                 return "failed", existing
             if existing.status == "verified":
                 return "verified", existing
+            if existing.status == "rejected":
+                return "rejected", existing
             if existing.status == "updated_unverified":
                 return self._reconcile(existing)
         if self._blocked():
@@ -479,9 +482,10 @@ class GoogleCalendarUpdater:
 
 
 class GoogleCalendarUpdateConversationService:
-    def __init__(self, *, proposal_store: MemoryProposalStore, updater: GoogleCalendarUpdater):
+    def __init__(self, *, proposal_store: MemoryProposalStore, updater: GoogleCalendarUpdater, presented_read_sets=None):
         self.proposal_store = proposal_store
         self.updater = updater
+        self.presented_read_sets = presented_read_sets
 
     def propose(self, message: str, *, conversation_id: str, now_local: datetime):
         intent = calendar_update_intent(message, now_local)
@@ -630,9 +634,15 @@ class GoogleCalendarUpdateConversationService:
             self.updater.reject(operation)
             self.proposal_store.set_status(proposal.id, ProposalStatus.CANCELLED)
             return "Хорошо, ничего в календаре не меняю."
-        status, _ = self.updater.update_and_verify(operation)
+        status, receipt = self.updater.update_and_verify(operation)
+        if status in {"updated_unverified", "conflict", "target_missing"} and self.presented_read_sets is not None:
+            self.presented_read_sets.discard(conversation_id, owner="google_calendar")
         if status == "verified":
             self.proposal_store.set_status(proposal.id, ProposalStatus.CONFIRMED)
+            present_verified_event(
+                self.presented_read_sets, conversation_id, receipt=receipt,
+                event_id=receipt.operation.provider_event_id, state=receipt.operation.desired,
+            )
             return f"Готово: «{operation.desired.title}» обновила в Основном календаре."
         if status == "updated_unverified":
             return "Изменение могло примениться, но я пока не смогла его проверить. Повторно не перезаписываю событие."

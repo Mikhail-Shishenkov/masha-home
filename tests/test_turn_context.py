@@ -144,6 +144,27 @@ def test_turn_context_limits_payload_sizes():
         )
 
 
+def test_historical_recall_is_not_relabelled_as_active_language_context():
+    from copy import deepcopy
+    historical = tuple({
+        "category": "дело", "content": f"Прошлая запись {index}",
+        "state": state, "time": "2026-08-20",
+    } for index, state in enumerate((
+        "завершено", "отменено", "заменено более новым", "пересмотрено",
+        "забыто", "unknown-state",
+    )))
+    current = {"category": "решение", "content": "Учиться по вечерам",
+               "state": "актуально", "time": "2026-08-29"}
+    records = historical + (current,)
+    original = deepcopy(records)
+    envelope = TurnContextEnvelopeBuilder().build(
+        temporal_context=temporal_context(), memory_context=records,
+    )
+    assert [hint.content for hint in envelope.memory_hints] == [current["content"]]
+    assert envelope.memory_hints[0].time_text == current["time"]
+    assert records == original  # The separate answer/recall context is untouched.
+
+
 def test_builder_projects_real_home_types_without_storage_identity():
     now = datetime(2026, 8, 29, 9, 30, tzinfo=timezone.utc)
     message = ConversationMessage(
@@ -197,6 +218,23 @@ def test_builder_projects_real_home_types_without_storage_identity():
     assert "internal-message-id" not in serialized
     assert "internal-conversation-id" not in serialized
     assert "must-not-cross-boundary" not in serialized
+
+
+def test_transcript_origin_survives_projection_without_becoming_authority():
+    now = datetime(2026, 9, 15, 9, tzinfo=timezone.utc)
+    messages = tuple(ConversationMessage(
+        id=f"private-{origin.value}", conversation_id="private-conversation",
+        role=ConversationRole.USER if origin == ConversationMessageOrigin.USER else ConversationRole.ASSISTANT,
+        origin=origin, content="Запись в календаре", created_at=now,
+    ) for origin in ConversationMessageOrigin)
+    context = TurnContextEnvelopeBuilder().build(
+        temporal_context=temporal_context(), recent_messages=messages,
+    )
+    assert [item.origin for item in context.recent_turns] == list(ConversationMessageOrigin)
+    assert all(item.occurred_at == now for item in context.recent_turns)
+    assert context.last_application_result is None
+    assert context.presented_entities == ()
+    assert "private-" not in context.model_dump_json()
 
 
 def test_previous_application_result_is_bounded_context_not_authority():
