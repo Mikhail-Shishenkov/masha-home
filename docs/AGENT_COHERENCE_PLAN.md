@@ -565,3 +565,25 @@ full rerun. Production model configuration and private runtime data are excluded
 Overall: unified context and action boundaries implemented; replacement semantic
 path in evaluation; relative-time field quality and multi-turn live acceptance
 still incomplete. This branch is a recoverable work checkpoint, not a release.
+
+## Resume on 2026-09-22 — gentle continuity, not phrase polishing
+
+User asked Masha to recommend how ordinary cross-chat continuity should feel
+and preserve that recommendation here. Recommended default: remember relevant
+unfinished topics and occasionally bring back one naturally, without turning
+each greeting into a task review. Do not resurface sensitive/forgotten topics or
+mix Special Evening into ordinary conversations. "Не сейчас" must be respected;
+ask when a remembered fact may be outdated rather than presenting it as current.
+
+Keep provenance, dated memory, Saratov time, current topic, selected real objects,
+pending requests and verified action results application-owned and independent
+of the selected model. Model promises are not receipts. Complete model-independence
+of language quality is not possible; switching models must not erase continuity.
+This is a conversational UX direction, NOT authority for background network,
+notifications, scheduling, or autonomous mutations. No new scheduler requested.
+
+On September 22 resume with small COMPLETE dialogue journeys: reference to an
+earlier result -> clarification/correction -> confirmation -> verified outcome;
+then a new ordinary chat recalling a relevant unfinished topic. Avoid command
+phrase collections and polishing isolated examples. Relative-time extraction
+and full live acceptance remain open. No automation/reminder was created here.
