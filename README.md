@@ -21,10 +21,10 @@ Masha Home — local-first персональная AI-система для о�
 1. [Конституция](CONSTITUTION.md) — продуктовые и человеческие принципы.
 2. [Current State](docs/CURRENT_STATE.md) — фактический implementation/release status на сегодня.
 3. [Архитектурный канон](docs/MASHA_HOME_CANON.md) — стабильная модель Дома и архитектурные границы.
-4. [Журнал решений](docs/DECISIONS.md) — принятые и superseding решения.
+4. [Журнал решений](docs/DECISIONS.md) + [coherence addendum](docs/DECISIONS_COHERENCE_ADDENDUM.md) — принятые и superseding решения.
 5. [Memory contract](docs/MEMORY_SPEC.md) — нормативная модель долговременной памяти.
 6. [Dialogue / Action lifecycle](docs/DIALOGUE_ACTION_LIFECYCLE.md) — разделение meaning, proposal, confirmation, operation и receipt.
-7. [Agent Coherence Plan](docs/AGENT_COHERENCE_PLAN.md) — active continuation capsule незавершённой рабочей ветки.
+7. [Agent Coherence Plan](docs/AGENT_COHERENCE_PLAN.md) — active resume capsule незавершённой рабочей ветки.
 8. [Карта документации](docs/README.md) — где лежат остальные контракты и исторические материалы.
 
 Текущий код, `CURRENT_STATE.md` и подтверждённые checkpoint-ы имеют приоритет над историческими roadmap/snapshot документами.
