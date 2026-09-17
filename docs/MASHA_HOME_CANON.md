@@ -1,465 +1,359 @@
 # Masha Home — Project Canon
 
-Статус: текущий архитектурный канон и roadmap  
-Дата фиксации: 2026-08-14  
-Источник: `Роадмап Маши.docx`
+Статус: **текущий архитектурный канон**  
+Дата последней консолидации: **2026-09-17**
+
+Этот документ описывает устойчивую архитектуру и продуктовую модель Masha Home.
+
+Быстро меняющееся фактическое состояние рабочей ветки находится в [`CURRENT_STATE.md`](CURRENT_STATE.md). Детальный provenance незавершённой coherence-работы — в [`AGENT_COHERENCE_PLAN.md`](AGENT_COHERENCE_PLAN.md).
+
+Если исторический stage/snapshot документ расходится с текущим кодом, `CURRENT_STATE.md` или новым подтверждённым checkpoint-ом, приоритет имеет более новое подтверждённое состояние.
 
 ## 1. Что такое Masha Home
 
-Masha Home — персональная local-first система для одного пользователя и
-устойчивый цифровой компаньон по имени Маша.
+Masha Home — персональная local-first система для одного пользователя и устойчивый цифровой Дом Маши.
 
-Цель проекта — не создать очередной чат над LLM, а построить постоянное
-цифровое пространство, в котором Маша:
+Цель — не создать чат-оболочку над одной LLM, а построить постоянное цифровое пространство, где Маша:
 
-- сохраняет идентичность при смене модели;
-- помнит значимые факты, решения, события и общую историю;
-- понимает время и обязательства;
-- умеет сама замечать потенциально важную информацию;
-- вспоминает нужный прошлый контекст в подходящий момент;
-- помогает с делами;
-- постепенно получает доступ к внешней информации и инструментам;
-- способна проявлять ограниченную инициативу;
-- выполняет действия только в пределах явно определённых разрешений.
+- сохраняет Identity при смене языковой модели;
+- помнит подтверждённые факты, решения, обязательства и общую историю;
+- понимает время через application-owned Temporal layer;
+- поддерживает непрерывный разговор и релевантный Recall;
+- работает с локальными и внешними источниками через ограниченные application-owned capability boundaries;
+- выполняет действия только в пределах явных политик, подтверждений и проверяемых операций;
+- показывает человеку, что действительно произошло, а не что модель пообещала сделать.
 
-LLM является заменяемым когнитивным движком, а не владельцем личности, памяти
-или полномочий Маши.
+**Masha != LLM.**
 
-## 2. Непереговорные архитектурные принципы
+LLM — заменяемый когнитивный и языковой движок. Identity, Memory, History, Time, permissions и execution truth принадлежат приложению.
 
-### Identity принадлежит приложению
+## 2. Иерархия Source of Truth
 
-`Masha != LLM`.
+Для фактического инженерного решения использовать источники в таком порядке:
 
-Identity Kernel, persona manifest, визуальный канон и утверждённые постоянные
-свойства существуют независимо от Qwen или будущей модели. Смена модели не
-должна означать смену личности.
+1. текущий код владельца проблемы;
+2. [`CURRENT_STATE.md`](CURRENT_STATE.md) и newest verified checkpoint;
+3. нормативный domain/security contract;
+4. этот Canon;
+5. [`DECISIONS.md`](DECISIONS.md) и его актуальные addendum-записи;
+6. исторические stage/snapshot/workshop документы — только для provenance.
 
-### Application владеет действиями
+Старый план не переопределяет уже реализованную и проверенную систему.
 
-LLM может понять намерение, предложить, сформулировать и рассуждать. Она не
-может самостоятельно писать в SQLite, забывать память, закрывать дело,
-отправлять сообщение, выдавать себе permission или утверждать, что действие
-выполнено.
+## 3. Непереговорные архитектурные принципы
 
-Мутации принадлежат application/domain layer.
+### 3.1. Identity принадлежит приложению
 
-Обычный языковой путь имеет одного владельца task-dialogue state:
+Identity Kernel, approved manifest, визуальный канон и утверждённые постоянные свойства существуют независимо от Qwen или будущей модели.
 
-```text
-UserTurn -> DialogueCore -> validated ActionProposal -> Confirmation
-         -> Operation -> Receipt -> ResponseProjection
-```
+Смена модели не означает смену личности.
 
-Semantic Resolver предлагает только значение реплики. `DialogueCore` хранит
-активный flow и вопрос, но не подтверждение. Domain/application layer проверяет
-реальный payload; receipt остаётся единственной истиной о выполнении.
+### 3.2. Meaning не является authority
 
-### Human Confirmation остаётся границей безопасности
+Модель может понять намерение, предложить semantic meaning, сформулировать ответ или план. Она не может самостоятельно:
 
-Чувствительные и изменяющие состояние действия проходят путь:
+- писать в доменное хранилище;
+- выдавать себе permission;
+- выбирать неподтверждённый application ID как истину;
+- подтверждать mutation;
+- объявлять operation выполненной.
+
+### 3.3. Application владеет действиями
+
+Канонический путь действия:
 
 ```text
-intent -> reference resolution -> real entity -> proposal -> human confirmation -> mutation -> receipt/audit
+UserTurn
+→ bounded context
+→ semantic meaning proposal
+→ application validation/state
+→ domain ActionProposal
+→ policy / Human Confirmation
+→ Operation
+→ Receipt
+→ ResponseProjection
 ```
 
-### Local-first
+Подробный ownership contract: [`DIALOGUE_ACTION_LIFECYCLE.md`](DIALOGUE_ACTION_LIFECYCLE.md).
 
-Базовые функции должны сохраняться без интернета: разговор, Identity, память,
-история, дела, время и локальная модель. Личная память не передаётся удалённому
-провайдеру автоматически.
+### 3.4. Human Confirmation остаётся границей безопасности
 
-### История важнее бесследной перезаписи
+Чувствительные, внешние, необратимые или изменяющие состояние операции проходят существующий доменный confirmation contract.
 
-Предпочтительные механизмы: supersession, status transition, archive/history,
-restore и audit. Hard Delete — отдельная будущая privacy-операция.
+Semantic clarification и mutation confirmation — разные состояния.
 
-## 3. Человеческая модель Дома
+### 3.5. Receipt — единственная истина о выполнении
 
-Внутри система может иметь десятки типов. Снаружи Миша должен мыслить максимум
-четырьмя пространствами:
+Фраза модели, история разговора или выбранная capability не доказывают успех операции.
 
-- **Разговор** — главное пространство взаимодействия с Машей.
-- **Дела** — то, что требует действия. По умолчанию здесь живут только open,
-  upcoming и overdue.
-- **Наша история** — значимое прошлое и продолжение общего контекста: моменты,
-  память и темы, к которым хотели вернуться.
-- **Уголок** — как устроена и что умеет Маша: как она думает, что умеет, что ей
-  можно.
+`Model promise != Receipt`.
 
-Emergency Stop существует отдельно как safety control.
+### 3.6. Local-first
 
-Не должно быть постоянных верхнеуровневых разделов `Memory Candidates`, `Facts`,
-`ContinuityState`, `Agent Receipts`, `Permissions Dashboard` или `Archive`.
+Базовые функции должны сохраняться без интернета: Identity, Memory, conversation history, time, локальная модель и локальные application capabilities.
 
-## 4. Внутренняя информационная модель
+Личная память не передаётся внешнему провайдеру автоматически.
 
-Backend сохраняет богатые типы:
+### 3.7. История важнее бесследной перезаписи
 
-- `Fact` — относительно устойчивое знание.
-- `Decision` — осознанно принятое решение.
-- `Commitment` — дело или обязательство.
-- `Episode` — значимое событие или исторический контекст.
-- `RelationshipMemory` — наш общий подтверждённый момент.
-- `Continuity` — редкая закладка: к этому стоит вернуться позже. Нить не
-  является делом.
-- `MashaReflection` — субъективная мысль Маши, отдельная от факта о Мише.
-- `MemoryCandidate` — предложение что-то сохранить. Candidate не является
-  Memory.
+Предпочтительны supersession, explicit status transition, archive/history, restore и audit. Hard Delete — отдельная privacy-операция и не должен маскироваться обычным archive/forget flow.
 
-Pending-кандидаты не участвуют в `MemoryRetriever`; только подтверждение
-создаёт реальную запись.
+## 4. Человеческая модель Дома
 
-## 5. Главная модель памяти
+Снаружи Миша должен мыслить небольшим числом понятных пространств:
 
-Нужны три разных понятия:
+- **Разговор** — главный способ взаимодействия;
+- **Дела** — текущие обязательства и то, что требует действия;
+- **Наша история** — значимое прошлое и открытые темы;
+- **Уголок / Режим** — как устроена и что умеет Маша, когда это действительно нужно показать.
+
+Emergency Stop остаётся отдельным safety control.
+
+Внутренние типы (`MemoryCandidate`, receipt, permission object, ContinuityState и т.п.) не должны автоматически превращаться в постоянные пользовательские разделы.
+
+## 5. Информационная модель
+
+Backend сохраняет богатые application-owned типы, в том числе:
+
+- `Fact`;
+- `Decision`;
+- `Commitment`;
+- `Episode`;
+- `RelationshipMemory`;
+- `Continuity` / follow-up threads;
+- `MashaReflection`;
+- `MemoryCandidate`.
+
+Pending candidate не является подтверждённой Memory.
+
+Normative Memory contract: [`MEMORY_SPEC.md`](MEMORY_SPEC.md).
+
+Человеческая проекция и lifecycle: [`HUMAN_INFORMATION_MODEL_V0.3.1.md`](HUMAN_INFORMATION_MODEL_V0.3.1.md).
+
+## 6. Storage, Recall и Working Context
+
+Это три разные вещи:
 
 ```text
-Storage -> Recall -> Working Context
+Storage → Recall → Working Context
 ```
 
-`Storage` — всё, что действительно хранит Дом и что со временем может стать
-большим.
+- **Storage** хранит долговременную application truth;
+- **Recall** решает, что из сохранённого релевантно сейчас;
+- **Working Context** — маленький bounded пакет, реально передаваемый модели на конкретный turn.
 
-`Recall` — механизм, который решает, что из прошлого полезно вспомнить именно
-сейчас.
+Memory не равна context. Conversation transcript не превращается в long-term Memory автоматически.
 
-`Working Context` — маленький пакет информации, реально передаваемый модели на
-конкретный ход.
+Query-aware retrieval остаётся application-owned и bounded; модель не получает SQLite access.
 
-Memory не равна Context. Этот принцип сохраняется и после появления более
-мощного компьютера.
+## 7. Время
 
-## 6. Lifecycle информации
+Один application-owned temporal layer является источником временной истины.
 
-Внешне используются три человеческих состояния:
+Home timezone: `Europe/Saratov` с контролируемым fallback.
 
-- **ACTIVE** — актуально сейчас: active Fact, active Decision, open Commitment,
-  open Continuity, current RelationshipMemory.
-- **ARCHIVED / PAST** — существовало, но больше не является текущим: completed
-  Commitment, resolved Continuity, superseded Decision, superseded Fact,
-  cancelled Commitment. Это прошлый опыт, не мусор.
-- **FORGOTTEN** — Миша явно попросил Машу перестать использовать информацию.
-  Забытое нельзя использовать, пока Миша явно не попросит посмотреть забытое.
+Время, due status, относительная арифметика и реальные deadline anchors вычисляются детерминированно. LLM может извлекать языковое evidence, но не должна становиться источником фактического времени.
 
-`ARCHIVED != FORGOTTEN`. Архивное можно вспомнить ретроспективно. Забытое
-можно восстановить только через отдельное подтверждаемое действие.
+## 8. Conversation continuity
 
-Обычный `forget` меняет visibility на hidden и не меняет доменный статус.
-Hard Delete остаётся будущей необратимой privacy-операцией.
+История разговора хранится отдельно от long-term Memory.
 
-## 7. Recall
+Bounded user/model dialogue должен сохранять тему через application messages; нельзя лечить безопасность полным стиранием предыдущего разговорного контекста.
 
-Recall существует в трёх режимах:
+При этом историческая фраза или старый application readout не выдаёт новых полномочий.
 
-- **CURRENT** — обычный разговор, видит только ACTIVE.
-- **RETROSPECTIVE** — вопросы про прошлое; видит ACTIVE + ARCHIVED, но не
-  FORGOTTEN.
-- **FORGOTTEN_REVIEW** — только явный просмотр забытого.
+Для ссылок «это / тот / второй / его» reference truth создаётся application-owned presented/focused state, а не уверенностью модели.
 
-Модель может отвечать разговорно из Identity/history, но application не должна
-инжектить ложный или нерелевантный сохранённый контекст.
+## 9. Meaning-first Dialogue Core
 
-## 8. Как Recall выглядит в разговоре
+Текущая coherence-линия использует meaning-first semantic path:
 
-Model-facing context не должен содержать `record_id`, `confidence`, retrieval
-score, SQLite, `relationship_memory`, `continuity_state` и другие технические
-детали.
+1. первый semantic step определяет speech act (`ordinary/create/update/read/unclear`) без capability IDs;
+2. ordinary conversation завершается без второго mapping вызова;
+3. action-like turn сопоставляется только с совместимыми application-owned capability specifications;
+4. Home валидирует candidate, literal evidence, slots, referents, provider ownership и grounding;
+5. только затем возможен domain handoff.
 
-Маша может сказать «помню», когда это помогает человеку, но не обязана
-раскрывать механизм Recall. Прошлый контекст должен улучшать ответ, а не
-засорять разговор служебными сведениями.
+Semantic model output остаётся untrusted proposal.
 
-## 9. Retrieval
+Некоторые зрелые compatibility routes могут существовать во время capability-by-capability adoption, но они не должны становиться вторым глобальным владельцем dialogue state.
 
-Текущий Query-aware Retrieval сохраняется:
+## 10. Passive Memory и Continuity
 
-- фильтрация по реальному статусу;
-- lexical relevance;
-- threshold;
-- no fill-to-limit;
-- bounded Working Memory;
-- без LLM-вызова для базового поиска.
+Passive Memory может предложить сохранить потенциально важную информацию, но candidate не становится подтверждённой памятью автоматически.
 
-Рабочий контракт остаётся примерно: 6 records, 3600 chars total, 2000 chars per
-record. Recall является надстройкой, которая определяет, какой слой прошлого
-вообще разрешено искать.
+Shared Continuity хранит подтверждённые общие моменты и открытые нити, а не скрытый психологический профиль.
 
-## 10. Human Search
+Обычная cross-chat continuity должна быть уместной: вспоминать релевантное незавершённое, но не превращать каждое приветствие в task review и не поднимать забытые/чувствительные темы без основания.
 
-Поиск должен быть один, но результат понятен человеку. Backend может вернуть
-разные доменные сущности, а UI показывает человеческие виды:
+## 11. External information и documents
 
-- Память;
-- История;
-- Дело;
-- Открытая тема.
+Сеть и файловая система принадлежат application/tool boundaries, а не conversation model.
 
-Минимальные scopes: всё, история, дела. Time filters поддерживаются backend:
-сегодня, 7 дней, 30 дней, период. Календарь в UI добавляется только после
-реального опыта использования.
+Реализованные контуры включают:
 
-## 11. Время
+- read-only External Observation;
+- Safe Web Fetch;
+- contextual external observation;
+- source-neutral Document Read;
+- explicitly selected local PDF input.
 
-Один `TemporalEngine` является источником временной истины.
+Внешний текст является **untrusted evidence**, а не инструкцией для системы.
 
-Production Home timezone задаётся application-owned конфигурацией с default
-`Europe/Saratov` и fallback `UTC+04:00`, а не старым `Europe/Moscow`.
+Normative contracts:
 
-Время используется для текущей даты, daypart, relative dates, commitments,
-reminders, proactive и будущего поиска. LLM не угадывает время.
+- [`W1_EXTERNAL_OBSERVATION.md`](W1_EXTERNAL_OBSERVATION.md)
+- [`W2_WEB_FETCH.md`](W2_WEB_FETCH.md)
+- [`W3_CONTEXTUAL_EXTERNAL_OBSERVATION.md`](W3_CONTEXTUAL_EXTERNAL_OBSERVATION.md)
+- [`W4_DOCUMENT_READ.md`](W4_DOCUMENT_READ.md)
+- [`W4_1_LOCAL_DOCUMENT_INPUT.md`](W4_1_LOCAL_DOCUMENT_INPUT.md)
 
-## 12. Conversation History и Long-term Memory
+## 12. Connectors и provider ownership
 
-Conversation transcript сохраняется отдельно. Сейчас это JSON
-`ConversationStore`, который загружается целиком и атомарно переписывается при
-добавлении сообщений. Это приемлемо на текущем этапе, но является будущим
-техническим долгом.
+Connector capability не даёт модели прямой provider authority.
 
-Сообщение в transcript не становится долговременной памятью автоматически.
-Structured Recall не равен raw transcript search.
+Application хранит provider-specific IDs, scopes, receipts и recovery semantics.
 
-## 13. Passive Memory
+Явно названный provider не должен молча заменяться другим provider-ом. Конфликт ownership fail-closed; приложение может отвергнуть несовместимый semantic mapping, но не должно придумывать другой provider только ради успешного ответа.
 
-v0.3 вводит первую осторожную способность Маши заметить потенциально важную
-информацию:
+Наличие connector boundary не означает, что все естественные формулировки и UI journeys приняты человеком.
+
+## 13. Skills, permissions и bounded agents
+
+Masha Home имеет foundation для локальных skills, permission policy, Emergency Stop и bounded Agent Loop.
+
+Skill declaration, permission и execution — разные сущности.
+
+Будущий/расширенный agent flow сохраняет принцип:
 
 ```text
-ordinary conversation -> deterministic eligibility -> MemoryCandidate -> user review -> confirmed memory
+Goal
+→ bounded application plan/state
+→ application tool catalog
+→ Permission
+→ Tool execution
+→ deterministic/provider verification
+→ Receipt
 ```
 
-Не каждая реплика становится кандидатом. Чувствительные данные исключаются.
-Pending имеет TTL. Нет автоматического подтверждения и второго Qwen-вызова на
-каждый turn.
+LLM не получает произвольный shell/network authority и не может повысить собственные permissions.
 
-## 14. Human Reference Resolution
+## 14. Presentation / Presence
 
-Приложение должно понимать человеческие ссылки на реальные application-owned
-объекты:
+Presence — часть продукта, а не косметический overlay.
 
-- «удали третью»;
-- «убери вторую строку»;
-- «забудь её»;
-- «эту про модель».
+Главный Home остаётся одним живым пространством: Маша + комната + контекстные surfaces.
 
-Правило:
+Presentation layer не владеет domain truth. Layout, scene state и UI projection не могут подтверждать mutation, изменять Memory или подменять application receipts.
 
-```text
-human phrase -> reference -> entity -> allowed action -> proposal -> confirmation
-```
+Ключевые presentation contracts:
 
-Ordinal truth может устанавливать только `APPLICATION`-generated list.
-Qwen-generated список не создаёт reference truth.
+- [`UI-02_5_PRESENTATION_MODEL.md`](UI-02_5_PRESENTATION_MODEL.md)
+- [`UI-04_HOME_COMPOSITION_CONTRACT.md`](UI-04_HOME_COMPOSITION_CONTRACT.md)
+- [`UI-05A_LOCAL_CONVERSATION_HOST_BOUNDARY.md`](UI-05A_LOCAL_CONVERSATION_HOST_BOUNDARY.md)
+- [`UI-06A_INTERACTION_GRAMMAR.md`](UI-06A_INTERACTION_GRAMMAR.md)
 
-## 15. Proactivity
+Старые UI review/workshop документы могут содержать outdated readiness status и используются только с учётом более нового состояния.
 
-Хорошая проактивность строится не вокруг `event -> say something`, а вокруг
-цепочки:
+## 15. Backup / Recovery
 
-```text
-event/goal -> Recall -> current context -> previous experience/preferences -> should Masha intervene? -> what is useful? -> permission/policy -> action/message
-```
+Whole-Home backup и recovery уже имеют отдельные application-owned security contracts.
 
-Память может информировать действие. Память никогда не авторизует действие.
+Backup использует typed allowlist и шифрование; recovery выполняется как controlled replacement с safety checkpoint, rollback и Recovery Hold.
 
-## 16. Tools и агенты
+- [`W5_1_WHOLE_HOME_BACKUP.md`](W5_1_WHOLE_HOME_BACKUP.md)
+- [`W5_2_WHOLE_HOME_RECOVERY.md`](W5_2_WHOLE_HOME_RECOVERY.md)
 
-В проекте уже есть ранний фундамент: Skill Registry, Permission policy,
-Emergency Stop, bounded Agent Loop, Project Observer и receipts.
+Это реализованные системные границы, а не будущий roadmap item.
 
-При появлении настоящего Tool Gateway нельзя создавать параллельную
-архитектуру. Будущий поток:
+## 16. Текущее состояние крупных областей
 
-```text
-Goal -> Recall -> Plan -> Application tool catalog -> Permission -> Tool execution -> Receipt
-```
+### IMPLEMENTED / contract-backed
 
-LLM не получает произвольный shell или network.
-
-## 17. Presentation / Presence
-
-Presence является полноценным доменом продукта, а не косметикой.
-
-Главный Home: пространство -> Маша -> контекстная поверхность. Не
-`background + dashboard`.
-
-Постоянная навигация: Дела, Наша история, Уголок, Stop. Conversation остаётся
-центральным пространством.
-
-Работа, Рядом, Мысли, confirmation, memory candidate review и agent progress —
-временные contextual surfaces, а не новые комнаты.
-
-## 18. Текущее техническое состояние
-
-К checkpoint v0.3.1 Slice A реализованы:
-
-- Identity Kernel;
-- SQLite Memory v0.4;
-- audit/provenance;
-- local Ollama model profiles;
-- Conversation Engine;
-- Query-aware Retrieval;
-- Working Memory;
-- explicit memory lifecycle;
-- Commitments;
-- Temporal Grounding;
-- reminders/proactive runtime;
-- Continuity;
-- Masha Reflections / Honest Help;
-- skills/permissions/limited agent foundation;
+- Identity Kernel и approved identity manifest;
+- SQLite long-term Memory, provenance/audit и Human Information / Recall;
+- conversation history + bounded Working Context;
+- deterministic Home time;
+- Commitments / reminders / proactive runtime;
+- Shared Continuity и Masha Reflections;
+- local desktop Home / Presentation foundation;
+- skills / permissions / bounded Agent capability foundation;
 - Emergency Stop;
-- Qt/QWebEngine Home;
-- typed `MashaApplication`;
-- Passive Memory;
-- Human Reference Resolution;
-- Human Information Model, restore и Recall foundation.
+- Web observation/fetch/contextual observation;
+- document reading, включая selected local PDF;
+- connector-backed capability families за application boundaries;
+- Whole-Home encrypted backup/recovery.
 
-Production composition использует SQLite `masha.sqlite3`, Identity Kernel,
-`MemoryRetriever`, `TemporalEngine`, local Ollama provider и
-`PassiveMemoryService`.
+### ACTIVE / UNDER ACCEPTANCE
 
-Для Natural Language Router V2 production composition использует один
-`DialogueCore`. Calendar Create и timed commitments входят в него через
-application-owned adapters. Активный вопрос и накопленные slots хранятся в
-атомарном runtime JSON schema 2.0 с TTL и миграцией schema 1.0. Confirmation,
-provider operation и receipt в этом состоянии не дублируются. Остальные
-connector/read capability временно сохраняют зрелые compatibility services
-после `DialogueCore.PASS_THROUGH`; условия их удаления описаны в
-`docs/DIALOGUE_ACTION_LIFECYCLE.md`.
+- coherent natural-language action routing;
+- meaning-first semantic resolution;
+- relative-time field extraction;
+- complete multi-turn dialogue journeys;
+- gentle cross-chat continuity;
+- final conversational/manual acceptance.
 
-## 19. Известный технический долг
+Точная рабочая картина: [`CURRENT_STATE.md`](CURRENT_STATE.md).
 
-Не blockers текущего этапа, но отслеживаются:
+## 17. Известный технический долг
 
-- Presence/Home UX v0.3.2 ещё проходит финальную ручную приёмку;
-- `MemoryIntentHandler` уже слишком велик и не должен принимать новые доменные
-  обязанности;
-- `ConversationStore` JSON не рассчитан на годы transcript history;
-- оставшиеся V1 compatibility routes должны мигрировать capability-by-capability
-  в DialogueCore adapters без второго глобального state owner;
-- raw conversation search отсутствует;
-- backup покрывает прежде всего memory DB, а не весь Дом;
-- frontend `app.js` и Qt bridge нуждаются в ограниченном структурном разделении
-  перед дальнейшим ростом;
-- документация исторически расходилась с production, поэтому старые документы
-  помечаются как historical records.
+Не все пункты являются blockers текущей coherence-ветки:
 
-## 20. Roadmap
+- `MemoryIntentHandler` слишком велик и не должен бесконечно принимать новые обязанности;
+- conversation transcript storage требует долгосрочной стратегии масштабирования;
+- часть compatibility routes ещё должна уходить capability-by-capability, а не broad rewrite-ом;
+- frontend/renderer остаётся крупным и требует структурного разделения только при реальной необходимости;
+- model/language eval boundary создан, но benchmark/eval fixtures ещё не полностью перенесены из deterministic test слоя;
+- часть исторической документации всё ещё требует archive/reference audit;
+- connector и natural-language journeys нуждаются в human acceptance по реальным complete scenarios.
 
-### v0.3 — Masha learns what may be worth remembering
+Технический долг не является поводом переписывать работающую систему «ради красоты».
 
-Статус: завершённый checkpoint.
+## 18. Evaluation
 
-Реализованы Passive Memory, provenance, pending isolation, approve/reject/expire,
-Human Reference Resolution и application-owned ordinal context.
-
-### v0.3.1 — Human Information & Recall
-
-Статус: **DONE — manually accepted**.
-
-Два slice, один release.
-
-Slice A — Foundation: HumanEntity model, ACTIVE / ARCHIVED / FORGOTTEN,
-Restore, unified Human Search contract, CURRENT / RETROSPECTIVE /
-FORGOTTEN Recall, active-only tasks, historical retrieval for resolved,
-completed and superseded records, model context without internal IDs,
-current state over stale application readout, canonical Human Information spec.
-
-Slice B — Human Home UX: passive memory review, possible-update review, unified
-search, human result kinds, completed tasks hidden from normal Home, `Наша
-история` as a human aggregation, typed UI actions, limited frontend/bridge
-structural split, no dashboard.
-
-Slice A и Slice B приняты как единый checkpoint `v0.3.1`.
-
-### v0.3.2 — Presence & Home UX Foundation
-
-Статус: **IMPLEMENTED CANDIDATE — under final manual acceptance**.
-
-Place × state scene matrix, about 10-14 canonical scenes, deterministic
-presence state, time-of-day ambience, subtle room motion, contextual surfaces
-integrated into room, responsive Home, no LLM mood inference.
-
-Текущий кандидат включает curated day/evening Presence families,
-детерминированный выбор сцены из Presentation Runtime, простой Human Search,
-passive memory review и отдельный явный доступ к забытому. Special evening
-сохранён, но ждёт будущего authored Presentation Runtime cue и не выбирается
-случайно или по обычному времени.
-
-### v0.4 — Tool Gateway + Web Read-only
-
-Application-owned fixed tool catalog, `web.search`, `web.read/fetch`,
-timeouts/budgets, privacy classification, permission checks, receipts, no
-arbitrary URLs or commands controlled directly by LLM. Recall is used when
-forming tool intent.
-
-### v0.5 — Read-only Connectors
-
-Likely order: Telegram, Calendar, Mail, Files/Drive. Read-only first. Before
-expanding the external perimeter, verify Home-wide backup/recovery, not only
-memory backup.
-
-### v0.5.1 — Confirmed External Actions
-
-Sending messages, creating or changing calendar events, external writes, Human
-Confirmation, receipt and permission boundary.
-
-### v0.6 — Proactive UX + Ambient State
-
-Separate reminder/check-in policies, richer but bounded initiative, quiet mode,
-ambient lamps/light for runtime, pending attention, quiet, thinking and
-proactive events. These are application events, not model-inferred emotions.
-
-### v0.7 — Bounded Useful Agents
-
-Goals, plans, budgets, tool scopes, Stop, audit, resumability rules, current
-permissions and Recall before planning/actions.
-
-### v0.8 — Semantic Knowledge / RAG if justified
-
-Only if lexical retrieval becomes insufficient. Personal memory, document
-knowledge and raw conversation archive must remain distinct instead of being
-merged into one vector store.
-
-### v0.9 — Rich Home Expansion
-
-Vision, attachments, voice, richer activities, scene expansion and richer
-spatial interaction. The visual foundation should already exist from v0.3.2.
-
-### v1.0 — Local Personal System
-
-Target set: persistent cross-chat memory, passive memory, Recall, time, tasks,
-web, connectors, controlled tools, bounded agents, proactive behaviour,
-interchangeable models, permissions/audit, external entry points,
-backup/recovery and stable Home.
-
-## 21. Четыре эпохи проекта
+Нужно различать три уровня качества:
 
 ```text
-I.   REMEMBERS
-     v0.1 -> v0.2.x
-
-II.  LEARNS WHAT TO REMEMBER AND HOW TO RECALL
-     v0.3 -> v0.3.x
-
-III. SEES AND ACTS OUTSIDE HOME
-     v0.4 -> v0.6
-
-IV.  PERFORMS BOUNDED LONGER WORK
-     v0.7 -> v1.0
+deterministic invariant → tests/
+variable language/model behavior → evals/
+whole-product conversational feel → Human Review
 ```
 
-Текущий проект находится в эпохе II: v0.3.1 принят, а v0.3.2 проходит финальную
-ручную приёмку Presence и Human Home UX.
+Green tests не равны хорошему продукту.
 
-## Исторические документы
+Подробнее: [`../evals/README.md`](../evals/README.md).
 
-Старые документы не удаляются. Они остаются журналом решений и этапов, но не
-заменяют этот канон:
+## 19. Roadmap
 
-- `docs/IMPLEMENTATION_PLAN.md` — historical implementation record.
-- `docs/ARCHITECTURE_SNAPSHOT.md` — historical architecture snapshot.
-- `docs/PROJECT_CONTEXT.md` — historical project inception context.
-- `docs/DECISIONS.md` — живой журнал решений; старые решения заменяются новыми
-  явно, а не редактируются задним числом.
-- `docs/MEMORY_SPEC.md` — нормативная спецификация Memory v0.4, не roadmap.
+### Сейчас: Coherence acceptance
+
+Закрыть оставшиеся failures по relative-time / semantic fields, затем пройти несколько complete dialogue journeys и ручную acceptance.
+
+Не расширять архитектуру, пока текущий путь не принят.
+
+### Далее: Consolidation
+
+После принятия coherence:
+
+- перенести устойчивые решения из active checkpoint в Canon/Decisions/contracts;
+- архивировать завершённые stage/checkpoint документы;
+- удалить только доказанно superseded compatibility/dead code;
+- закончить перенос model-language quality из тестового зоопарка в evals.
+
+### После этого: Product value, а не framework collecting
+
+Следующие возможности добавляются только по реальной пользовательской необходимости:
+
+- richer cross-chat continuity;
+- более полезные bounded agent workflows;
+- новые connector actions;
+- voice/media/devices;
+- semantic knowledge / RAG только если lexical/application retrieval доказанно недостаточен.
+
+Новый framework, multi-agent architecture, embeddings или отдельная БД не являются целью сами по себе.
+
+## 20. Исторические документы
+
+Ранние inception records сохранены в [`archive/inception/`](archive/inception/).
+
+Завершённые stage, review и workshop документы могут быть перенесены в `docs/archive/` после reference audit. История полезна как provenance, но не должна конкурировать с current Source of Truth.
