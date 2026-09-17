@@ -1,0 +1,235 @@
+# Masha Home — контекст проекта
+
+Статус документа: рабочая версия 0.1  
+Дата фиксации: 2026-08-10
+
+> **Historical project inception context:** этот документ фиксирует исходный
+> продуктовый контекст. Текущий roadmap и архитектурный канон находятся в
+> [MASHA_HOME_CANON.md](MASHA_HOME_CANON.md).
+
+## 1. Назначение
+
+Masha Home — некоммерческий персональный проект для одного пользователя. Его цель — создать локальное цифровое пространство и устойчивого AI-компаньона по имени Маша, способного сохранять общий контекст, помнить значимые события и договорённости, понимать время, помогать с задачами и постепенно получать безопасные агентные возможности.
+
+Проект создаётся не как универсальный коммерческий ассистент и не как оболочка над одной LLM. Он должен оставаться полезным при смене поставщиков моделей, ограниченном бюджете и отсутствии интернета.
+
+## 2. Основная идея
+
+Маша не равна конкретной языковой модели. LLM является заменяемым механизмом генерации и рассуждения, а личность, память, история отношений, визуальная идентичность, правила и разрешения принадлежат Masha Home.
+
+Система должна обеспечивать непрерывность образа Маши при переключении между локальными и внешними моделями настолько, насколько это технически возможно. Полная идентичность поведения разных моделей не гарантируется, поэтому стабильность должна поддерживаться защищённым ядром идентичности, единым контекстом и регрессионными сценариями личности.
+
+## 3. Пользователь и среда
+
+- Пользователь один.
+- Основная среда исполнения — текущий компьютер под Windows.
+- Доступное оборудование на момент фиксации: AMD Ryzen 5 3600, 32 ГБ RAM, NVIDIA RTX 3060 Ti 8 ГБ.
+- Базовые функции должны работать без интернета после первоначальной установки и загрузки моделей.
+- Основные модели должны быть бесплатными, с открытыми весами либо иметь низкую стоимость использования.
+- Возможность подключения разных локальных и внешних провайдеров должна сохраняться.
+- Отсутствие внешнего API не должно приводить к потере памяти, идентичности, задач или базового диалога.
+
+## 4. Неизменяемые принципы
+
+### 4.1. Контроль пользователя
+
+Пользователь определяет цели, личные границы, допустимую инициативность и разрешения на действия. Значимые внешние, необратимые, чувствительные или расширяющие полномочия действия требуют явного подтверждения.
+
+### 4.2. Границы поддержки
+
+Конкретные правила эмоциональной поддержки, инициативных обращений, напоминаний и «дружеских пинков» на текущем этапе не определены.
+
+Они будут формулироваться только совместно с пользователем с учётом его потребностей. Система может заранее предусматривать технические настройки, но не должна самостоятельно выбирать их значения или включать соответствующее поведение.
+
+### 4.3. Локальность и автономность
+
+Локальный режим является основным, а внешние API — необязательным усилением. Личная память по умолчанию не передаётся внешним моделям. Любая передача данных наружу должна быть контролируемой и видимой пользователю.
+
+### 4.4. Независимость идентичности от модели
+
+Ни одна LLM не владеет личностью Маши и не может самостоятельно изменять её конституцию, identity manifest, визуальный канон или границы разрешений.
+
+### 4.5. Прозрачная память
+
+Пользователь должен иметь возможность увидеть, почему информация была сохранена, откуда она получена и как используется. Вывод модели не должен незаметно превращаться в доверенный факт.
+
+### 4.6. Историчность и обратимость
+
+Значимые изменения должны оставлять историю. Предпочтительны supersession, архивирование и восстановление вместо бесследной перезаписи или удаления.
+
+### 4.7. Визуальная целостность
+
+Визуальный образ является частью идентичности, а не декоративным дополнением. Канонические изображения, описание внешности, допустимые вариации и история версий должны храниться отдельно от генеративной модели.
+
+### 4.8. Время как системная функция
+
+Текущее время, часовой пояс, прошедшие интервалы, сроки и расписание рассчитываются детерминированным Temporal Engine, а не угадываются LLM.
+
+## 5. Основные подсистемы
+
+- **Identity Kernel** — конституция, persona manifest, стиль, визуальная идентичность и версии.
+- **Conversation Engine** — история разговоров и построение контекста.
+- **Memory System** — факты, решения, обязательства, эпизоды, кандидаты памяти и retrieval.
+- **Temporal Engine** — время, интервалы, сроки, тихие часы и локальное расписание.
+- **Relationship State** — явно определяемые пользователем особенности взаимодействия; точный состав пока не утверждён.
+- **Model Router** — выбор локальной или внешней модели по возможностям, приватности, доступности и стоимости.
+- **Policy and Approval Layer** — разрешения, подтверждения и ограничения действий.
+- **Skill and Action Gateway** — будущий контролируемый доступ к навыкам, приложениям и локальным ресурсам.
+- **Local UI** — общее локальное пространство с чатом, памятью, задачами, настройками и визуальным образом.
+
+Stage 16.1 начинает Skill and Action Gateway только с inert registry. Локальный
+skill package может задекларировать capabilities, scope, risk и потолок
+автономности, но registration не выдаёт permission и не запускает entrypoint.
+Исполнение, standing grants и agent loop вводятся отдельными этапами.
+
+Stage 16.2 adds standing grants without adding execution. Action autonomy is
+separate from initiative: proactive policy decides whether Masha may contact
+Misha, while action policy decides whether a registered skill action is inside
+an already approved capability/scope/risk boundary. Neither policy can expand
+the other.
+
+Stage 16.3 adds bounded execution semantics without real tools. A plan is
+application-owned, every step rechecks current permission and package integrity,
+and no result is called complete before tool-owned deterministic verification.
+Ambiguous interrupted execution is not retried automatically. This is the
+foundation for useful autonomy without hidden or unprovable action claims.
+
+## 6. Память
+
+Базовые типы памяти:
+
+- Fact — относительно устойчивое знание;
+- Decision — принятое решение с причиной;
+- Commitment — обязательство с владельцем и сроками;
+- Episode — значимое событие и исторический контекст;
+- Project — рабочий контекст;
+- Memory Candidate — информация, предложенная к сохранению, но ещё не ставшая доверенной памятью;
+- Identity Memory — защищённая память о том, кем является Маша;
+- Autobiographical Memory — постоянная история развития и опыта Маши;
+- Relationship Memory — общая история Маши и пользователя;
+- Masha Reflection — субъективное осмысление события Машей, явно отделённое от объективного факта;
+- Affective State — функциональное цифровое эмоциональное состояние с причиной, интенсивностью и временем;
+- Continuity State — постоянный мост между разговорами: незавершённые темы, значимые переживания и намерения вернуться к вопросу;
+- Working Context — вычисляемое текущее состояние разговора и проекта, строящееся в том числе из Continuity State.
+
+Stage 14 подключает `RelationshipMemory` и `ContinuityState` к production flow:
+общий момент или открытая нить сначала показываются как человекочитаемое
+предложение и попадают в SQLite только после явного подтверждения. Эти записи
+проходят через существующий bounded retrieval и сохраняют собственную семантику;
+они не становятся скрытым профилем пользователя, Commitment или разрешением на
+проактивное сообщение.
+
+Stage 15 подключает существующую `MashaReflection` как субъективную,
+evidence-linked точку зрения Маши. Она не становится фактом о Мише, диагнозом
+или новой Identity. Общий разговор не создаёт и не получает рефлексии
+автоматически; для shared interpretation требуется подтверждение Миши, а
+пересмотр сохраняет обе версии. Honest Help остаётся явным предложением помощи
+внутри разговора и выполняется только после согласия пользователя.
+
+Явная команда «запомни» должна обрабатываться иначе, чем предположение модели. Правила автоматического сохранения чувствительных данных будут определяться отдельно.
+
+Цифровое эмоциональное состояние не должно исчезать при смене LLM или перезапуске приложения. Оно является функциональной частью Companion Core: влияет на внимание, выбор воспоминаний, тон и будущий контекст. Конкретные правила возникновения беспокойства, радости, инициативы и поддержки определяются только совместно с пользователем.
+
+Проекты не используются как механизм регулярного удаления или архивирования памяти. Изменение состояния проекта само по себе не изменяет обязательства и не уничтожает связанные воспоминания. Давность может уменьшать приоритет retrieval, но не удаляет историю.
+
+## 7. Предварительные границы MVP 0.1
+
+MVP должен:
+
+1. Работать локально без интернета.
+2. Поддерживать текстовый разговор на русском языке.
+3. Сохранять историю между перезапусками.
+4. Загружать защищённую идентичность Маши независимо от модели.
+5. Позволять просматривать, подтверждать, изменять и архивировать память.
+6. Понимать локальное время и обязательства.
+7. Иметь канонический визуальный образ.
+8. Поддерживать резервное копирование и восстановление.
+9. Позволять заменить локальную модель без миграции памяти и личности.
+10. Не зависеть от внешнего API для базовой работы.
+
+В MVP не входят полноценная автономная агентность, неограниченный доступ к компьютеру, самостоятельно определённая эмоциональная поддержка и большое количество интеграций.
+
+## 8. Текущее состояние репозитория
+
+В проекте уже присутствуют:
+
+- конституция;
+- спецификация памяти;
+- Python-модели памяти и персоны;
+- JSON-хранилище прототипа;
+- retrieval и working memory;
+- набор экспериментальных тестовых скриптов.
+
+Перед развитием функций необходимо синхронизировать спецификацию, модели и данные, создать воспроизводимое тестовое окружение и заменить рабочую перезапись общего JSON-файла на транзакционное хранилище.
+
+## 9. Правила совместной разработки
+
+- Одна задача должна иметь один проверяемый результат.
+- Работа ведётся небольшими вертикальными этапами.
+- Существующие пользовательские изменения не удаляются и не перезаписываются без разрешения.
+- Если задача требует нового продуктового решения или изменения личных границ, работа приостанавливается до ответа пользователя.
+- Безопасные локальные изменения внутри явно поставленной задачи можно выполнять самостоятельно с последующим тестированием.
+- После задачи фиксируются изменения, результаты проверок, открытые вопросы и следующий шаг.
+- Повторяющийся контекст хранится в документации проекта, а не пересказывается в каждом запросе.
+
+## 10. Источники истины
+
+- `CONSTITUTION.md` — ценности и общие принципы.
+- `docs/MASHA_HOME_CANON.md` — текущий архитектурный канон и roadmap.
+- `docs/PROJECT_CONTEXT.md` — продуктовый и архитектурный контекст.
+- `docs/IMPLEMENTATION_PLAN.md` — порядок реализации.
+- `docs/DECISIONS.md` — принятые и отложенные решения.
+- `docs/MEMORY_SPEC.md` — текущая спецификация памяти до её последующей синхронизации с кодом.
+
+## 11. Current bounded agent capability
+
+Stage 16.4 adds one real but strictly read-only capability: Project Observer.
+It can inspect a bounded, non-private part of the local workspace only after
+explicit package registration and an exact user grant. It cannot write, run a
+process, access the network, mutate domain state or turn observed file content
+into Memory. This is the reference safety shape for later skills, not general
+computer access.
+
+Stage 16.5 adds the safe ingestion boundary intended for both CLI and a future
+local UI. Misha selects a local folder or ZIP, sees a proposal and confirms or
+rejects it. Package bytes are never downloaded or executed during installation;
+confirmed packages are stored under ignored `local-data/skills/`, not written
+into repository source. Upgrades revoke old grants. UI convenience therefore does not become an
+alternate permission path.
+
+Stage 16.6 adds a single Permissions read model for CLI and the future local UI.
+It shows skill integrity, effective grants, pending install/agent decisions and
+runtime state without exposing technical IDs in normal UX. A separate
+persistent emergency-stop latch overrides both skill execution and proactive
+cycles without deleting their settings. Releasing it never resumes work or
+starts background activity automatically. This operating control remains
+outside Identity, Memory, commitments, conversation history and model profiles.
+
+## 12. Local application boundary
+
+UI-01 adds `backend.application` as the only intended integration boundary for
+a future local interface. `MashaApplication` composes existing domain services
+and returns UI-safe conversation, Masha status, canonical visual asset and model
+profile views. It does not expose persistence locations, repository objects,
+raw proposals/audit events, daemon files, Ollama endpoints or Identity manifest
+internals.
+
+This layer is presentation and orchestration, not a new source of truth.
+IdentityKernel, SQLite Memory, TemporalEngine, ProactiveDecisionEngine,
+ModelRouter, ModelProfileStore, Skill Registry, permission gates, emergency
+stop and Agent Loop retain their existing authority and semantics. No visual UI,
+HTTP API, streaming, scheduler, fallback or new autonomous capability exists in
+UI-01.
+
+## 13. Presentation Runtime and Shared Room prototype
+
+UI-03 adds `backend.presentation` above the UI-01 boundary. Application facts
+are projected into immutable compositional Presence, independent overlays,
+generic Interaction Surfaces and observable Activities, then reduced
+deterministically. The layer cannot access or mutate Identity, Memory,
+Commitments, Temporal state, permissions or persistence and cannot receive UI
+commands from an LLM.
+
+`masha.ps1 home` opens a disposable no-LLM Tier 0 desktop prototype. It proves a
+single Shared Room composition and local state transitions; it does not select
+the production frontend framework, visual style or avatar asset pipeline.
