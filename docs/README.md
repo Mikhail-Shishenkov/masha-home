@@ -2,15 +2,18 @@
 
 Этот файл — только навигация. Он не создаёт новый источник архитектурной истины.
 
-Правило приоритета: **текущий код + подтверждённые checkpoint-ы + нормативные контракты важнее исторических планов и снимков**.
+Правило приоритета: **текущий код + `CURRENT_STATE.md` + подтверждённые checkpoint-ы + нормативные контракты важнее исторических планов и снимков**.
 
 ## Current Source of Truth
 
 - [`../CONSTITUTION.md`](../CONSTITUTION.md) — продуктовые и человеческие принципы Masha Home.
-- [`MASHA_HOME_CANON.md`](MASHA_HOME_CANON.md) — текущая архитектурная модель и roadmap.
+- [`CURRENT_STATE.md`](CURRENT_STATE.md) — фактическое implementation/release состояние на сегодня.
+- [`MASHA_HOME_CANON.md`](MASHA_HOME_CANON.md) — стабильная архитектурная модель и продуктовый roadmap.
 - [`DECISIONS.md`](DECISIONS.md) — журнал принятых и superseding решений.
 - [`DIALOGUE_ACTION_LIFECYCLE.md`](DIALOGUE_ACTION_LIFECYCLE.md) — ownership и lifecycle для meaning / proposal / confirmation / operation / receipt.
 - [`AGENT_COHERENCE_PLAN.md`](AGENT_COHERENCE_PLAN.md) — активная continuation capsule ветки `new/agent-coherence-continuation`. Это рабочий checkpoint, не релиз.
+
+Если status/roadmap-текст старого документа расходится с `CURRENT_STATE.md` и newest verified checkpoint, приоритет имеет более новое подтверждённое состояние.
 
 ## Нормативные и runtime-контракты
 
@@ -53,15 +56,15 @@
 
 ## Historical records
 
-Следующие документы являются историческими и не должны использоваться как текущий roadmap:
+Исторические inception-документы сохранены в:
 
-- `ARCHITECTURE_SNAPSHOT.md`
-- `IMPLEMENTATION_PLAN.md`
-- `PROJECT_CONTEXT.md`
+- [`archive/inception/ARCHITECTURE_SNAPSHOT.md`](archive/inception/ARCHITECTURE_SNAPSHOT.md)
+- [`archive/inception/IMPLEMENTATION_PLAN.md`](archive/inception/IMPLEMENTATION_PLAN.md)
+- [`archive/inception/PROJECT_CONTEXT.md`](archive/inception/PROJECT_CONTEXT.md)
 
-Они пока сохраняются в исходных путях до отдельного безопасного relocation-pass с проверкой ссылок. Их исторический статус также зафиксирован в `DECISIONS.md`.
+Старые пути `ARCHITECTURE_SNAPSHOT.md`, `IMPLEMENTATION_PLAN.md`, `PROJECT_CONTEXT.md` оставлены как короткие redirect-stubs, чтобы не ломать старые ссылки. Они не являются текущим roadmap.
 
-Завершённые `STAGE_*`, старые `MEM-*` design records и часть UI workshop/review документов также могут быть перенесены в `docs/archive/`, но только после reference audit. Возраст файла сам по себе не является причиной для архивации.
+Завершённые `STAGE_*`, старые `MEM-*` design records и часть UI workshop/review документов остаются кандидатами на `docs/archive/`, но только после отдельного reference/runtime audit. Возраст файла сам по себе не является причиной для архивации.
 
 ## Evaluation
 
