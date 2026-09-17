@@ -1,19 +1,29 @@
 # Masha Home
 
-Masha Home — local-first персональная AI-система и цифровой Дом Маши.
+Masha Home — local-first персональная AI-система для одного пользователя и цифровой Дом Маши.
 
-Маша не является конкретной LLM. Identity, память, история, время, разрешения и
-визуальный канон принадлежат приложению; языковая модель является заменяемым
-когнитивным движком.
+Главный архитектурный принцип проекта: **Masha != LLM**. Языковая модель является заменяемым когнитивным и языковым движком. Identity, долговременная память, история, время, разрешения, выбранные реальные объекты, состояние операций и факт выполнения принадлежат приложению.
 
-Текущая engineering-линия: Living Home Core и Natural Language Router V2.
-Semantic Resolver Slice 2D остаётся ограниченным application-owned adoption:
-новые capability families подключаются по одной, не через скрытое расширение
-полномочий модели.
+Обычный диалог проходит через один application-owned контур. Семантическая модель может предложить смысл реплики и evidence, но не получает authority. Любое действие с последствиями проходит через доменный proposal / policy / confirmation / operation / receipt lifecycle. Фраза модели никогда не является подтверждением выполненного действия.
 
-Актуальные источники истины:
+## Текущее состояние разработки
 
-- [Конституция](CONSTITUTION.md);
-- [архитектурный канон и roadmap](docs/MASHA_HOME_CANON.md);
-- [принятые решения](docs/DECISIONS.md);
-- [нормативный Memory contract](docs/MEMORY_SPEC.md).
+Активная ветка `new/agent-coherence-continuation` содержит незавершённый checkpoint по coherent dialogue / meaning-first semantic resolution.
+
+В checkpoint уже собраны единый bounded conversational context, application-owned result/entity continuity и meaning-first путь: сначала определяется speech act без capability IDs, затем действие сопоставляется только с совместимыми application-owned capability specifications.
+
+Этот checkpoint **не является релизом и не принят для merge в `main`**. Открыты как минимум relative-time field extraction, полные многоходовые dialogue journeys и живая conversational acceptance. Зелёные deterministic tests сами по себе не означают, что естественный язык принят.
+
+## Source of Truth
+
+Читать текущую систему в таком порядке:
+
+1. [Конституция](CONSTITUTION.md) — продуктовые и человеческие принципы.
+2. [Архитектурный канон](docs/MASHA_HOME_CANON.md) — текущая модель Дома и архитектурные границы.
+3. [Журнал решений](docs/DECISIONS.md) — принятые и superseding решения.
+4. [Memory contract](docs/MEMORY_SPEC.md) — нормативная модель долговременной памяти.
+5. [Dialogue / Action lifecycle](docs/DIALOGUE_ACTION_LIFECYCLE.md) — разделение meaning, proposal, confirmation, operation и receipt.
+6. [Agent Coherence Plan](docs/AGENT_COHERENCE_PLAN.md) — активная continuation capsule незавершённой рабочей ветки.
+7. [Карта документации](docs/README.md) — где лежат остальные контракты и исторические материалы.
+
+Текущий код и подтверждённые checkpoint-ы имеют приоритет над историческими roadmap/snapshot документами.
