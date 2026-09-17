@@ -9,9 +9,10 @@
 - [`../CONSTITUTION.md`](../CONSTITUTION.md) — продуктовые и человеческие принципы Masha Home.
 - [`CURRENT_STATE.md`](CURRENT_STATE.md) — фактическое implementation/release состояние на сегодня.
 - [`MASHA_HOME_CANON.md`](MASHA_HOME_CANON.md) — стабильная архитектурная модель и продуктовый roadmap.
-- [`DECISIONS.md`](DECISIONS.md) — журнал принятых и superseding решений.
+- [`DECISIONS.md`](DECISIONS.md) — основной append-only журнал решений.
+- [`DECISIONS_COHERENCE_ADDENDUM.md`](DECISIONS_COHERENCE_ADDENDUM.md) — решения незавершённой coherence-ветки, которые не переписывают старую историю.
 - [`DIALOGUE_ACTION_LIFECYCLE.md`](DIALOGUE_ACTION_LIFECYCLE.md) — ownership и lifecycle для meaning / proposal / confirmation / operation / receipt.
-- [`AGENT_COHERENCE_PLAN.md`](AGENT_COHERENCE_PLAN.md) — активная continuation capsule ветки `new/agent-coherence-continuation`. Это рабочий checkpoint, не релиз.
+- [`AGENT_COHERENCE_PLAN.md`](AGENT_COHERENCE_PLAN.md) — активная resume capsule ветки `new/agent-coherence-continuation`. Это рабочий checkpoint, не релиз.
 
 Если status/roadmap-текст старого документа расходится с `CURRENT_STATE.md` и newest verified checkpoint, приоритет имеет более новое подтверждённое состояние.
 
@@ -53,6 +54,7 @@
 
 - [`LIVING_HOME_LANGUAGE_CORE_PLAN.md`](LIVING_HOME_LANGUAGE_CORE_PLAN.md) — реализованные language-core checkpoint-ы и provenance. Новая работа продолжается в `AGENT_COHERENCE_PLAN.md`.
 - [`AGENT_COHERENCE_PLAN.md`](AGENT_COHERENCE_PLAN.md) — единственный активный continuation-план этой ветки.
+- Полный старый coherence trace сохранён в [`archive/checkpoints/AGENT_COHERENCE_PLAN_FULL_2026-09-16.md`](archive/checkpoints/AGENT_COHERENCE_PLAN_FULL_2026-09-16.md).
 
 ## Historical records
 
